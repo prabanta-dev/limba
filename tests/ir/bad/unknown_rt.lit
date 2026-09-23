@@ -1,0 +1,6 @@
+; expect: unknown runtime function
+func @f : fn() -> void {
+b0:
+  call.rt void draw_circle()
+  ret
+}

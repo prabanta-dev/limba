@@ -1,0 +1,6 @@
+; expect: icmp: operand and result types
+func @f : fn(f64) -> i1 {
+b0(v0: f64):
+  v1 = icmp.eq i1 v0, v0
+  ret v1
+}

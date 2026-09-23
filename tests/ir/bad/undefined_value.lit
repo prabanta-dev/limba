@@ -1,0 +1,5 @@
+; expect: v7 is never defined
+func @f : fn() -> i64 {
+b0:
+  ret v7
+}

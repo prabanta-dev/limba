@@ -1,0 +1,45 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+/*
+ * runtime.def - the functions of the run-time library that the IR calls
+ * with call.rt, read by Limba and by Meri. A draft: the library of Luxia
+ * will fill it family by family.
+ *
+ *   LIMBA_RT(name, text, signature, attributes)
+ *
+ * name       the enumerator is LIMBA_RT_<name>
+ * text       the spelling in the text form, call.rt str_len(v1)
+ * signature  "(types) -> type" in the text syntax of the IR, scalar types
+ *            only; "..." for variadic
+ * attributes LIMBA_RTA_* in ir.h: what an optimisation may assume
+ *
+ * The order is the numbering of the binary form, and the whole table has a
+ * fingerprint in every .lir: Meri refuses an IR written against a table it
+ * does not know. Add at the end. No graphics and no audio here (R11).
+ */
+
+/* console */
+LIMBA_RT(PRINT_I64, "print_i64", "(i64) -> void", LIMBA_RTA_IO)
+LIMBA_RT(PRINT_F64, "print_f64", "(f64) -> void", LIMBA_RTA_IO)
+LIMBA_RT(PRINT_STR, "print_str", "(str) -> void", LIMBA_RTA_IO)
+LIMBA_RT(PRINT_NL, "print_nl", "() -> void", LIMBA_RTA_IO)
+LIMBA_RT(INPUT_LINE, "input_line", "() -> str", LIMBA_RTA_IO | LIMBA_RTA_ALLOC)
+
+/* strings */
+LIMBA_RT(STR_CONCAT, "str_concat", "(str, str) -> str", LIMBA_RTA_ALLOC)
+LIMBA_RT(STR_LEN, "str_len", "(str) -> i64", LIMBA_RTA_PURE)
+LIMBA_RT(STR_CMP, "str_cmp", "(str, str) -> i32", LIMBA_RTA_PURE)
+LIMBA_RT(STR_FROM_I64, "str_from_i64", "(i64) -> str", LIMBA_RTA_ALLOC)
+LIMBA_RT(STR_FROM_F64, "str_from_f64", "(f64) -> str", LIMBA_RTA_ALLOC)
+LIMBA_RT(STR_MID, "str_mid", "(str, i64, i64) -> str", LIMBA_RTA_ALLOC)
+LIMBA_RT(STR_PTR, "str_ptr", "(str) -> ptr", LIMBA_RTA_PURE)
+
+/* memory of the program: Allocate, Deallocate */
+LIMBA_RT(MEM_ALLOC, "mem_alloc", "(i64) -> ptr", LIMBA_RTA_ALLOC)
+LIMBA_RT(MEM_FREE, "mem_free", "(ptr) -> void", LIMBA_RTA_WRITES_MEM)
+
+/* mathematics */
+LIMBA_RT(MATH_SQRT, "math_sqrt", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_SIN, "math_sin", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_COS, "math_cos", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_POW, "math_pow", "(f64, f64) -> f64", LIMBA_RTA_PURE)

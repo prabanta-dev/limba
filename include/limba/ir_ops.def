@@ -1,0 +1,115 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+/*
+ * ir_ops.def - the operations of the Limba IR, read by Limba and by Meri.
+ *
+ *   LIMBA_OP(name, text, format, flags)
+ *
+ * name    the enumerator is LIMBA_OP_<name>
+ * text    the spelling in the text form (.lit)
+ * format  the shape of the operands, LIMBA_F_* in ir.h
+ * flags   LIMBA_OPF_* in ir.h: what an optimisation may assume
+ *
+ * The order is the numbering of the binary form (.lir): add at the end,
+ * never in the middle, and bump LIMBA_IR_VERSION when an entry changes.
+ */
+
+/* constants */
+LIMBA_OP(ICONST, "iconst", LIMBA_F_ICONST, LIMBA_OPF_PURE)
+LIMBA_OP(FCONST, "fconst", LIMBA_F_FCONST, LIMBA_OPF_PURE)
+LIMBA_OP(SCONST, "sconst", LIMBA_F_SCONST, LIMBA_OPF_PURE)
+LIMBA_OP(NULLV, "null", LIMBA_F_TYPED, LIMBA_OPF_PURE)
+LIMBA_OP(UNDEF, "undef", LIMBA_F_TYPED, LIMBA_OPF_PURE)
+
+/* integer arithmetic: the sign is in the operation, not in the type */
+LIMBA_OP(ADD, "add", LIMBA_F_BIN, LIMBA_OPF_PURE | LIMBA_OPF_COMMUTATIVE)
+LIMBA_OP(SUB, "sub", LIMBA_F_BIN, LIMBA_OPF_PURE)
+LIMBA_OP(MUL, "mul", LIMBA_F_BIN, LIMBA_OPF_PURE | LIMBA_OPF_COMMUTATIVE)
+LIMBA_OP(SDIV, "sdiv", LIMBA_F_BIN, LIMBA_OPF_MAY_TRAP)
+LIMBA_OP(UDIV, "udiv", LIMBA_F_BIN, LIMBA_OPF_MAY_TRAP)
+LIMBA_OP(SREM, "srem", LIMBA_F_BIN, LIMBA_OPF_MAY_TRAP)
+LIMBA_OP(UREM, "urem", LIMBA_F_BIN, LIMBA_OPF_MAY_TRAP)
+LIMBA_OP(NEG, "neg", LIMBA_F_UN, LIMBA_OPF_PURE)
+/* the same, trapping on signed overflow (Luxia) */
+LIMBA_OP(ADDOV, "add.ov", LIMBA_F_BIN,
+         LIMBA_OPF_MAY_TRAP | LIMBA_OPF_COMMUTATIVE)
+LIMBA_OP(SUBOV, "sub.ov", LIMBA_F_BIN, LIMBA_OPF_MAY_TRAP)
+LIMBA_OP(MULOV, "mul.ov", LIMBA_F_BIN,
+         LIMBA_OPF_MAY_TRAP | LIMBA_OPF_COMMUTATIVE)
+
+/* bits */
+LIMBA_OP(AND, "and", LIMBA_F_BIN, LIMBA_OPF_PURE | LIMBA_OPF_COMMUTATIVE)
+LIMBA_OP(OR, "or", LIMBA_F_BIN, LIMBA_OPF_PURE | LIMBA_OPF_COMMUTATIVE)
+LIMBA_OP(XOR, "xor", LIMBA_F_BIN, LIMBA_OPF_PURE | LIMBA_OPF_COMMUTATIVE)
+LIMBA_OP(NOT, "not", LIMBA_F_UN, LIMBA_OPF_PURE)
+LIMBA_OP(SHL, "shl", LIMBA_F_BIN, LIMBA_OPF_PURE)
+LIMBA_OP(LSHR, "lshr", LIMBA_F_BIN, LIMBA_OPF_PURE)
+LIMBA_OP(ASHR, "ashr", LIMBA_F_BIN, LIMBA_OPF_PURE)
+
+/* floating point, IEEE 754 */
+LIMBA_OP(FADD, "fadd", LIMBA_F_BIN, LIMBA_OPF_PURE | LIMBA_OPF_COMMUTATIVE)
+LIMBA_OP(FSUB, "fsub", LIMBA_F_BIN, LIMBA_OPF_PURE)
+LIMBA_OP(FMUL, "fmul", LIMBA_F_BIN, LIMBA_OPF_PURE | LIMBA_OPF_COMMUTATIVE)
+LIMBA_OP(FDIV, "fdiv", LIMBA_F_BIN, LIMBA_OPF_PURE)
+LIMBA_OP(FNEG, "fneg", LIMBA_F_UN, LIMBA_OPF_PURE)
+LIMBA_OP(FMA, "fma", LIMBA_F_TERN, LIMBA_OPF_PURE)
+
+/* comparisons: the condition is a suffix, icmp.slt, fcmp.olt */
+LIMBA_OP(ICMP, "icmp", LIMBA_F_CMP, LIMBA_OPF_PURE)
+LIMBA_OP(FCMP, "fcmp", LIMBA_F_CMP, LIMBA_OPF_PURE)
+LIMBA_OP(SELECT, "select", LIMBA_F_TERN, LIMBA_OPF_PURE)
+
+/* conversions: the result type is the target */
+LIMBA_OP(TRUNC, "trunc", LIMBA_F_CONV, LIMBA_OPF_PURE)
+LIMBA_OP(ZEXT, "zext", LIMBA_F_CONV, LIMBA_OPF_PURE)
+LIMBA_OP(SEXT, "sext", LIMBA_F_CONV, LIMBA_OPF_PURE)
+LIMBA_OP(FPTRUNC, "fptrunc", LIMBA_F_CONV, LIMBA_OPF_PURE)
+LIMBA_OP(FPEXT, "fpext", LIMBA_F_CONV, LIMBA_OPF_PURE)
+LIMBA_OP(SITOFP, "sitofp", LIMBA_F_CONV, LIMBA_OPF_PURE)
+LIMBA_OP(UITOFP, "uitofp", LIMBA_F_CONV, LIMBA_OPF_PURE)
+LIMBA_OP(FPTOSI, "fptosi", LIMBA_F_CONV, LIMBA_OPF_PURE)
+LIMBA_OP(FPTOUI, "fptoui", LIMBA_F_CONV, LIMBA_OPF_PURE)
+LIMBA_OP(BITCAST, "bitcast", LIMBA_F_CONV, LIMBA_OPF_PURE)
+LIMBA_OP(PTRTOINT, "ptrtoint", LIMBA_F_CONV, LIMBA_OPF_PURE)
+LIMBA_OP(INTTOPTR, "inttoptr", LIMBA_F_CONV, LIMBA_OPF_PURE)
+
+/* memory */
+LIMBA_OP(LOAD, "load", LIMBA_F_LOAD, LIMBA_OPF_READS_MEM | LIMBA_OPF_MAY_TRAP)
+LIMBA_OP(STORE, "store", LIMBA_F_STORE,
+         LIMBA_OPF_WRITES_MEM | LIMBA_OPF_MAY_TRAP | LIMBA_OPF_NO_RESULT)
+LIMBA_OP(SLOT, "slot", LIMBA_F_SLOT, LIMBA_OPF_PURE)
+LIMBA_OP(GADDR, "gaddr", LIMBA_F_GADDR, LIMBA_OPF_PURE)
+LIMBA_OP(FADDR, "faddr", LIMBA_F_FADDR, LIMBA_OPF_PURE)
+LIMBA_OP(ADDR, "addr", LIMBA_F_ADDR, LIMBA_OPF_PURE)
+LIMBA_OP(MEMCPY, "memcpy", LIMBA_F_MEM3,
+         LIMBA_OPF_READS_MEM | LIMBA_OPF_WRITES_MEM | LIMBA_OPF_MAY_TRAP |
+             LIMBA_OPF_NO_RESULT)
+LIMBA_OP(MEMSET, "memset", LIMBA_F_MEM3,
+         LIMBA_OPF_WRITES_MEM | LIMBA_OPF_MAY_TRAP | LIMBA_OPF_NO_RESULT)
+
+/* calls: what a callee does to memory is unknown unless the runtime table
+   says otherwise (runtime.def) */
+LIMBA_OP(CALL, "call", LIMBA_F_CALL, LIMBA_OPF_CALL)
+LIMBA_OP(CALLIND, "call.ind", LIMBA_F_CALL_IND, LIMBA_OPF_CALL)
+LIMBA_OP(CALLEXT, "call.ext", LIMBA_F_CALL_EXT, LIMBA_OPF_CALL)
+LIMBA_OP(CALLRT, "call.rt", LIMBA_F_CALL_RT, LIMBA_OPF_CALL)
+
+/* control: the terminators end a block, the CFG is read from them */
+LIMBA_OP(BR, "br", LIMBA_F_BR, LIMBA_OPF_TERMINATOR | LIMBA_OPF_NO_RESULT)
+LIMBA_OP(CBR, "cbr", LIMBA_F_CBR, LIMBA_OPF_TERMINATOR | LIMBA_OPF_NO_RESULT)
+LIMBA_OP(SWITCH, "switch", LIMBA_F_SWITCH,
+         LIMBA_OPF_TERMINATOR | LIMBA_OPF_NO_RESULT)
+LIMBA_OP(RET, "ret", LIMBA_F_RET, LIMBA_OPF_TERMINATOR | LIMBA_OPF_NO_RESULT)
+LIMBA_OP(UNREACHABLE, "unreachable", LIMBA_F_NONE,
+         LIMBA_OPF_TERMINATOR | LIMBA_OPF_NO_RESULT)
+
+/* run-time errors: trap always raises its code, check raises it when the
+   condition is false */
+LIMBA_OP(TRAP, "trap", LIMBA_F_TRAP,
+         LIMBA_OPF_TERMINATOR | LIMBA_OPF_NO_RESULT | LIMBA_OPF_MAY_TRAP)
+LIMBA_OP(CHECK, "check", LIMBA_F_CHECK,
+         LIMBA_OPF_NO_RESULT | LIMBA_OPF_MAY_TRAP)
+
+/* a block parameter: never written in the text form as an instruction,
+   it is the list after the block name, b1(v3: i64) */
+LIMBA_OP(PARAM, "param", LIMBA_F_PARAM, LIMBA_OPF_PURE)

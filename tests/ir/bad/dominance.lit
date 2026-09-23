@@ -1,0 +1,12 @@
+; expect: does not dominate
+func @f : fn(i1) -> i64 {
+b0(v0: i1):
+  cbr v0, b1, b2
+b1:
+  v1 = iconst i64 1
+  br b3
+b2:
+  br b3
+b3:
+  ret v1
+}

@@ -1,0 +1,7 @@
+; expect: takes 1 arguments, given 0
+func @f : fn() -> i64 {
+b0:
+  br b1
+b1(v0: i64):
+  ret v0
+}

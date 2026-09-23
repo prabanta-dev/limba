@@ -1,0 +1,10 @@
+; expect: 0 arguments for 1 parameters
+func @g : fn(i64) -> i64 {
+b0(v0: i64):
+  ret v0
+}
+func @f : fn() -> i64 {
+b0:
+  v0 = call i64 @g()
+  ret v0
+}

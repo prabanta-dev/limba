@@ -1,0 +1,62 @@
+; types with a layout, globals, slots, addresses, calls of every kind
+module "memory"
+memory fb
+
+type %point = { i32 @0, f64 @8 } size 16 align 8
+type %pair = { %point @0, [4 x i8] @16 } size 24 align 8
+
+global @count : i64 = 42 export
+global @scale : f64 = 0x1.4p+1 const
+global @greeting : str = "hello, \"world\"\n\x01"
+global @buffer : [16 x i8]
+global @"a name with spaces" : %pair
+
+extern @puts : fn(ptr) -> i32 = "puts" in "libc.so.6"
+extern @printf : fn(ptr, ...) -> i32 = "printf"
+
+func @twice : fn(i64) -> i64 {
+b0(v0: i64):
+  v1 = add i64 v0, v0
+  ret v1
+}
+
+func @main : fn() -> i32 export {
+  slot 16 align 8
+  slot 24 align 8
+b0:
+  v0 = slot ptr $0
+  v1 = iconst i32 3
+  store v1, v0
+  v2 = iconst i64 1
+  v3 = addr ptr v0, v2, 8, 0
+  v4 = gaddr ptr @scale
+  v5 = load f64 v4
+  store v5, v3
+  v6 = slot ptr $1
+  v7 = iconst i64 16
+  memcpy v6, v0, v7
+  v8 = iconst i8 0
+  v9 = gaddr ptr @buffer
+  memset v9, v8, v7
+  v10 = faddr ptr @twice
+  v11 = gaddr ptr @count
+  v12 = load i64 v11
+  v13 = call.ind i64 fn(i64) -> i64 v10(v12)
+  v14 = sconst str "done"
+  call.rt void print_str(v14)
+  v15 = call.rt ptr str_ptr(v14)
+  v16 = call.ext i32 @puts(v15)
+  v17 = call.ext i32 @printf(v15, v13, v5)
+  v18 = null ptr
+  v19 = icmp.eq i1 v15, v18
+  cbr v19, b1, b2
+b1:
+  trap 7
+b2:
+  ret v16
+}
+
+func @never : fn() -> void {
+b0:
+  unreachable
+}

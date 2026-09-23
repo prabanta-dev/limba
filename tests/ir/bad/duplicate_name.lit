@@ -1,0 +1,6 @@
+; expect: a name defined twice
+global @x : i64
+func @x : fn() -> void {
+b0:
+  unreachable
+}

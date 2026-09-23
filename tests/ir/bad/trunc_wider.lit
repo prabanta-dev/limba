@@ -1,0 +1,6 @@
+; expect: cannot turn
+func @f : fn(i32) -> i64 {
+b0(v0: i32):
+  v1 = trunc i64 v0
+  ret v1
+}

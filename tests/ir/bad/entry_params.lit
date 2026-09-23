@@ -1,0 +1,6 @@
+; expect: b0 has 0 parameters, the function 1
+func @f : fn(i64) -> i64 {
+b0:
+  v0 = iconst i64 1
+  ret v0
+}

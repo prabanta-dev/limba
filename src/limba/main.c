@@ -1,0 +1,169 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+/*
+ * main.c - the limba program. For now it reads and writes the IR: the text
+ * form (.lit) and the binary form (.lir), verifying it on the way. The
+ * front end of Luxia will make it read sources.
+ */
+#include "limba/ir.h"
+
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static void usage(FILE *out)
+{
+    fputs("Usage: limba [options] <input.lit | input.lir>\n"
+          "\n"
+          "Reads the IR in its text (.lit) or binary (.lir) form, verifies\n"
+          "it and writes it in the other form.\n"
+          "\n"
+          "Options\n"
+          "  --emit=lir|lit  the form to write; by default the other one\n"
+          "  -o FILE         where to write; by default a .lir goes next to\n"
+          "                  the input, a .lit to the standard output\n"
+          "  --check         verify only, write nothing\n"
+          "  -h, --help      this text\n",
+          out);
+}
+
+static bool ends_with(const char *s, const char *suffix)
+{
+    size_t n = strlen(s), k = strlen(suffix);
+    return n >= k && strcmp(s + n - k, suffix) == 0;
+}
+
+static char *slurp(const char *path, size_t *len)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return NULL;
+    char *buf = NULL;
+    size_t cap = 0, n = 0;
+    for (;;) {
+        if (n == cap) {
+            cap = cap ? 2 * cap : 65536;
+            char *nb = realloc(buf, cap + 1);
+            if (!nb) {
+                free(buf);
+                fclose(f);
+                return NULL;
+            }
+            buf = nb;
+        }
+        size_t got = fread(buf + n, 1, cap - n, f);
+        n += got;
+        if (got == 0)
+            break;
+    }
+    bool err = ferror(f);
+    fclose(f);
+    if (err) {
+        free(buf);
+        return NULL;
+    }
+    buf[n] = 0;
+    *len = n;
+    return buf;
+}
+
+int main(int argc, char **argv)
+{
+    const char *in = NULL, *outpath = NULL, *emit = NULL;
+    bool check = false;
+    for (int i = 1; i < argc; i++) {
+        const char *a = argv[i];
+        if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
+            usage(stdout);
+            return 0;
+        } else if (!strcmp(a, "--check")) {
+            check = true;
+        } else if (!strncmp(a, "--emit=", 7)) {
+            emit = a + 7;
+            if (strcmp(emit, "lir") && strcmp(emit, "lit")) {
+                fprintf(stderr, "limba: --emit takes lir or lit\n");
+                return 2;
+            }
+        } else if (!strcmp(a, "-o") && i + 1 < argc) {
+            outpath = argv[++i];
+        } else if (a[0] == '-' && a[1]) {
+            fprintf(stderr, "limba: unknown option %s (--help)\n", a);
+            return 2;
+        } else if (!in) {
+            in = a;
+        } else {
+            fprintf(stderr, "limba: one input only\n");
+            return 2;
+        }
+    }
+    if (!in) {
+        usage(stderr);
+        return 2;
+    }
+    bool binary_in = ends_with(in, ".lir");
+    if (!binary_in && !ends_with(in, ".lit")) {
+        fprintf(stderr, "limba: %s: a .lit or .lir file is expected\n", in);
+        return 2;
+    }
+    if (!emit)
+        emit = binary_in ? "lit" : "lir";
+
+    size_t len;
+    char *data = slurp(in, &len);
+    if (!data) {
+        fprintf(stderr, "limba: %s: %s\n", in, strerror(errno));
+        return 1;
+    }
+    limba_diag d = {{0}, 0};
+    limba_module *m = binary_in ? limba_read((const uint8_t *)data, len, &d)
+                                : limba_parse(data, len, &d);
+    free(data);
+    if (!m || limba_verify(m, &d) != 0) {
+        fprintf(stderr, "limba: %s: %s\n", in, d.msg);
+        limba_module_free(m);
+        return 1;
+    }
+    if (check) {
+        limba_module_free(m);
+        return 0;
+    }
+
+    int status = 0;
+    if (!strcmp(emit, "lit")) {
+        FILE *out = outpath ? fopen(outpath, "w") : stdout;
+        if (!out) {
+            fprintf(stderr, "limba: %s: %s\n", outpath, strerror(errno));
+            status = 1;
+        } else {
+            limba_print(m, out);
+            if (out != stdout && fclose(out) != 0)
+                status = 1;
+        }
+    } else {
+        char *derived = NULL;
+        if (!outpath) {
+            size_t n = strlen(in);
+            derived = malloc(n + 1);
+            if (!derived)
+                return 1;
+            memcpy(derived, in, n + 1);
+            memcpy(derived + n - 4, ".lir", 4);
+            outpath = derived;
+        }
+        uint8_t *buf;
+        size_t blen;
+        limba_write(m, &buf, &blen);
+        FILE *out = fopen(outpath, "wb");
+        if (!out || fwrite(buf, 1, blen, out) != blen) {
+            fprintf(stderr, "limba: %s: %s\n", outpath, strerror(errno));
+            status = 1;
+        }
+        if (out && fclose(out) != 0)
+            status = 1;
+        free(buf);
+        free(derived);
+    }
+    limba_module_free(m);
+    return status;
+}

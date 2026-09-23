@@ -1,0 +1,2 @@
+; expect: misaligned
+type %s = { i8 @0, i32 @2 } size 8 align 4

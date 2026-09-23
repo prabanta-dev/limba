@@ -1,0 +1,7 @@
+; expect: add: operand and result types
+func @f : fn(i32) -> i64 {
+b0(v0: i32):
+  v1 = iconst i64 1
+  v2 = add i64 v0, v1
+  ret v2
+}

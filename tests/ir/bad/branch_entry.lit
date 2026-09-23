@@ -1,0 +1,5 @@
+; expect: branch to the entry block
+func @f : fn() -> i64 {
+b0:
+  br b0
+}
