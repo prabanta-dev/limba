@@ -77,4 +77,38 @@ enum { LIMBA_OK_VALUE, LIMBA_OK_BLOCK, LIMBA_OK_RAW };
 bool limba_operand_kinds(const limba_func *f, const limba_inst *in,
                          uint8_t *kinds);
 
+/* ---- editing a function in one go (edit.c) ---- */
+
+/* A pass records what changes, then limba_edit_end applies it all at once:
+   operands follow the replacements, dead instructions and blocks go, and
+   what is left is renumbered in the canonical order (block order,
+   parameters first), the order the text and binary forms use. A pass may
+   also rewrite an instruction in place (limba_inst_set_*). */
+typedef struct {
+    limba_func *f;
+    uint32_t *map;       /* map[x]: the value x stands for, x if unchanged */
+    uint8_t *dead;       /* instructions to remove */
+    uint8_t *dead_block; /* blocks to remove; never b0 */
+    uint32_t ninsts, nblocks;
+} limba_edit;
+
+void limba_edit_begin(limba_edit *e, limba_func *f);
+/* the value x stands for now, following chains of replacements */
+uint32_t limba_edit_resolve(limba_edit *e, uint32_t x);
+/* every use of from becomes a use of to; from is then dead */
+void limba_edit_replace(limba_edit *e, uint32_t from, uint32_t to);
+void limba_edit_end(limba_edit *e);
+/* forget the edit: nothing recorded is applied */
+void limba_edit_cancel(limba_edit *e);
+
+/* rewrite an instruction in place: a constant of its own type, or a jump */
+void limba_inst_set_iconst(limba_inst *in, int64_t v);
+void limba_inst_set_fconst(limba_inst *in, int64_t bits);
+/* br to the target whose (block, count, args) start at operand k */
+void limba_inst_set_br(limba_func *f, limba_inst *in, uint32_t k);
+
+/* an integer of type t in its canonical form: sign-extended from the
+   width of t, 0 or 1 for i1 */
+int64_t limba_int_norm(int64_t v, limba_id t);
+
 #endif

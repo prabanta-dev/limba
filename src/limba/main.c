@@ -6,6 +6,7 @@
  * front end of Luxia will make it read sources.
  */
 #include "limba/ir.h"
+#include "limba/opt.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -24,6 +25,11 @@ static void usage(FILE *out)
           "  -o FILE         where to write; by default a .lir goes next to\n"
           "                  the input, a .lit to the standard output\n"
           "  --check         verify only, write nothing\n"
+          "  -O0, -O1        optimise: no (default) or yes\n"
+          "  --stats         what each pass changed, on standard error\n"
+          "  --verify-each   verify after every pass (always on in the\n"
+          "                  builds that are not release)\n"
+          "  --skip=a,b      passes not to run (also LIMBA_OPTSKIP)\n"
           "  -h, --help      this text\n",
           out);
 }
@@ -72,6 +78,8 @@ int main(int argc, char **argv)
 {
     const char *in = NULL, *outpath = NULL, *emit = NULL;
     bool check = false;
+    int level = 0;
+    limba_opt_options opt = {false, NULL, NULL};
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
@@ -79,6 +87,14 @@ int main(int argc, char **argv)
             return 0;
         } else if (!strcmp(a, "--check")) {
             check = true;
+        } else if (!strcmp(a, "-O0") || !strcmp(a, "-O1")) {
+            level = a[2] - '0';
+        } else if (!strcmp(a, "--stats")) {
+            opt.stats = stderr;
+        } else if (!strcmp(a, "--verify-each")) {
+            opt.verify_each = true;
+        } else if (!strncmp(a, "--skip=", 7)) {
+            opt.skip = a + 7;
         } else if (!strncmp(a, "--emit=", 7)) {
             emit = a + 7;
             if (strcmp(emit, "lir") && strcmp(emit, "lit")) {
@@ -120,6 +136,11 @@ int main(int argc, char **argv)
                                 : limba_parse(data, len, &d);
     free(data);
     if (!m || limba_verify(m, &d) != 0) {
+        fprintf(stderr, "limba: %s: %s\n", in, d.msg);
+        limba_module_free(m);
+        return 1;
+    }
+    if (level > 0 && limba_optimize(m, &opt, &d) != 0) {
         fprintf(stderr, "limba: %s: %s\n", in, d.msg);
         limba_module_free(m);
         return 1;

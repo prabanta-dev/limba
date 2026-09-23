@@ -1,0 +1,61 @@
+; constants and integer identities; the float sum is computed in f32
+func @f : fn(i64) -> i64 {
+b0(v0: i64):
+  v1 = iconst i64 6
+  v2 = iconst i64 7
+  v3 = mul i64 v1, v2
+  v4 = add i64 v0, v3
+  v5 = iconst i64 0
+  v6 = add i64 v4, v5
+  v7 = sub i64 v6, v6
+  v8 = add i64 v4, v7
+  ret v8
+}
+
+func @wrap : fn() -> i8 {
+b0:
+  v0 = iconst i8 100
+  v1 = add i8 v0, v0
+  ret v1
+}
+
+func @unsigned : fn() -> i1 {
+b0:
+  v0 = iconst i32 -1
+  v1 = iconst i32 1
+  v2 = icmp.ult i1 v0, v1
+  ret v2
+}
+
+func @single : fn() -> f32 {
+b0:
+  v0 = fconst f32 0x1p+0
+  v1 = fconst f32 0x1p-30
+  v2 = fadd f32 v0, v1
+  ret v2
+}
+;; expect
+func @f : fn(i64) -> i64 {
+b0(v0: i64):
+  v1 = iconst i64 42
+  v2 = add i64 v0, v1
+  ret v2
+}
+
+func @wrap : fn() -> i8 {
+b0:
+  v0 = iconst i8 -56
+  ret v0
+}
+
+func @unsigned : fn() -> i1 {
+b0:
+  v0 = iconst i1 0
+  ret v0
+}
+
+func @single : fn() -> f32 {
+b0:
+  v0 = fconst f32 0x1p+0
+  ret v0
+}

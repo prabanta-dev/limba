@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The optimiser: one pipeline in one table, repeated to a fixed point,
+  with per-pass counters, passes skipped by name and verification after
+  every pass. Passes: `cfg` (constant branches, unreachable blocks),
+  `fold` (exact constant folding and integer identities; nothing that
+  would trap, overflow or change a float), `gvn` (dominator-scoped value
+  numbering of pure operations), `dce` (unused values and effect-free
+  run-time calls). `limba -O1`, `--stats`, `--verify-each`, `--skip=`.
+- `test_opt`: expected results per pass and the corpus optimised twice.
 - The Limba IR: SSA with block parameters, typed scalar values, explicit
   control flow read from terminators, run-time library calls declared in a
   shared table (`include/limba/ir.h`, `ir_ops.def`, `runtime.def`).

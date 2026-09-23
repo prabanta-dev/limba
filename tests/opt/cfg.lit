@@ -1,0 +1,46 @@
+; a constant condition becomes a jump, and the other side goes
+func @f : fn(i64) -> i64 {
+b0(v0: i64):
+  v1 = iconst i1 1
+  cbr v1, b1, b2
+b1:
+  v2 = iconst i64 5
+  br b3(v2)
+b2:
+  br b3(v0)
+b3(v3: i64):
+  ret v3
+}
+
+func @s : fn() -> i32 {
+b0:
+  v0 = iconst i32 1
+  switch v0, b3 [0: b1, 1: b2]
+b1:
+  v1 = iconst i32 10
+  ret v1
+b2:
+  v2 = iconst i32 20
+  ret v2
+b3:
+  v3 = iconst i32 30
+  ret v3
+}
+;; expect
+func @f : fn(i64) -> i64 {
+b0(v0: i64):
+  br b1
+b1:
+  v1 = iconst i64 5
+  br b2(v1)
+b2(v2: i64):
+  ret v2
+}
+
+func @s : fn() -> i32 {
+b0:
+  br b1
+b1:
+  v0 = iconst i32 20
+  ret v0
+}
