@@ -489,7 +489,7 @@ static bool compare(unsigned cc, limba_id t, uint64_t a, uint64_t b)
     }
 }
 
-static bool convert(E *e, unsigned op, limba_id from, limba_id to, uint64_t a,
+static bool convert(unsigned op, limba_id from, limba_id to, uint64_t a,
                     uint64_t *r)
 {
     unsigned bits = limba_type_bits(to);
@@ -517,18 +517,30 @@ static bool convert(E *e, unsigned op, limba_id from, limba_id to, uint64_t a,
         *r = to == LIMBA_T_F32 ? fbits((float)uv(a, from), to)
                                : fbits((double)uv(a, from), to);
         return true;
-    case LIMBA_OP_FPTOSI:
+    case LIMBA_OP_FPTOSI: { /* saturating: NaN is 0 */
+        double lo = -ldexp(1, (int)bits - 1);
         tr = trunc(d);
-        if (isnan(d) || bits < 2 || tr < -ldexp(1, (int)bits - 1) ||
-            tr >= ldexp(1, (int)bits - 1))
-            return trap(e, TRAP_OVERFLOW);
-        *r = norm((uint64_t)(int64_t)tr, to);
+        if (isnan(d))
+            *r = 0;
+        else if (tr < lo)
+            *r = (uint64_t)(int64_t)lo;
+        else if (tr >= -lo)
+            *r = (uint64_t)(bits >= 64 ? INT64_MAX
+                                       : ((int64_t)1 << (bits - 1)) - 1);
+        else
+            *r = (uint64_t)(int64_t)tr;
+        *r = norm(*r, to);
         return true;
-    case LIMBA_OP_FPTOUI:
+    }
+    case LIMBA_OP_FPTOUI: /* saturating: NaN and negatives are 0 */
         tr = trunc(d);
-        if (isnan(d) || tr < 0 || tr >= ldexp(1, (int)bits))
-            return trap(e, TRAP_OVERFLOW);
-        *r = norm((uint64_t)tr, to);
+        if (isnan(d) || tr <= 0)
+            *r = 0;
+        else if (tr >= ldexp(1, (int)bits))
+            *r = width_mask(to);
+        else
+            *r = (uint64_t)tr;
+        *r = norm(*r, to);
         return true;
     case LIMBA_OP_BITCAST:
         if (from == LIMBA_T_I32) {
@@ -688,7 +700,7 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
                 r = compare(in->cc, f->insts[o[0]].type, v[o[0]], v[o[1]]);
                 break;
             case LIMBA_F_CONV:
-                ok = convert(e, in->op, f->insts[o[0]].type, t, v[o[0]], &r);
+                ok = convert(in->op, f->insts[o[0]].type, t, v[o[0]], &r);
                 break;
             case LIMBA_F_LOAD:
                 r = load((void *)(uintptr_t)v[o[0]], t);

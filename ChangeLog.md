@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A generator of random IR programs (`src/eval/gen.c`, `tools/lir_gen`),
+  valid by construction and always terminating, and `test_gen`: 200 seeds
+  through the OPTDIFF net on every build. Its tenth seed found that
+  `fptosi`/`fptoui` were pure in the table but trapping in the
+  interpreter: float to integer conversions now saturate (NaN gives 0),
+  in the interpreter and in `fold`.
 - A reference interpreter of the IR (`src/eval/`), slow and simple on
   purpose, with its own arithmetic: the yardstick of the optimiser.
   Provisional semantics where the IR has not fixed one yet (division by

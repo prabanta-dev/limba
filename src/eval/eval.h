@@ -10,8 +10,11 @@
  * the decision is provisional (job/docs/progetto_ir.md):
  *   division by zero, INT_MIN / -1             trap 11
  *   overflow of add.ov / sub.ov / mul.ov        trap 6
- *   fptosi / fptoui out of range, NaN           trap 6
  *   shift by the width or more                  the count modulo the width
+ *
+ * fptosi and fptoui saturate (too large: the maximum, too small: the
+ * minimum, NaN: 0), as WebAssembly's trunc_sat: they are pure, and a
+ * language that wants an error checks before converting.
  */
 #ifndef LIMBA_EVAL_H
 #define LIMBA_EVAL_H

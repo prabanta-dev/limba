@@ -59,7 +59,9 @@ LIMBA_OP(ICMP, "icmp", LIMBA_F_CMP, LIMBA_OPF_PURE)
 LIMBA_OP(FCMP, "fcmp", LIMBA_F_CMP, LIMBA_OPF_PURE)
 LIMBA_OP(SELECT, "select", LIMBA_F_TERN, LIMBA_OPF_PURE)
 
-/* conversions: the result type is the target */
+/* conversions: the result type is the target. fptosi and fptoui saturate
+   (NaN gives 0, out of range the nearest end of the type): they are pure,
+   and a language that wants an error checks before converting */
 LIMBA_OP(TRUNC, "trunc", LIMBA_F_CONV, LIMBA_OPF_PURE)
 LIMBA_OP(ZEXT, "zext", LIMBA_F_CONV, LIMBA_OPF_PURE)
 LIMBA_OP(SEXT, "sext", LIMBA_F_CONV, LIMBA_OPF_PURE)

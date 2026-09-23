@@ -7,9 +7,9 @@
  * Folding must give exactly what the machine would: nothing that may trap
  * is folded when it would trap (a division by zero, INT_MIN / -1, an
  * overflowing add.ov), shifts by the width or more are left alone, floats
- * are computed in their own precision, and a float to integer conversion
- * out of range stays. No float identities: x + 0.0 is not x when x is -0.0,
- * and a NaN has no identity at all.
+ * are computed in their own precision; float to integer conversions
+ * saturate, as the IR defines them. No float identities: x + 0.0 is not x when
+ * x is -0.0, and a NaN has no identity at all.
  *
  * Blocks are visited in dominator-tree order, so an operand is folded
  * before its uses; the pipeline repeats for what is left.
@@ -350,21 +350,30 @@ static bool fold_conv(fctx *c, limba_inst *in, uint32_t x)
         return true;
     case LIMBA_OP_FPTOSI:
     case LIMBA_OP_FPTOUI: {
-        /* only when the truncated value fits: out of range stays */
+        /* saturating, as the IR defines them: NaN gives 0, out of range
+           the nearest end of the type */
         unsigned bits = limba_type_bits(to);
         double tr = trunc(fa);
-        if (isnan(fa) || isinf(fa))
-            return false;
+        uint64_t v;
         if (in->op == LIMBA_OP_FPTOSI) {
             double lo = -ldexp(1.0, (int)bits - 1);
-            if (bits == 1 || tr < lo || tr >= -lo)
-                return false;
-            limba_inst_set_iconst(in, (int64_t)tr);
+            if (isnan(fa))
+                v = 0;
+            else if (tr < lo)
+                v = (uint64_t)smin(to);
+            else if (tr >= -lo)
+                v = (uint64_t)smin(to) - 1; /* the maximum */
+            else
+                v = (uint64_t)(int64_t)tr;
         } else {
-            if (tr < 0 || tr >= ldexp(1.0, (int)bits))
-                return false;
-            limba_inst_set_iconst(in, (int64_t)(uint64_t)tr);
+            if (isnan(fa) || tr <= 0)
+                v = 0;
+            else if (tr >= ldexp(1.0, (int)bits))
+                v = mask(bits);
+            else
+                v = (uint64_t)tr;
         }
+        limba_inst_set_iconst(in, (int64_t)v);
         return true;
     }
     case LIMBA_OP_BITCAST:
