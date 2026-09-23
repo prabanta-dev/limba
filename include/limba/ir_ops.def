@@ -47,9 +47,11 @@ LIMBA_OP(LSHR, "lshr", LIMBA_F_BIN, LIMBA_OPF_PURE)
 LIMBA_OP(ASHR, "ashr", LIMBA_F_BIN, LIMBA_OPF_PURE)
 
 /* floating point, IEEE 754 */
-LIMBA_OP(FADD, "fadd", LIMBA_F_BIN, LIMBA_OPF_PURE | LIMBA_OPF_COMMUTATIVE)
+/* fadd and fmul are not marked commutative: with two NaN operands the
+   result is the NaN of one of them, and which one depends on the order */
+LIMBA_OP(FADD, "fadd", LIMBA_F_BIN, LIMBA_OPF_PURE)
 LIMBA_OP(FSUB, "fsub", LIMBA_F_BIN, LIMBA_OPF_PURE)
-LIMBA_OP(FMUL, "fmul", LIMBA_F_BIN, LIMBA_OPF_PURE | LIMBA_OPF_COMMUTATIVE)
+LIMBA_OP(FMUL, "fmul", LIMBA_F_BIN, LIMBA_OPF_PURE)
 LIMBA_OP(FDIV, "fdiv", LIMBA_F_BIN, LIMBA_OPF_PURE)
 LIMBA_OP(FNEG, "fneg", LIMBA_F_UN, LIMBA_OPF_PURE)
 LIMBA_OP(FMA, "fma", LIMBA_F_TERN, LIMBA_OPF_PURE)
@@ -115,3 +117,11 @@ LIMBA_OP(CHECK, "check", LIMBA_F_CHECK,
 /* a block parameter: never written in the text form as an instruction,
    it is the list after the block name, b1(v3: i64) */
 LIMBA_OP(PARAM, "param", LIMBA_F_PARAM, LIMBA_OPF_PURE)
+
+/* rounding to an integral value, ties to even (IEEE 754
+   roundToIntegralTiesToEven, WebAssembly f64.nearest): CInt(x) is
+   fptosi(fround(x)) */
+LIMBA_OP(FROUND, "fround", LIMBA_F_UN, LIMBA_OPF_PURE)
+/* the same, ties away from zero (roundToIntegralTiesToAway): the rounding
+   of Ada, Integer(2.5) = 3 */
+LIMBA_OP(FROUNDA, "fround.away", LIMBA_F_UN, LIMBA_OPF_PURE)

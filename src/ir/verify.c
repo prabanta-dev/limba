@@ -370,8 +370,11 @@ static bool check_inst(vctx *v, uint32_t u)
     case LIMBA_F_UN:
         if (!vals(v, u, t, 1))
             return false;
-        if (t[0] != r || (in->op == LIMBA_OP_FNEG ? !limba_type_is_float(r)
-                                                  : !limba_type_is_int(r)))
+        if (t[0] != r ||
+            (in->op == LIMBA_OP_FNEG || in->op == LIMBA_OP_FROUND ||
+                     in->op == LIMBA_OP_FROUNDA
+                 ? !limba_type_is_float(r)
+                 : !limba_type_is_int(r)))
             IFAIL(u, "%s: operand and result types", op->text);
         break;
     case LIMBA_F_BIN: {

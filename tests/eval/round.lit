@@ -1,0 +1,76 @@
+; output: 2
+; output: 4
+; output: -2
+; output: 0
+; output: 2
+; output: -0
+; output: 3
+; output: 3
+; output: -3
+; output: 1
+; output: 0
+; result: 0
+; fround rounds to even on ties, keeps the sign of zero; CInt is
+; fptosi(fround(x)); the f32 case rounds 2.5 to 2 as well. fround.away
+; rounds ties away from zero, as Ada: 2.5 -> 3, -2.5 -> -3, 0.5 -> 1, and
+; 0.49999999999999994 -> 0 (adding 0.5 would round it up to 1)
+func @cint : fn(f64) -> i64 {
+b0(v0: f64):
+  v1 = fround f64 v0
+  v2 = fptosi i64 v1
+  ret v2
+}
+
+func @main : fn() -> i64 {
+b0:
+  v0 = fconst f64 0x1.4p+1
+  v1 = call i64 @cint(v0)
+  call.rt void print_i64(v1)
+  call.rt void print_nl()
+  v2 = fconst f64 0x1.cp+1
+  v3 = call i64 @cint(v2)
+  call.rt void print_i64(v3)
+  call.rt void print_nl()
+  v4 = fneg f64 v0
+  v5 = call i64 @cint(v4)
+  call.rt void print_i64(v5)
+  call.rt void print_nl()
+  v6 = fconst f64 0x1p-1
+  v7 = call i64 @cint(v6)
+  call.rt void print_i64(v7)
+  call.rt void print_nl()
+  v8 = fconst f64 0x1.8p+0
+  v9 = call i64 @cint(v8)
+  call.rt void print_i64(v9)
+  call.rt void print_nl()
+  v10 = fconst f64 -0x1p-1
+  v11 = fround f64 v10
+  call.rt void print_f64(v11)
+  call.rt void print_nl()
+  v12 = fconst f32 0x1.4p+1
+  v13 = fround f32 v12
+  v14 = fconst f32 0x1p+0
+  v15 = fadd f32 v13, v14
+  v16 = fptosi i64 v15
+  call.rt void print_i64(v16)
+  call.rt void print_nl()
+  v17 = fround.away f64 v0
+  v18 = fptosi i64 v17
+  call.rt void print_i64(v18)
+  call.rt void print_nl()
+  v19 = fround.away f64 v4
+  v20 = fptosi i64 v19
+  call.rt void print_i64(v20)
+  call.rt void print_nl()
+  v21 = fround.away f64 v6
+  v22 = fptosi i64 v21
+  call.rt void print_i64(v22)
+  call.rt void print_nl()
+  v23 = fconst f64 0x1.fffffffffffffp-2
+  v24 = fround.away f64 v23
+  v25 = fptosi i64 v24
+  call.rt void print_i64(v25)
+  call.rt void print_nl()
+  v26 = iconst i64 0
+  ret v26
+}

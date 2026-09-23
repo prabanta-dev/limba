@@ -14,6 +14,7 @@
  * Blocks are visited in dominator-tree order, so an operand is folded
  * before its uses; the pipeline repeats for what is left.
  */
+#define _GNU_SOURCE /* roundeven */
 #include "pass.h"
 
 #include "common/xalloc.h"
@@ -265,6 +266,12 @@ static bool fold_float(const limba_inst *in, const double *v, int64_t *r)
         case LIMBA_OP_FNEG:
             x = -a;
             break;
+        case LIMBA_OP_FROUND:
+            x = roundevenf(a);
+            break;
+        case LIMBA_OP_FROUNDA:
+            x = roundf(a); /* C's round: halfway away from zero */
+            break;
         case LIMBA_OP_FMA:
             x = fmaf(a, b, c);
             break;
@@ -288,6 +295,12 @@ static bool fold_float(const limba_inst *in, const double *v, int64_t *r)
         case LIMBA_OP_FNEG:
             x = -v[0];
             break;
+        case LIMBA_OP_FROUND:
+            x = roundeven(v[0]);
+            break;
+        case LIMBA_OP_FROUNDA:
+            x = round(v[0]);
+            break;
         case LIMBA_OP_FMA:
             x = fma(v[0], v[1], v[2]);
             break;
@@ -295,6 +308,12 @@ static bool fold_float(const limba_inst *in, const double *v, int64_t *r)
             return false;
         }
     }
+    /* A NaN made by arithmetic has no fixed sign or payload (IEEE 754
+       6.3): which one comes out depends on the machine and the order of
+       the operands. Leave it to run time, so that optimising never changes
+       the bits a program sees. Negation only flips a bit: it may fold. */
+    if (isnan(x) && in->op != LIMBA_OP_FNEG)
+        return false;
     *r = fbits(x, t);
     return true;
 }
@@ -340,6 +359,9 @@ static bool fold_conv(fctx *c, limba_inst *in, uint32_t x)
         return false;
     }
     if (!fval(c, x, &fa))
+        return false;
+    /* converting a NaN between widths may change its bits: run time */
+    if (isnan(fa) && (in->op == LIMBA_OP_FPTRUNC || in->op == LIMBA_OP_FPEXT))
         return false;
     switch (in->op) {
     case LIMBA_OP_FPTRUNC:
@@ -486,7 +508,8 @@ static bool fold_inst(fctx *c, uint32_t id)
 
     switch (op->format) {
     case LIMBA_F_UN:
-        if (in->op == LIMBA_OP_FNEG) {
+        if (in->op == LIMBA_OP_FNEG || in->op == LIMBA_OP_FROUND ||
+            in->op == LIMBA_OP_FROUNDA) {
             if (!fval(c, o[0], &v[0]) || !fold_float(in, v, &r))
                 return false;
             limba_inst_set_fconst(in, r);

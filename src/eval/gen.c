@@ -234,12 +234,17 @@ static void int_op(G *g)
 
 static void float_op(G *g)
 {
-    static const unsigned ops[] = {LIMBA_OP_FADD, LIMBA_OP_FSUB, LIMBA_OP_FMUL,
-                                   LIMBA_OP_FDIV, LIMBA_OP_FNEG, LIMBA_OP_FMA};
+    static const unsigned ops[] = {
+        LIMBA_OP_FADD, LIMBA_OP_FSUB, LIMBA_OP_FMUL,   LIMBA_OP_FDIV,
+        LIMBA_OP_FNEG, LIMBA_OP_FMA,  LIMBA_OP_FROUND, LIMBA_OP_FROUNDA};
     limba_id t = chance(g, 60) ? LIMBA_T_F64 : LIMBA_T_F32;
     unsigned op = ops[below(g, sizeof(ops) / sizeof(ops[0]))];
     uint32_t o[3] = {pick(g, t), pick(g, t), pick(g, t)};
-    uint32_t n = op == LIMBA_OP_FNEG ? 1 : op == LIMBA_OP_FMA ? 3 : 2;
+    uint32_t n =
+        op == LIMBA_OP_FNEG || op == LIMBA_OP_FROUND || op == LIMBA_OP_FROUNDA
+            ? 1
+        : op == LIMBA_OP_FMA ? 3
+                             : 2;
     keep(g, t, emit(g, op, t, 0, 0, 0, o, n));
 }
 

@@ -376,6 +376,24 @@ static bool int_bin(E *e, unsigned op, limba_id t, uint64_t a, uint64_t b,
     return true;
 }
 
+/* rounding ties away from zero, written from the integer part so that
+   it does not share its method with fold's round(): x - trunc(x) is exact */
+static double round_away(double x)
+{
+    double t = trunc(x), d = x - t;
+    if (isnan(x) || isinf(x))
+        return x;
+    return fabs(d) >= 0.5 ? t + copysign(1.0, x) : t;
+}
+
+static float round_awayf(float x)
+{
+    float t = truncf(x), d = x - t;
+    if (isnan(x) || isinf(x))
+        return x;
+    return fabsf(d) >= 0.5f ? t + copysignf(1.0f, x) : t;
+}
+
 static uint64_t float_op(unsigned op, limba_id t, uint64_t a, uint64_t b,
                          uint64_t c)
 {
@@ -396,6 +414,12 @@ static uint64_t float_op(unsigned op, limba_id t, uint64_t a, uint64_t b,
             break;
         case LIMBA_OP_FNEG:
             r = -x;
+            break;
+        case LIMBA_OP_FROUND:
+            r = nearbyintf(x); /* the default mode: to nearest, ties even */
+            break;
+        case LIMBA_OP_FROUNDA:
+            r = round_awayf(x);
             break;
         case LIMBA_OP_FMA:
             r = fmaf(x, y, z);
@@ -419,6 +443,12 @@ static uint64_t float_op(unsigned op, limba_id t, uint64_t a, uint64_t b,
         break;
     case LIMBA_OP_FNEG:
         r = -x;
+        break;
+    case LIMBA_OP_FROUND:
+        r = nearbyint(x);
+        break;
+    case LIMBA_OP_FROUNDA:
+        r = round_away(x);
         break;
     case LIMBA_OP_FMA:
         r = fma(x, y, z);
@@ -677,7 +707,8 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
                 r = 0;
                 break;
             case LIMBA_F_UN:
-                if (in->op == LIMBA_OP_FNEG)
+                if (in->op == LIMBA_OP_FNEG || in->op == LIMBA_OP_FROUND ||
+                    in->op == LIMBA_OP_FROUNDA)
                     r = float_op(in->op, t, v[o[0]], 0, 0);
                 else if (in->op == LIMBA_OP_NEG)
                     r = norm(0 - uv(v[o[0]], t), t);

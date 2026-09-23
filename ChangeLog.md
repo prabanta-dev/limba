@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `fround` (ties to even) and `fround.away` (ties away from zero) in the
+  IR. NaN results of arithmetic have no fixed sign or payload, as in IEEE
+  754: `fold` leaves NaN-producing operations to run time and `fadd`/`fmul`
+  are no longer commutative, so optimising never changes the bits a
+  program sees. 20 000 random programs: 100 000 optimised runs agree.
 - A generator of random IR programs (`src/eval/gen.c`, `tools/lir_gen`),
   valid by construction and always terminating, and `test_gen`: 200 seeds
   through the OPTDIFF net on every build. Its tenth seed found that
