@@ -1,0 +1,9 @@
+; trap: 6
+func @main : fn() -> i64 {
+b0:
+  v0 = iconst i32 2147483647
+  v1 = iconst i32 1
+  v2 = add.ov i32 v0, v1
+  v3 = sext i64 v2
+  ret v3
+}

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A reference interpreter of the IR (`src/eval/`), slow and simple on
+  purpose, with its own arithmetic: the yardstick of the optimiser.
+  Provisional semantics where the IR has not fixed one yet (division by
+  zero and INT_MIN / -1 trap 11, overflow traps 6, shift count modulo the
+  width). `tools/lir_run` runs a module by hand.
+- `test_eval`: eight programs checked against their expected output, and
+  the OPTDIFF net: every program with a `@main` must behave the same
+  unoptimised, fully optimised and with each pass alone.
 - The optimiser: one pipeline in one table, repeated to a fixed point,
   with per-pass counters, passes skipped by name and verification after
   every pass. Passes: `cfg` (constant branches, unreachable blocks),

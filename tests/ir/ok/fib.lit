@@ -21,7 +21,7 @@ b2:
 
 func @main : fn() -> i64 export {
 b0:
-  v0 = iconst i64 30
+  v0 = iconst i64 20
   v1 = call i64 @fib(v0)
   call.rt void print_i64(v1)
   call.rt void print_nl()
