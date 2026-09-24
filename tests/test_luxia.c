@@ -798,6 +798,22 @@ static const run_case run_cases[] = {
      "u.a := 1; u.b := 2; w := u; w.a := 5; writeln(u.a, \" \", w.a, \" \", "
      "w.b); end t.",
      "1 5 2\n", "ok"},
+    /* new gives values outside a narrow range, caught when read through
+       a pointer; a copy is not checked (§ 4.5) */
+    {"program n; type Small = Int32 range 4..9; Tiny = UInt8 range 0..3; "
+     "Rec = record a: Small; b: Int32; c: Tiny; v: array[Int32 range 1..5] "
+     "of Small; end; Ptr = ^Rec; var p: Ptr := nil; r: Rec; begin p := "
+     "new(Rec); writeln(p.b); p.a := 5; writeln(p.a); r := p^; "
+     "writeln(r.c, \" \", r.v[3]);\n  writeln(p.c); end n.",
+     "0\n5\n4 3\n", "trap 101 at 2:12"},
+    {"program n; type Small = Int32 range 4..9; Rec = record v: "
+     "array[Int32 range 1..5] of Small; end; Ptr = ^Rec; var p: Ptr := nil; "
+     "begin p := new(Rec); p.v[2] := 7; writeln(p.v[2]);\n  "
+     "writeln(p.v[5]); end n.",
+     "7\n", "trap 101 at 2:14"},
+    {"program n; type Small = Int32 range 4..9; SP = ^Small; var q: SP := "
+     "nil; begin q := new(Small);\n  writeln(q^); end n.",
+     "", "trap 101 at 2:12"},
     /* the target of an assignment before its value */
     {"program p;\nvar a: array[Int32 range 1..3] of Int32; z: Int32 := "
      "0;\nbegin\n  a[1 div z] := 7 div z;\nend p.",

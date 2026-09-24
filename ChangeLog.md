@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- What `new` gives, as Ada's bounded error in the strict form of
+  `Normalize_Scalars` with validity checks: every scalar of a range
+  narrower than its base gets a value outside it (the rest is 0), and a
+  read through a pointer (`p.f`, `p^`, `p[i]`) checks it, a range error
+  at the `.`, `^` or `[`. Arrays are filled by doubling copies of their
+  first element. The random programs leave fields of new records without
+  a value and read them.
 - A nil pointer is reported where it is gone through, the `.` or the `^`
   (it took the place of the statement before).
 - The random programs use records (fields read and written, copies,

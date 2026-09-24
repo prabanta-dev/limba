@@ -733,6 +733,24 @@ static int pick_typed(G *g, uint32_t t, bool write)
     return n ? (int)chosen : -1;
 }
 
+/* a range narrower than its base: new gives its fields a value outside
+   (luxia_0.md § 4.5), which *bad receives */
+static bool narrow_bad(const G *g, uint32_t t, v128 *bad)
+{
+    if (g->ty[t].k != K_RANGE)
+        return false;
+    unsigned b = g->ty[t].base;
+    if (g->ty[t].lo > tmin(b)) {
+        *bad = g->ty[t].lo - 1;
+        return true;
+    }
+    if (g->ty[t].hi < tmax(b)) {
+        *bad = g->ty[t].hi + 1;
+        return true;
+    }
+    return false;
+}
+
 static uint32_t nil_of(G *g, uint32_t pt)
 {
     return new_e(g, E_NIL, pt);
@@ -776,7 +794,9 @@ static uint32_t heap_stmt(G *g, uint32_t *out)
         out[n++] = s;
         for (uint32_t k = 0; k < g->ty[rt].elem; k++) {
             /* literals: a field of a new record has no value yet, and an
-               expression could read one */
+               expression could read one; some stay without a value */
+            if (chance(g, 45))
+                continue;
             uint32_t ft = field_type(g, rt, k);
             uint32_t e = lit(g, ft,
                              base(g, ft) == T_BOOL
@@ -787,6 +807,15 @@ static uint32_t heap_stmt(G *g, uint32_t *out)
             g->st[a].fld = k + 1;
             g->st[a].e = e;
             out[n++] = a;
+        }
+        if (chance(g, 50)) {
+            /* read a field at once: without a value, it is caught */
+            uint32_t f = below(g, g->ty[rt].elem);
+            uint32_t item = field_ref(g, (uint32_t)p, f);
+            uint32_t w = new_s(g, S_WRITE);
+            g->st[w].args = keep_list(g, &item, 1);
+            g->st[w].nargs = 1;
+            out[n++] = w;
         }
         return n;
     }
@@ -2307,7 +2336,12 @@ static v128 ev(X *x, uint32_t i)
         v128 pv = x->cell[x->ref[e->var]];
         if (pv == 0)
             return fail(x, i, 102);
-        return x->heap[pv - 1 + e->b];
+        v128 v = x->heap[pv - 1 + e->b], bad;
+        /* a value new gave and nobody assigned */
+        uint32_t ft = field_type(g, record_of(g, vt), e->b);
+        if (narrow_bad(g, ft, &bad) && (v < lo_of(g, ft) || v > hi_of(g, ft)))
+            return fail(x, i, 101);
+        return v;
     }
     case E_NIL:
         return 0;
@@ -2507,11 +2541,13 @@ static int run_stmt(X *x, uint32_t si)
     case S_CONST:
         return X_NEXT; /* computed by the front end */
     case S_NEW: {
-        uint32_t n = g->ty[g->ty[g->v[s->var].t].elem].elem;
+        uint32_t rt = g->ty[g->v[s->var].t].elem, n = g->ty[rt].elem;
         uint32_t at = x->nheap;
         for (uint32_t k = 0; k < n; k++) {
+            v128 bad = 0;
+            narrow_bad(g, field_type(g, rt, k), &bad);
             LIMBA_GROW(x->heap, x->nheap, x->capheap);
-            x->heap[x->nheap++] = 0;
+            x->heap[x->nheap++] = bad;
         }
         x->cell[x->ref[s->var]] = (v128)at + 1;
         return X_NEXT;
