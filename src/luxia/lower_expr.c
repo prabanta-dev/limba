@@ -681,6 +681,8 @@ static limba_id unary(lxl *L, uint32_t node)
         return un(L, LIMBA_OP_NOT, it, v);
     case LX_KW_ABS: {
         limba_id neg, lt0;
+        if (!is_float(L, t) && !lxl_signed(L, t))
+            return v; /* a number without a sign is its own abs */
         if (is_float(L, t)) {
             neg = un(L, LIMBA_OP_FNEG, it, v);
             lt0 = cmp(L, true, LIMBA_CC_OLT, v, fconst(L, it, 0.0));

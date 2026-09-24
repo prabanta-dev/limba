@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Random Luxia programs that know what they print (`src/luxia/gen.c`,
+  `tools/lx_gen`): well-typed by construction, with integers of every
+  family, Boolean, routines with `in` and `var` parameters and the
+  statements of Luxia 0; the generator runs each program itself, by the
+  rules of the specification, and `test_luxia` checks that the program
+  compiled, optimised or not, prints the same and stops with the same
+  run-time error at the same place (`LIMBA_LXGEN_SEEDS`,
+  `LIMBA_LXGEN_FIRST`). Found at once: `abs` of an unsigned number was
+  computed as if it had a sign, fixed.
 - The other eight single-thread benchmarks of the Benchmarks Game in
   Luxia (`tests/luxia/benchmarks/`): binary-trees, fannkuch-redux, fasta,
   k-nucleotide, mandelbrot, pidigits, reverse-complement, spectral-norm.

@@ -8,6 +8,7 @@
  */
 #include "front/diag.h"
 #include "front/source.h"
+#include "luxia/gen.h"
 #include "luxia/lex.h"
 #include "luxia/parse.h"
 #include "eval/eval.h"
@@ -694,6 +695,11 @@ static const run_case run_cases[] = {
      "81 1024\n", "ok"},
     {"program p; begin writeln(\"a\"); halt(3); writeln(\"b\"); end.", "a\n",
      "halt 3"},
+    /* abs of a number without a sign is the number (found by the random
+       programs: it was taken as signed) */
+    {"program p; var u: UInt16 := 65534; b: UInt8 := 200; begin "
+     "writeln(abs (u), \" \", abs (b)); end.",
+     "65534 200\n", "ok"},
     /* checked on the SSA form */
     {"program p; var x: Int32; begin var y: Int32; writeln(y); end.", "",
      "errors L0053@1:54"},
@@ -937,6 +943,61 @@ static int test_sema(void)
     return failures;
 }
 
+static uint64_t env(const char *name, uint64_t def)
+{
+    const char *s = getenv(name);
+    return s && *s ? strtoull(s, NULL, 0) : def;
+}
+
+/* random programs (src/luxia/gen.c) print what their generator says, and
+   end where it says:
+     LIMBA_LXGEN_SEEDS  how many seeds (default 200)
+     LIMBA_LXGEN_FIRST  the first seed (default 1) */
+static int test_random(void)
+{
+    uint64_t first = env("LIMBA_LXGEN_FIRST", 1);
+    uint64_t count = env("LIMBA_LXGEN_SEEDS", 200);
+    unsigned ok = 0, trap[128] = {0}, other = 0, failures = 0;
+    size_t bytes = 0;
+    for (uint64_t seed = first; seed < first + count; seed++) {
+        limba_lxgen p;
+        if (!limba_lxgen_make(seed, &p)) {
+            other++;
+            continue;
+        }
+        char end[256];
+        size_t olen;
+        char *out = compile_run(p.src, NULL, 0, end, sizeof(end), NULL, &olen);
+        if (strcmp(end, p.end) || olen != p.outlen ||
+            (olen && memcmp(out, p.out, olen))) {
+            size_t k = 0;
+            while (k < olen && k < p.outlen && out[k] == p.out[k])
+                k++;
+            fprintf(stderr,
+                    "test_luxia: random seed %llu: ended %s, expected %s; "
+                    "output differs at byte %zu of %zu (%zu expected); "
+                    "tools/lx_gen %llu\n",
+                    (unsigned long long)seed, end, p.end, k, olen, p.outlen,
+                    (unsigned long long)seed);
+            failures++;
+        }
+        unsigned code;
+        if (!strcmp(p.end, "ok"))
+            ok++;
+        else if (sscanf(p.end, "trap %u", &code) == 1 && code < 128)
+            trap[code]++;
+        bytes += p.outlen;
+        free(out);
+        limba_lxgen_free(&p);
+    }
+    printf("test_luxia: %llu random programs from %llu: %u ended, trapped "
+           "%u overflow, %u division, %u conversion, %u shift; %u over the "
+           "limits; %zu bytes printed, %u failures\n",
+           (unsigned long long)count, (unsigned long long)first, ok, trap[6],
+           trap[11], trap[103], trap[104], other, bytes, failures);
+    return (int)failures;
+}
+
 int main(void)
 {
     int failures = test_lexer() + test_report() + test_limit();
@@ -947,6 +1008,7 @@ int main(void)
     unsigned programs = 0;
     failures += test_programs(&programs);
     failures += test_run();
+    failures += test_random();
     printf("test_luxia: %zu lexer, %zu expression, %zu program, %zu "
            "semantic and %zu run cases, %u valid programs, report and limit, "
            "%d failures\n",
