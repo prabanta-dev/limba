@@ -85,7 +85,9 @@ static v128 tmax(unsigned t)
     return ((v128)1 << tbits(t)) - 1;
 }
 
-enum { K_BASE, K_RANGE, K_ARRAY, K_OPEN };
+/* K_RECORD: fields index..index+elem-1 of the table of fields; K_PTR:
+   a pointer to record elem */
+enum { K_BASE, K_RANGE, K_ARRAY, K_OPEN, K_RECORD, K_PTR };
 
 typedef struct {
     uint8_t k, base;      /* base: the scalar type of a range or of itself */
@@ -136,7 +138,9 @@ enum {
     E_IN,
     E_LOW,
     E_HIGH,
-    E_LEN
+    E_LEN,
+    E_FIELD, /* field b of variable var, a record or a pointer to one */
+    E_NIL
 };
 
 typedef struct {
@@ -161,7 +165,9 @@ enum {
     S_EXIT,
     S_CONT,
     S_RETURN,
-    S_CONST
+    S_CONST,
+    S_NEW, /* var := new(its record) */
+    S_COPY /* var := the record variable of e */
 };
 
 typedef struct {
@@ -174,7 +180,8 @@ typedef struct {
     uint32_t fn, args, nargs;
     uint32_t line, col;   /* the statement */
     uint32_t nline, ncol; /* the name it declares */
-    uint32_t iline, icol; /* the [ of its target */
+    uint32_t iline, icol; /* the [ or the . of its target */
+    uint32_t fld;         /* a field of the target, plus 1; 0 for none */
 } xs;
 
 typedef struct {
@@ -233,6 +240,8 @@ typedef struct {
     uint32_t main_blk, main_n;
     uint32_t *gc; /* the statements of the global constants */
     uint32_t ngc, capgc;
+    uint32_t *fld; /* the types of the fields of the records */
+    uint32_t nfld, capfld;
 } G;
 
 /* ---- randomness ---- */
@@ -314,6 +323,27 @@ static v128 lo_of(const G *g, uint32_t t)
 static v128 hi_of(const G *g, uint32_t t)
 {
     return g->ty[t].hi;
+}
+
+static bool is_scalar(const G *g, uint32_t t)
+{
+    return g->ty[t].k == K_BASE || g->ty[t].k == K_RANGE;
+}
+
+static bool is_record(const G *g, uint32_t t)
+{
+    return g->ty[t].k == K_RECORD;
+}
+
+static bool is_ptr(const G *g, uint32_t t)
+{
+    return g->ty[t].k == K_PTR;
+}
+
+/* the record a variable of type t names: itself, or what it points to */
+static uint32_t record_of(const G *g, uint32_t t)
+{
+    return is_ptr(g, t) ? g->ty[t].elem : t;
 }
 
 static bool is_array(const G *g, uint32_t t)
@@ -461,7 +491,7 @@ static int pick_var(G *g, uint32_t t, bool write, bool exact)
     for (uint32_t i = 0; i < g->nscope; i++) {
         uint32_t v = g->scope[i];
         uint32_t vt = g->v[v].t;
-        if (is_array(g, vt) || is_const(g, v))
+        if (!is_scalar(g, vt) || is_const(g, v))
             continue;
         if (exact         ? vt != t
             : t == NTYPES ? base(g, vt) == T_BOOL
@@ -599,6 +629,8 @@ static uint32_t element(G *g, uint32_t v, int d)
     return i;
 }
 
+static uint32_t typed_arg(G *g, uint32_t pt, bool write);
+
 static uint32_t call_expr(G *g, uint32_t fn, int d)
 {
     uint32_t a[4];
@@ -608,6 +640,9 @@ static uint32_t call_expr(G *g, uint32_t fn, int d)
         if (g->ty[pt].k == K_OPEN) {
             /* the array its type came from is a global: always there */
             a[k] = var_ref(g, (uint32_t)pick_argument(g, pt, false));
+        } else if (is_record(g, pt) || is_ptr(g, pt)) {
+            /* a global of every such type exists */
+            a[k] = typed_arg(g, pt, false);
         } else {
             a[k] = value_for(g, pt, d - 1);
         }
@@ -634,6 +669,135 @@ static unsigned within(G *g, unsigned t)
         if (fam(t) == 'B' || (tmin(u) >= tmin(t) && tmax(u) <= tmax(t)))
             c[n++] = u;
     return c[below(g, n)];
+}
+
+/* ---- records and pointers ---- */
+
+static uint32_t field_type(const G *g, uint32_t rt, uint32_t f)
+{
+    return g->fld[g->ty[rt].index + f];
+}
+
+/* a field of a record variable, or through a pointer variable, whose type
+   has base t (NTYPES: any); its index in *f; -1 if none. write: the
+   field is to be assigned (through a pointer only where the heap may be
+   written, not in a function) */
+static int pick_field(G *g, unsigned t, bool write, uint32_t *f)
+{
+    uint32_t n = 0;
+    int chosen = -1;
+    for (uint32_t i = 0; i < g->nscope; i++) {
+        uint32_t v = g->scope[i], vt = g->v[v].t;
+        if (is_const(g, v) || !(is_record(g, vt) || is_ptr(g, vt)))
+            continue;
+        if (write && (is_record(g, vt) ? !writable(g, v) : in_function(g)))
+            continue;
+        uint32_t rt = record_of(g, vt);
+        for (uint32_t k = 0; k < g->ty[rt].elem; k++) {
+            if (t != NTYPES && base(g, field_type(g, rt, k)) != t)
+                continue;
+            if (below(g, ++n) == 0) {
+                chosen = (int)v;
+                *f = k;
+            }
+        }
+    }
+    return chosen;
+}
+
+static uint32_t field_ref(G *g, uint32_t v, uint32_t f)
+{
+    uint32_t i = new_e(g, E_FIELD, field_type(g, record_of(g, g->v[v].t), f));
+    g->e[i].var = v;
+    g->e[i].b = f;
+    return i;
+}
+
+/* a visible variable of type t exactly (a record or a pointer) that is
+   not a constant, writable if asked; with a predicate of kind instead
+   when t is 0: 1 records, 2 pointers; -1 if none */
+static int pick_typed(G *g, uint32_t t, bool write)
+{
+    uint32_t n = 0, chosen = 0;
+    for (uint32_t i = 0; i < g->nscope; i++) {
+        uint32_t v = g->scope[i], vt = g->v[v].t;
+        if (is_const(g, v))
+            continue;
+        if (t == 1 ? !is_record(g, vt) : t == 2 ? !is_ptr(g, vt) : vt != t)
+            continue;
+        if (write && !writable(g, v))
+            continue;
+        if (below(g, ++n) == 0)
+            chosen = v;
+    }
+    return n ? (int)chosen : -1;
+}
+
+static uint32_t nil_of(G *g, uint32_t pt)
+{
+    return new_e(g, E_NIL, pt);
+}
+
+/* an argument for a record or pointer parameter of type pt: a variable
+   of that type (writable for a var parameter), or nil; 0 if none */
+static uint32_t typed_arg(G *g, uint32_t pt, bool write)
+{
+    if (is_ptr(g, pt) && chance(g, 25))
+        return nil_of(g, pt);
+    int v = pick_typed(g, pt, write);
+    return v < 0 ? 0 : var_ref(g, (uint32_t)v);
+}
+
+/* p := new(R) and a value for each field, p := q or nil, r1 := r2: into
+   out, the count (0 if nothing fits) */
+static uint32_t heap_stmt(G *g, uint32_t *out)
+{
+    if (chance(g, 30)) {
+        int d = pick_typed(g, 1, true);
+        if (d < 0)
+            return 0;
+        int src = pick_typed(g, g->v[d].t, false);
+        for (int k = 0; k < 4 && src == d; k++)
+            src = pick_typed(g, g->v[d].t, false); /* another, if any */
+        uint32_t s = new_s(g, S_COPY);
+        g->st[s].var = (uint32_t)d;
+        g->st[s].e = var_ref(g, (uint32_t)src);
+        out[0] = s;
+        return 1;
+    }
+    int p = pick_typed(g, 2, true);
+    if (p < 0)
+        return 0;
+    uint32_t pt = g->v[p].t, rt = g->ty[pt].elem;
+    if (chance(g, 60)) {
+        uint32_t n = 0;
+        uint32_t s = new_s(g, S_NEW);
+        g->st[s].var = (uint32_t)p;
+        out[n++] = s;
+        for (uint32_t k = 0; k < g->ty[rt].elem; k++) {
+            /* literals: a field of a new record has no value yet, and an
+               expression could read one */
+            uint32_t ft = field_type(g, rt, k);
+            uint32_t e = lit(g, ft,
+                             base(g, ft) == T_BOOL
+                                 ? below(g, 2)
+                                 : rand_in(g, lo_of(g, ft), hi_of(g, ft)));
+            uint32_t a = new_s(g, S_ASSIGN);
+            g->st[a].var = (uint32_t)p;
+            g->st[a].fld = k + 1;
+            g->st[a].e = e;
+            out[n++] = a;
+        }
+        return n;
+    }
+    int q = pick_typed(g, pt, false);
+    uint32_t e =
+        q >= 0 && chance(g, 70) ? var_ref(g, (uint32_t)q) : nil_of(g, pt);
+    uint32_t s = new_s(g, S_ASSIGN);
+    g->st[s].var = (uint32_t)p;
+    g->st[s].e = e;
+    out[0] = s;
+    return 1;
 }
 
 /* ---- constants computed exactly ---- */
@@ -788,6 +952,12 @@ static uint32_t leaf(G *g, unsigned t, bool need_var, int d)
 {
     if (!need_var && t != T_BOOL && chance(g, 12))
         return const_leaf(g, t);
+    if (chance(g, 15)) {
+        uint32_t f;
+        int v = pick_field(g, t, false, &f);
+        if (v >= 0)
+            return field_ref(g, (uint32_t)v, f);
+    }
     int v = pick_var(g, t, false, false);
     int a = d > 0 && chance(g, 25) ? pick_array(g, t, false) : -1;
     if (a >= 0)
@@ -865,6 +1035,15 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
         choice = 0;
     }
     if (f == 'L') {
+        int p = chance(g, 10) ? pick_typed(g, 2, false) : -1;
+        if (p >= 0) {
+            uint32_t pt = g->v[p].t;
+            int q = pick_typed(g, pt, false);
+            uint32_t other = q >= 0 && chance(g, 50) ? var_ref(g, (uint32_t)q)
+                                                     : nil_of(g, pt);
+            return binop(g, chance(g, 50) ? O_EQ : O_NE, T_BOOL,
+                         var_ref(g, (uint32_t)p), other);
+        }
         if (choice < 4) {
             unsigned u = any_type(g);
             uint32_t a = expr(g, u, d - 1, false);
@@ -991,7 +1170,8 @@ static uint32_t declare(G *g, uint32_t t)
 static uint32_t selector_type(const G *g, uint32_t e)
 {
     unsigned k = g->e[e].k;
-    return k == E_VAR || k == E_INDEX || k == E_CALL || k == E_CONV
+    return k == E_VAR || k == E_INDEX || k == E_CALL || k == E_CONV ||
+                   k == E_FIELD
                ? g->e[e].t
                : base(g, g->e[e].t);
 }
@@ -1010,9 +1190,28 @@ static uint32_t stmt(G *g, uint32_t *out)
         out[0] = constant(g);
         return 1;
     }
+    if (!pure && chance(g, 6)) {
+        uint32_t k = heap_stmt(g, out);
+        if (k)
+            return k;
+    }
     if (c < 14) {
         out[0] = declare(g, var_type(g));
         return 1;
+    }
+    if (c < 36 && chance(g, 25)) {
+        uint32_t f;
+        int v = pick_field(g, NTYPES, true, &f);
+        if (v >= 0) {
+            uint32_t ft = field_type(g, record_of(g, g->v[v].t), f);
+            uint32_t e = value_for(g, ft, depth(g));
+            uint32_t s = new_s(g, S_ASSIGN);
+            g->st[s].var = (uint32_t)v;
+            g->st[s].fld = f + 1;
+            g->st[s].e = e;
+            out[0] = s;
+            return 1;
+        }
     }
     if (c < 36) {
         int a = chance(g, 30) ? pick_array(g, NTYPES, true) : -1;
@@ -1208,12 +1407,16 @@ static uint32_t stmt(G *g, uint32_t *out)
             bool ok = true;
             for (uint32_t k = 0; k < g->r[fn].np && ok; k++) {
                 uint32_t p = g->r[fn].par[k];
-                if (g->ty[g->v[p].t].k == K_OPEN) {
-                    int v = pick_argument(g, g->v[p].t, g->v[p].kind == V_VAR);
+                uint32_t pt = g->v[p].t;
+                if (g->ty[pt].k == K_OPEN) {
+                    int v = pick_argument(g, pt, g->v[p].kind == V_VAR);
                     if (v < 0)
                         ok = false;
                     else
                         a[k] = var_ref(g, (uint32_t)v);
+                } else if (is_record(g, pt) || is_ptr(g, pt)) {
+                    a[k] = typed_arg(g, pt, g->v[p].kind == V_VAR);
+                    ok = a[k] != 0;
                 } else if (g->v[p].kind == V_VAR) {
                     /* a var parameter takes a variable of its very type */
                     int v = pick_var(g, g->v[p].t, true, true);
@@ -1271,11 +1474,11 @@ static uint32_t block(G *g, int n, uint32_t *count)
     uint32_t *x = NULL, nx = 0, cap = 0;
     g->nesting++;
     for (int i = 0; i < n && g->budget > 0; i++) {
-        uint32_t two[2];
-        uint32_t k = stmt(g, two);
+        uint32_t some[8];
+        uint32_t k = stmt(g, some);
         for (uint32_t j = 0; j < k; j++) {
             LIMBA_GROW(x, nx, cap);
-            x[nx++] = two[j];
+            x[nx++] = some[j];
         }
     }
     if (g->nesting > 1 && (g->cur >= 0 || g->loops) && chance(g, 12)) {
@@ -1319,7 +1522,19 @@ static void routine(G *g)
         if (n && chance(g, 30))
             t = new_type(g, (xt){K_OPEN, g->ty[from].base, index_base(g, from),
                                  g->ty[from].elem, 0, 0});
+        /* or a record (var in a procedure, in in a function: a function
+           writes nothing) or a pointer (in) */
+        uint32_t nr = 0, rec = 0;
+        for (uint32_t u = NTYPES; u < g->nty; u++)
+            if ((is_record(g, u) || is_ptr(g, u)) && below(g, ++nr) == 0)
+                rec = u;
+        if (nr && chance(g, 25))
+            t = rec;
         bool byref = !g->r[id].func && chance(g, 40);
+        if (is_record(g, t))
+            byref = !g->r[id].func;
+        if (is_ptr(g, t))
+            byref = false;
         uint32_t p = new_v(g, t, byref ? V_VAR : V_IN);
         g->r[id].par[k] = p;
         show(g, p);
@@ -1433,11 +1648,7 @@ static void put_type(text *o, const G *g, uint32_t t)
     if (t < NTYPES)
         put(o, tname[t]);
     else
-        putf(o, "%c%u",
-             g->ty[t].k == K_OPEN ? 'O'
-             : is_array(g, t)     ? 'A'
-                                  : 'R',
-             t);
+        putf(o, "%c%u", "RRAOTP"[g->ty[t].k], t);
 }
 
 static void put_value(text *o, unsigned t, v128 v)
@@ -1516,6 +1727,14 @@ static void pexpr(G *g, text *o, uint32_t i)
         pexpr(g, o, g->e[i].a);
         put(o, "]");
         break;
+    case E_FIELD:
+        put_name(o, g, x->var);
+        here(x, o); /* a nil pointer is reported at the . */
+        putf(o, ".f%u", x->b);
+        break;
+    case E_NIL:
+        put(o, "nil");
+        break;
     case E_LOW:
     case E_HIGH:
     case E_LEN:
@@ -1592,6 +1811,11 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         break;
     case S_ASSIGN:
         put_name(o, g, s.var);
+        if (s.fld) {
+            g->st[si].iline = o->line; /* nil is reported at the . */
+            g->st[si].icol = o->col;
+            putf(o, ".f%u", s.fld - 1);
+        }
         if (s.idx) {
             g->st[si].iline = o->line; /* the index is checked at the [ */
             g->st[si].icol = o->col;
@@ -1711,6 +1935,18 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         put(o, "const ");
         pconst(g, o, si);
         break;
+    case S_NEW:
+        put_name(o, g, s.var);
+        put(o, " := new(");
+        put_type(o, g, g->ty[g->v[s.var].t].elem);
+        put(o, ");\n");
+        break;
+    case S_COPY:
+        put_name(o, g, s.var);
+        put(o, " := ");
+        pexpr(g, o, s.e);
+        put(o, ";\n");
+        break;
     }
 }
 
@@ -1743,6 +1979,17 @@ static void program(G *g, text *o, uint32_t nglob)
                 put_value(o, x->base, x->lo);
                 put(o, "..");
                 put_value(o, x->base, x->hi);
+            } else if (x->k == K_RECORD) {
+                put(o, "record");
+                for (uint32_t f = 0; f < x->elem; f++) {
+                    putf(o, " f%u: ", f);
+                    put_type(o, g, g->fld[x->index + f]);
+                    put(o, ";");
+                }
+                put(o, " end");
+            } else if (x->k == K_PTR) {
+                put(o, "^");
+                put_type(o, g, x->elem);
             } else {
                 put(o, "array[");
                 put_type(o, g, x->index);
@@ -1759,7 +2006,7 @@ static void program(G *g, text *o, uint32_t nglob)
             put_name(o, g, v);
             put(o, ": ");
             put_type(o, g, g->v[v].t);
-            if (!is_array(g, g->v[v].t)) {
+            if (is_scalar(g, g->v[v].t) || is_ptr(g, g->v[v].t)) {
                 put(o, " := ");
                 pexpr(g, o, g->st[v].e);
             }
@@ -1811,6 +2058,9 @@ typedef struct {
     uint32_t *ref;   /* the first cell of a variable, a var parameter's too */
     v128 *alo, *ahi; /* the bounds of an array variable, or of an open
                         parameter's argument */
+    v128 *heap;      /* the records made by new: a pointer is the index of
+                        the first field plus 1, nil is 0 */
+    uint32_t nheap, capheap;
     text out;
     bool trap, toolong;
     int code;
@@ -1871,8 +2121,8 @@ static v128 call(X *x, uint32_t fn, uint32_t args, uint32_t nargs,
     uint32_t target[4];
     for (uint32_t k = 0; k < nargs; k++) {
         uint32_t a = g->ls[args + k], p = g->r[fn].par[k];
-        if (g->ty[g->v[p].t].k == K_OPEN) {
-            target[k] = g->e[a].var; /* an array: bound below */
+        if (g->ty[g->v[p].t].k == K_OPEN || is_record(g, g->v[p].t)) {
+            target[k] = g->e[a].var; /* by reference: bound below */
         } else if (g->v[p].kind == V_VAR) {
             target[k] = x->ref[g->e[a].var];
         } else {
@@ -1890,6 +2140,10 @@ static v128 call(X *x, uint32_t fn, uint32_t args, uint32_t nargs,
             x->ref[p] = x->ref[a];
             x->alo[p] = x->alo[a];
             x->ahi[p] = x->ahi[a];
+        } else if (is_record(g, g->v[p].t)) {
+            /* in a function a record is only read: by copy or by
+               reference cannot be told apart (§ 8) */
+            x->ref[p] = x->ref[target[k]];
         } else if (g->v[p].kind == V_VAR) {
             x->ref[p] = target[k];
         } else {
@@ -2046,6 +2300,17 @@ static v128 ev(X *x, uint32_t i)
             return fail(x, i, 100);
         return x->cell[c];
     }
+    case E_FIELD: {
+        uint32_t vt = g->v[e->var].t;
+        if (is_record(g, vt))
+            return x->cell[x->ref[e->var] + e->b];
+        v128 pv = x->cell[x->ref[e->var]];
+        if (pv == 0)
+            return fail(x, i, 102);
+        return x->heap[pv - 1 + e->b];
+    }
+    case E_NIL:
+        return 0;
     case E_LOW:
         return x->alo[e->var];
     case E_HIGH:
@@ -2100,6 +2365,27 @@ static int run_stmt(X *x, uint32_t si)
     case S_ASSIGN: {
         uint32_t c = x->ref[s->var];
         uint32_t t = g->v[s->var].t;
+        if (s->fld) {
+            /* the target first: through a pointer, checked */
+            uint32_t f = s->fld - 1;
+            uint32_t ft = field_type(g, record_of(g, t), f);
+            v128 pv = 0;
+            if (is_ptr(g, t)) {
+                pv = x->cell[c];
+                if (pv == 0) {
+                    stop(x, 102, s->iline, s->icol);
+                    return X_RET;
+                }
+            }
+            v128 v = ev(x, s->e);
+            if (x->trap || !store_ok(x, ft, v, s->line, s->col))
+                return X_RET;
+            if (pv)
+                x->heap[pv - 1 + f] = v; /* ev made no record: no move */
+            else
+                x->cell[c + f] = v;
+            return X_NEXT;
+        }
         if (s->idx) {
             /* the target first: its index, checked */
             v128 k = ev(x, s->idx);
@@ -2220,6 +2506,22 @@ static int run_stmt(X *x, uint32_t si)
         return X_RET;
     case S_CONST:
         return X_NEXT; /* computed by the front end */
+    case S_NEW: {
+        uint32_t n = g->ty[g->ty[g->v[s->var].t].elem].elem;
+        uint32_t at = x->nheap;
+        for (uint32_t k = 0; k < n; k++) {
+            LIMBA_GROW(x->heap, x->nheap, x->capheap);
+            x->heap[x->nheap++] = 0;
+        }
+        x->cell[x->ref[s->var]] = (v128)at + 1;
+        return X_NEXT;
+    }
+    case S_COPY: {
+        uint32_t n = g->ty[g->v[s->var].t].elem;
+        memmove(&x->cell[x->ref[s->var]], &x->cell[x->ref[g->e[s->e].var]],
+                n * sizeof(v128));
+        return X_NEXT;
+    }
     }
     return X_NEXT;
 }
@@ -2248,6 +2550,7 @@ static void g_free(G *g)
     free(g->r);
     free(g->scope);
     free(g->gc);
+    free(g->fld);
 }
 
 static bool attempt(uint64_t seed, limba_lxgen *p)
@@ -2265,12 +2568,31 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
        own */
     for (uint32_t k = 0, n = below(&g, 4); k < n; k++)
         new_range(&g, false);
-    uint32_t narrays = below(&g, 3), arrays[2];
-    for (uint32_t k = 0; k < narrays; k++) {
+    uint32_t narrays = 0, arrays[12];
+    for (uint32_t k = 0, n = below(&g, 3); k < n; k++) {
         uint32_t ix = new_range(&g, true);
         uint32_t el = var_type(&g);
-        arrays[k] = new_type(&g, (xt){K_ARRAY, (uint8_t)base(&g, el), ix, el,
-                                      lo_of(&g, ix), hi_of(&g, ix)});
+        arrays[narrays++] =
+            new_type(&g, (xt){K_ARRAY, (uint8_t)base(&g, el), ix, el,
+                              lo_of(&g, ix), hi_of(&g, ix)});
+    }
+    /* records of 1 to 4 scalar fields, some with a pointer type; two
+       global variables of each type, so that copies show */
+    for (uint32_t k = 0, n = below(&g, 3); k < n; k++) {
+        uint32_t first = g.nfld, nf = 1 + below(&g, 4);
+        for (uint32_t f = 0; f < nf; f++) {
+            uint32_t ft = var_type(&g);
+            LIMBA_GROW(g.fld, g.nfld, g.capfld);
+            g.fld[g.nfld++] = ft;
+        }
+        uint32_t rt = new_type(&g, (xt){K_RECORD, T_BOOL, first, nf, 0, 0});
+        arrays[narrays++] = rt;
+        arrays[narrays++] = rt;
+        if (chance(&g, 60)) {
+            uint32_t pt = new_type(&g, (xt){K_PTR, T_BOOL, 0, rt, 0, 0});
+            arrays[narrays++] = pt;
+            arrays[narrays++] = pt;
+        }
     }
 
     /* the globals: one of an integer type and one Boolean at least, then
@@ -2286,10 +2608,13 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         uint32_t s = new_s(&g, S_VAR);
         g.st[s].var = v;
         if (!is_array(&g, t))
-            g.st[s].e =
-                lit(&g, t,
-                    t == T_BOOL ? below(&g, 2)
-                                : rand_in(&g, lo_of(&g, t), hi_of(&g, t)));
+            g.st[s].e = is_ptr(&g, t) ? nil_of(&g, t)
+                        : is_record(&g, t)
+                            ? 0
+                            : lit(&g, t,
+                                  t == T_BOOL ? below(&g, 2)
+                                              : rand_in(&g, lo_of(&g, t),
+                                                        hi_of(&g, t)));
         show(&g, v);
     }
     nglob += narrays;
@@ -2304,6 +2629,41 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     for (uint32_t k = 0, nr = below(&g, 5); k < nr && g.budget > 10; k++)
         routine(&g);
     g.main_blk = block(&g, 4 + (int)below(&g, 12), &g.main_n);
+
+    /* the program begins giving a value to every field of the records, and
+       to half of the pointers a new record */
+    {
+        uint32_t *init = NULL, ni = 0, cap = 0;
+        for (uint32_t v = 0; v < nglob; v++) {
+            uint32_t t = g.v[v].t;
+            if (!is_record(&g, t) && !(is_ptr(&g, t) && chance(&g, 50)))
+                continue;
+            if (is_ptr(&g, t)) {
+                uint32_t s = new_s(&g, S_NEW);
+                g.st[s].var = v;
+                LIMBA_GROW(init, ni, cap);
+                init[ni++] = s;
+            }
+            uint32_t rt = record_of(&g, t);
+            for (uint32_t f = 0; f < g.ty[rt].elem; f++) {
+                uint32_t ft = field_type(&g, rt, f);
+                uint32_t e =
+                    lit(&g, ft,
+                        base(&g, ft) == T_BOOL
+                            ? below(&g, 2)
+                            : rand_in(&g, lo_of(&g, ft), hi_of(&g, ft)));
+                uint32_t s = new_s(&g, S_ASSIGN);
+                g.st[s].var = v;
+                g.st[s].fld = f + 1;
+                g.st[s].e = e;
+                LIMBA_GROW(init, ni, cap);
+                init[ni++] = s;
+            }
+        }
+        while (ni)
+            append(&g, &g.main_blk, &g.main_n, init[--ni], true);
+        free(init);
+    }
 
     /* the program begins filling the arrays and ends printing every
        scalar global */
@@ -2324,13 +2684,24 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         }
     }
     {
-        uint32_t items[32], k = 0;
+        uint32_t items[96], k = 0;
         for (uint32_t v = 0; v < nglob; v++) {
-            if (is_array(&g, g.v[v].t))
+            uint32_t t = g.v[v].t;
+            if (is_array(&g, t))
                 continue;
+            if (is_record(&g, t)) {
+                for (uint32_t f = 0; f < g.ty[t].elem; f++) {
+                    if (k)
+                        items[k++] = new_e(&g, E_STR, 0);
+                    items[k++] = field_ref(&g, v, f);
+                }
+                continue;
+            }
             if (k)
                 items[k++] = new_e(&g, E_STR, 0);
-            items[k++] = var_ref(&g, v);
+            items[k++] = is_ptr(&g, t) ? binop(&g, O_EQ, T_BOOL, var_ref(&g, v),
+                                               nil_of(&g, t))
+                                       : var_ref(&g, v);
         }
         uint32_t s = new_s(&g, S_WRITE);
         g.st[s].args = keep_list(&g, items, k);
@@ -2349,7 +2720,9 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     for (uint32_t v = 0; v < g.nv; v++) {
         x.ref[v] = ncell;
         uint32_t t = g.v[v].t;
-        ncell += is_array(&g, t) ? (uint32_t)(g.ty[t].hi - g.ty[t].lo) + 1 : 1;
+        ncell += is_array(&g, t)    ? (uint32_t)(g.ty[t].hi - g.ty[t].lo) + 1
+                 : is_record(&g, t) ? g.ty[t].elem
+                                    : 1;
     }
     x.cell = limba_xcalloc(ncell ? ncell : 1, sizeof(v128));
     x.alo = limba_xcalloc(g.nv ? g.nv : 1, sizeof(v128));
@@ -2385,6 +2758,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     free(x.ref);
     free(x.alo);
     free(x.ahi);
+    free(x.heap);
     g_free(&g);
     return ok;
 }

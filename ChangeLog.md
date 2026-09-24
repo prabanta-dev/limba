@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A nil pointer is reported where it is gone through, the `.` or the `^`
+  (it took the place of the statement before).
+- The random programs use records (fields read and written, copies,
+  `var` parameters in procedures and `in` parameters in functions) and
+  pointers to them (`new`, `nil`, comparisons, fields through a
+  pointer, the error of a nil pointer). A reversed record copy is found
+  by 5 seeds out of 1000 and by a new fixed case.
 - The random programs declare constants, global and inside blocks, with
   or without a type, and use constant expressions whose values pass 64
   bits (`**`, `div`, `mod`, `rem` on negative values), checked only when

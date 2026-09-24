@@ -516,19 +516,23 @@ static limba_id nil_checked(lxl *L, limba_id p)
     return p;
 }
 
-/* the address of what a pointer or an aggregate designator names */
-static limba_id base_addr(lxl *L, uint32_t base)
+/* the address of what a pointer or an aggregate designator names; a nil
+   pointer is reported at node at (the . or the [ that goes through it) */
+static limba_id base_addr(lxl *L, uint32_t base, uint32_t at)
 {
     limba_ltype bt = ntype(L, base);
-    if (ti(L, bt)->kind == LIMBA_LTK_POINTER)
-        return nil_checked(L, lxl_value(L, base));
+    if (ti(L, bt)->kind == LIMBA_LTK_POINTER) {
+        limba_id p = lxl_value(L, base);
+        lxl_at(L, at);
+        return nil_checked(L, p);
+    }
     return lxl_addr(L, base);
 }
 
 /* the storage of an array: its address, and for an open or computed one
    the length or the bounds */
-void lxl_array_parts(lxl *L, uint32_t base, limba_id *p, limba_id *len,
-                     limba_id *lo, limba_id *hi)
+void lxl_array_parts(lxl *L, uint32_t base, uint32_t at, limba_id *p,
+                     limba_id *len, limba_id *lo, limba_id *hi)
 {
     *len = *lo = *hi = LIMBA_NONE;
     limba_lx_node *x = nd(L, base);
@@ -548,7 +552,7 @@ void lxl_array_parts(lxl *L, uint32_t base, limba_id *p, limba_id *len,
             return;
         }
     }
-    *p = ti(L, bt)->kind == LIMBA_LTK_POINTER ? base_addr(L, base)
+    *p = ti(L, bt)->kind == LIMBA_LTK_POINTER ? base_addr(L, base, at)
                                               : lxl_addr(L, base);
 }
 
@@ -561,7 +565,7 @@ static limba_id index_addr(lxl *L, uint32_t node)
         bt = ti(L, bt)->elem;
     const limba_typeinfo *at = ti(L, bt);
     limba_id p, len, lo, hi;
-    lxl_array_parts(L, base, &p, &len, &lo, &hi);
+    lxl_array_parts(L, base, node, &p, &len, &lo, &hi);
     limba_id i = lxl_value(L, idx);
     limba_ltype it = ntype(L, idx);
     lxl_at(L, node);
@@ -612,14 +616,17 @@ limba_id lxl_addr(lxl *L, uint32_t node)
         for (uint32_t i = 0; i < r->count; i++)
             if (L->S->ts.field[r->first + i].name == fname)
                 off = L->S->ts.field[r->first + i].offset;
-        limba_id b = base_addr(L, base);
+        limba_id b = base_addr(L, base, node);
         lxl_at(L, node);
         return addr(L, b, lxl_iconst(L, LIMBA_T_I64, 0), 0, (int64_t)off);
     }
     case LXN_INDEX:
         return index_addr(L, node);
-    case LXN_DEREF:
-        return nil_checked(L, lxl_value(L, x->a));
+    case LXN_DEREF: {
+        limba_id p = lxl_value(L, x->a);
+        lxl_at(L, node);
+        return nil_checked(L, p);
+    }
     case LXN_CALL: {
         /* a function result in memory: not in Luxia 0 */
         limba_id r;

@@ -97,9 +97,10 @@ void lxl_call(lxl *L, uint32_t node, limba_id *result);
 limba_id lxl_var_addr(lxl *L, limba_sym s);
 /* T(x) between numbers, and a range narrowing */
 limba_id lxl_conv(lxl *L, limba_id v, limba_ltype from, limba_ltype to);
-/* an array: its address, and the length (open) or bounds (computed) */
-void lxl_array_parts(lxl *L, uint32_t base, limba_id *p, limba_id *len,
-                     limba_id *lo, limba_id *hi);
+/* an array: its address, and its bounds when computed (i64 values for an
+   open parameter); through a nil pointer, the error is reported at at */
+void lxl_array_parts(lxl *L, uint32_t base, uint32_t at, limba_id *p,
+                     limba_id *len, limba_id *lo, limba_id *hi);
 limba_id lxl_to_i64(lxl *L, limba_id v, limba_ltype t);
 bool lxl_signed(const lxl *L, limba_ltype t);
 

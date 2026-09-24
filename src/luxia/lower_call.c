@@ -79,7 +79,7 @@ static void open_arg(lxl *L, uint32_t node, uint32_t a, limba_ltype pt,
     if (ti(L, t)->kind == LIMBA_LTK_POINTER)
         t = ti(L, t)->elem;
     limba_id len, l, h;
-    lxl_array_parts(L, a, p, &len, &l, &h);
+    lxl_array_parts(L, a, node, p, &len, &l, &h);
     const limba_typeinfo *at = ti(L, t);
     if (at->kind == LIMBA_LTK_OPEN) {
         *lo = l;
@@ -272,7 +272,7 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         limba_id p, len, lo, hi;
         if (x->kind == LIMBA_LTK_POINTER)
             x = ti(L, x->elem);
-        lxl_array_parts(L, a0, &p, &len, &lo, &hi);
+        lxl_array_parts(L, a0, node, &p, &len, &lo, &hi);
         if (x->kind == LIMBA_LTK_OPEN) {
             /* the bounds of the argument, i64 values */
             *result = id == LXB_LOW ? from_i64(L, lo, rt)

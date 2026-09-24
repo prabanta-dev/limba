@@ -786,6 +786,18 @@ static const run_case run_cases[] = {
      "mod 97; writeln(k1, \" \", k2, \" \", k3, \" \", k4, \" \", k5, \" \", x "
      "+ k7, \" \", (k6 * k6) mod 100 + x); end p.",
      "1024 2 -1 2 3072 51 97\n", "ok"},
+    /* nil is reported where it is gone through: the . or the ^ */
+    {"program t; type R = record a: Int32; end; Ptr = ^R; var q: Ptr := "
+     "nil; begin\n  writeln(q.a);\nend t.",
+     "", "trap 102 at 2:12"},
+    {"program t; type R = record a: Int32; end; Ptr = ^R; var q: Ptr := "
+     "nil; begin\n  writeln(q^.a);\nend t.",
+     "", "trap 102 at 2:12"},
+    /* a record assigned is copied, from the right to the left */
+    {"program t; type Pair = record a, b: Int32; end; var u, w: Pair; begin "
+     "u.a := 1; u.b := 2; w := u; w.a := 5; writeln(u.a, \" \", w.a, \" \", "
+     "w.b); end t.",
+     "1 5 2\n", "ok"},
     /* the target of an assignment before its value */
     {"program p;\nvar a: array[Int32 range 1..3] of Int32; z: Int32 := "
      "0;\nbegin\n  a[1 div z] := 7 div z;\nend p.",
@@ -1091,11 +1103,12 @@ static int test_random(void)
         limba_lxgen_free(&p);
     }
     printf("test_luxia: %llu random programs from %llu: %u ended, trapped "
-           "%u overflow, %u division, %u index, %u range, %u conversion, %u "
-           "shift; %u over the limits; %zu bytes printed, %u failures\n",
+           "%u overflow, %u division, %u index, %u range, %u nil, %u "
+           "conversion, %u shift; %u over the limits; %zu bytes printed, %u "
+           "failures\n",
            (unsigned long long)count, (unsigned long long)first, ok, trap[6],
-           trap[11], trap[100], trap[101], trap[103], trap[104], other, bytes,
-           failures);
+           trap[11], trap[100], trap[101], trap[102], trap[103], trap[104],
+           other, bytes, failures);
     return (int)failures;
 }
 
