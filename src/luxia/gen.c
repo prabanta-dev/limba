@@ -230,8 +230,19 @@ typedef struct {
 
 /* V_CONST: a constant without a type (t is Int64, for printing only);
    V_TCONST: a constant of type t */
-enum { V_GLOBAL, V_LOCAL, V_IN, V_VAR, V_LOOP, V_COUNT, V_CONST, V_TCONST };
-static const char vprefix[] = {'g', 'v', 'a', 'a', 'i', 'w', 'k', 'k'};
+/* V_OUT: an out parameter, copied back at the return (§ 8) */
+enum {
+    V_GLOBAL,
+    V_LOCAL,
+    V_IN,
+    V_VAR,
+    V_LOOP,
+    V_COUNT,
+    V_CONST,
+    V_TCONST,
+    V_OUT
+};
+static const char vprefix[] = {'g', 'v', 'a', 'a', 'i', 'w', 'k', 'k', 'a'};
 
 typedef struct {
     uint32_t t;
@@ -1628,6 +1639,19 @@ static uint32_t stmt(G *g, uint32_t *out)
                 } else if (is_record(g, pt) || is_ptr(g, pt)) {
                     a[k] = typed_arg(g, pt, g->v[p].kind == V_VAR);
                     ok = a[k] != 0;
+                } else if (g->v[p].kind == V_OUT) {
+                    /* a variable of its very type, not given to another
+                       out parameter of the call (the copies back would
+                       race) */
+                    int v = pick_var(g, pt, true, true);
+                    for (uint32_t j = 0; j < k && v >= 0; j++)
+                        if (g->v[g->r[fn].par[j]].kind == V_OUT &&
+                            g->e[a[j]].var == (uint32_t)v)
+                            v = -1;
+                    if (v < 0)
+                        ok = false;
+                    else
+                        a[k] = var_ref(g, (uint32_t)v);
                 } else if (g->v[p].kind == V_VAR) {
                     /* a var parameter takes a variable of its very type */
                     int v = pick_var(g, g->v[p].t, true, true);
@@ -1645,6 +1669,22 @@ static uint32_t stmt(G *g, uint32_t *out)
                 g->st[s].args = keep_list(g, a, g->r[fn].np);
                 g->st[s].nargs = g->r[fn].np;
                 out[0] = s;
+                /* what came back through an out parameter, printed */
+                for (uint32_t k = 0; k < g->r[fn].np; k++)
+                    if (g->v[g->r[fn].par[k]].kind == V_OUT &&
+                        !in_function(g) && chance(g, 60)) {
+                        uint32_t item = var_ref(g, g->e[a[k]].var);
+                        if (is_enum(g, g->e[item].t)) { /* ord of it */
+                            uint32_t o = new_e(g, E_ORD, T_U32);
+                            g->e[o].a = item;
+                            item = o;
+                        }
+                        uint32_t w = new_s(g, S_WRITE);
+                        g->st[w].args = keep_list(g, &item, 1);
+                        g->st[w].nargs = 1;
+                        out[1] = w;
+                        return 2;
+                    }
                 return 1;
             }
         }
@@ -1747,13 +1787,41 @@ static void routine(G *g)
             byref = !g->r[id].func;
         if (is_ptr(g, t))
             byref = false;
-        uint32_t p = new_v(g, t, byref ? V_VAR : V_IN);
+        bool out = !g->r[id].func && chance(g, 30);
+        if (out) {
+            /* the type of a global scalar: a call finds an argument */
+            uint32_t n = 0;
+            for (uint32_t v = 0; v < g->nv; v++)
+                if (g->v[v].kind == V_GLOBAL && is_scalar(g, g->v[v].t) &&
+                    below(g, ++n) == 0)
+                    t = g->v[v].t;
+        }
+        uint32_t p = new_v(g, t, out ? V_OUT : byref ? V_VAR : V_IN);
         g->r[id].par[k] = p;
-        show(g, p);
+        if (!out)
+            show(g, p);
     }
     g->cur = (int)id;
+    /* every out parameter is given a value first, from what is visible
+       before it: reading it earlier is an error (L0053) */
+    uint32_t init[4], ninit = 0;
+    for (uint32_t k = 0; k < g->r[id].np; k++) {
+        uint32_t p = g->r[id].par[k];
+        if (g->v[p].kind != V_OUT)
+            continue;
+        uint32_t e = value_for(g, g->v[p].t, depth(g));
+        uint32_t s = new_s(g, S_ASSIGN);
+        g->st[s].var = p;
+        g->st[s].e = e;
+        init[ninit++] = s;
+    }
+    for (uint32_t k = 0; k < g->r[id].np; k++)
+        if (g->v[g->r[id].par[k]].kind == V_OUT)
+            show(g, g->r[id].par[k]);
     uint32_t n;
     uint32_t b = block(g, 2 + (int)below(g, 5), &n);
+    while (ninit)
+        append(g, &b, &n, init[--ninit], true);
     /* an open parameter, so that its elements reach the output */
     int open = -1;
     for (uint32_t k = 0; k < g->r[id].np; k++)
@@ -2268,6 +2336,8 @@ static void program(G *g, text *o, uint32_t nglob)
                 put(o, "; ");
             if (g->v[p].kind == V_VAR)
                 put(o, "var ");
+            if (g->v[p].kind == V_OUT)
+                put(o, "out ");
             put_name(o, g, p);
             put(o, ": ");
             put_type(o, g, g->v[p].t);
@@ -2367,6 +2437,8 @@ static v128 call(X *x, uint32_t fn, uint32_t args, uint32_t nargs,
         uint32_t a = g->ls[args + k], p = g->r[fn].par[k];
         if (g->ty[g->v[p].t].k == K_OPEN || is_record(g, g->v[p].t)) {
             target[k] = g->e[a].var; /* by reference: bound below */
+        } else if (g->v[p].kind == V_OUT) {
+            target[k] = x->ref[g->e[a].var]; /* copied back at the end */
         } else if (g->v[p].kind == V_VAR) {
             target[k] = x->ref[g->e[a].var];
         } else {
@@ -2388,6 +2460,8 @@ static v128 call(X *x, uint32_t fn, uint32_t args, uint32_t nargs,
             /* in a function a record is only read: by copy or by
                reference cannot be told apart (§ 8) */
             x->ref[p] = x->ref[target[k]];
+        } else if (g->v[p].kind == V_OUT) {
+            /* its own cell: nothing to do before */
         } else if (g->v[p].kind == V_VAR) {
             x->ref[p] = target[k];
         } else {
@@ -2399,6 +2473,12 @@ static v128 call(X *x, uint32_t fn, uint32_t args, uint32_t nargs,
     x->rt = g->r[fn].rt;
     run_block(x, g->r[fn].blk, g->r[fn].nblk);
     x->rt = outer;
+    if (!x->trap) /* the out parameters go back, in order */
+        for (uint32_t k = 0; k < nargs; k++) {
+            uint32_t p = g->r[fn].par[k];
+            if (g->v[p].kind == V_OUT)
+                x->cell[target[k]] = x->cell[x->ref[p]];
+        }
     return x->ret;
 }
 

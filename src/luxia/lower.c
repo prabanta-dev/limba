@@ -498,6 +498,8 @@ static void exit_stmt(lxl *L, uint32_t node, bool exit)
     L->cur = go_on;
 }
 
+static void store_outs(lxl *L, uint32_t node);
+
 static void return_stmt(lxl *L, uint32_t node)
 {
     uint32_t e = nd(L, node)->a;
@@ -507,6 +509,7 @@ static void return_stmt(lxl *L, uint32_t node)
         lxl_at(L, node); /* a range is checked at the return */
         v = lxl_coerce(L, v, L->S->type[e], L->result);
     }
+    store_outs(L, node);
     limba_ssa_ret(L->ssa, L->cur, v);
     dead_end(L);
 }
@@ -612,6 +615,16 @@ static void scan_taken(lxl *L)
 static void undefined(void *ctx, uint32_t tag)
 {
     lxl *L = ctx;
+    if ((tag & 0xc0000000u) == 0x40000000u) {
+        uint32_t k = tag & 0x3fffffffu;
+        limba_sym s = L->out_place[2 * k];
+        size_t n = 0;
+        const char *sp = lxs_spell(L->S, s, &n);
+        lxs_error(L->S, LXE_OUT_UNASSIGNED, L->out_place[2 * k + 1],
+                  "the out parameter '%.*s' may leave without a value", (int)n,
+                  sp);
+        return;
+    }
     if (tag & 0x80000000u) {
         lxs_error(L->S, LXE_MISSING_RETURN, tag & 0x7fffffffu,
                   "a path reaches the end of the function without return");
@@ -659,11 +672,39 @@ static void begin_function(lxl *L, limba_id fid)
     L->fid = fid;
     L->cur = 0;
     L->nloops = 0;
+    L->nouts = 0;
+    L->nout_place = 0;
+}
+
+/* before a return: every out parameter goes back to its argument, and
+   must have a value on every path that gets here (§ 8) */
+static void store_outs(lxl *L, uint32_t node)
+{
+    for (uint32_t i = 0; i < L->nouts; i++) {
+        const lxl_store *st = &L->store[L->outs[i]];
+        uint32_t k = L->nout_place / 2;
+        LIMBA_GROW(L->out_place, L->nout_place, L->capout_place);
+        L->out_place[L->nout_place++] = L->outs[i];
+        LIMBA_GROW(L->out_place, L->nout_place, L->capout_place);
+        L->out_place[L->nout_place++] = node;
+        limba_id v;
+        if (st->kind == LXL_SSA) {
+            v = limba_ssa_use(L->ssa, st->var, L->cur, 0x40000000u | k);
+        } else {
+            /* its address was needed: a cell, not checked */
+            uint32_t a = st->addr;
+            limba_ltype t = L->S->st.sym[L->outs[i]].type;
+            v = lxl_emit(L, LIMBA_OP_LOAD, lxl_type(L, t), 0, 0, 0, &a, 1);
+        }
+        uint32_t o[2] = {v, st->back};
+        lxl_emit(L, LIMBA_OP_STORE, LIMBA_T_VOID, 0, 0, 0, o, 2);
+    }
 }
 
 static void end_function(lxl *L, uint32_t node, bool function)
 {
     if (!limba_ssa_terminated(L->ssa, L->cur)) {
+        store_outs(L, node);
         if (function) {
             /* a use that no definition reaches is a missing return */
             uint32_t var = limba_ssa_var(L->ssa, lxl_type(L, L->result));
@@ -716,6 +757,20 @@ static void routine_body(lxl *L, limba_sym s)
                 st->lo = f->blocks[0].insts[v + 1];
                 st->hi = f->blocks[0].insts[v + 2];
                 v += 3;
+            } else if (pp.mode == LXS_OUT && lxl_scalar(L, pp.type)) {
+                /* copied back at every return, as Ada does with scalars:
+                   an SSA variable with no value yet, where a missing value
+                   is found, or a cell when its address is needed */
+                if (L->taken[ps]) {
+                    local(L, ps);
+                } else {
+                    st->kind = LXL_SSA;
+                    st->var = limba_ssa_var(L->ssa, lxl_type(L, pp.type));
+                }
+                st->back = first;
+                LIMBA_GROW(L->outs, L->nouts, L->capouts);
+                L->outs[L->nouts++] = ps;
+                v++;
             } else if (pp.mode != LXS_IN || !lxl_scalar(L, pp.type)) {
                 st->kind = LXL_MEM;
                 st->addr = first;
@@ -827,6 +882,8 @@ limba_module *limba_lxl_program(limba_lxs *S)
     free(L->func_of);
     free(L->tmap);
     free(L->loops);
+    free(L->outs);
+    free(L->out_place);
     if (S->rep->errors) {
         limba_module_free(L->m);
         return NULL;

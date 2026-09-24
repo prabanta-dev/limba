@@ -44,6 +44,7 @@ typedef struct {
     limba_id lo, hi; /* DYN: the bounds, values of the index type; OPEN:
                         those of the argument, i64 values */
     limba_id global; /* GLOBAL */
+    limba_id back;   /* an out parameter: where its value goes back */
 } lxl_store;
 
 typedef struct {
@@ -65,6 +66,12 @@ typedef struct {
                            function is a missing return */
     lxl_loop *loops;
     uint32_t nloops, caploops;
+    /* the out parameters of the routine being built: SSA variables
+       stored back at every return, where each must have a value */
+    limba_sym *outs;
+    uint32_t nouts, capouts;
+    uint32_t *out_place; /* per check: the symbol, then the node */
+    uint32_t nout_place, capout_place;
     uint32_t routine_node;
 } lxl;
 

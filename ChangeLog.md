@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `out` parameters as Ada has them: a scalar one is copied back at every
+  return, not before; reading it before giving it a value is L0053, and
+  leaving on a path without one is the new L0056. A record or an array
+  `out` is passed by address and not checked yet. The random programs
+  use `out` parameters and print what comes back.
 - `succ` and `pred` are checked on the value before the step: `pred` of
   the first value of an enumeration gave 255. The random programs use
   enumerations: literals, `succ`, `pred`, `ord`, comparisons, `case`

@@ -847,6 +847,17 @@ static const run_case run_cases[] = {
     {"program e; var a: UInt64 := 18446744073709551615; b: Int8 := -128; "
      "begin writeln(pred(a), \" \", succ(b)); writeln(succ(a)); end e.",
      "18446744073709551614 -127\n", "trap 101"},
+    /* out: copied back at the return, given a value on every path */
+    {"program o; var g: Int32 := 0; procedure Set(var x: Int32); begin x "
+     ":= 7; end Set; procedure P(out r: Int32); begin r := 1; writeln(g); "
+     "Set(r); writeln(g, \" \", r); end P; begin P(g); writeln(g); end o.",
+     "0\n0 7\n7\n", "ok"},
+    {"program o; procedure Get(out r: Int32; x: Int32); begin if x > 0 then "
+     "r := x; end; end Get; var v: Int32 := 0; begin Get(v, 1); end o.",
+     "", "errors L0056@1:22"},
+    {"program o; procedure Get(out r: Int32); begin writeln(r); r := 1; end "
+     "Get; var v: Int32 := 0; begin Get(v); end o.",
+     "", "errors L0053@1:55"},
     /* the target of an assignment before its value */
     {"program p;\nvar a: array[Int32 range 1..3] of Int32; z: Int32 := "
      "0;\nbegin\n  a[1 div z] := 7 div z;\nend p.",
