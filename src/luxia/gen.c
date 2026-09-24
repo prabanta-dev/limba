@@ -1092,6 +1092,14 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
         g->e[i].a = a;
         return i;
     }
+    if (choice < 6 && chance(g, 10)) {
+        /* a power: the exponent a literal or a number without a sign
+           (a negative one is not decided yet) */
+        uint32_t a = expr(g, t, d - 1, true);
+        uint32_t n = chance(g, 60) ? lit(g, T_I32, below(g, 8))
+                                   : expr(g, T_U8 + below(g, 4), d - 1, true);
+        return binop(g, O_POW, t, a, n);
+    }
     if (choice < 6) {
         unsigned op = f == 'B' ? below(g, 11) : below(g, 6);
         if (op == O_SHL || op == O_SHR) {
@@ -2196,6 +2204,39 @@ static bool element_cell(X *x, uint32_t v, v128 index, uint32_t *cell)
     return true;
 }
 
+/* l ** n in type t: exact, then it must fit, except in a Bits type */
+static v128 power(X *x, uint32_t i, unsigned t, v128 l, v128 n)
+{
+    if (n < 0)
+        return fail(x, i, 6); /* not decided yet: as the front end does */
+    if (fam(t) == 'B') {
+        u128 mask = ((u128)1 << tbits(t)) - 1, acc = 1, b = (u128)l & mask;
+        for (u128 e = (u128)n; e; e >>= 1) {
+            if (e & 1)
+                acc = (acc * b) & mask;
+            b = (b * b) & mask;
+        }
+        return (v128)acc;
+    }
+    if (l == 0 || l == 1)
+        return n == 0 ? 1 : l;
+    if (l == -1)
+        return n % 2 ? -1 : 1;
+    if (n > 127)
+        return fail(x, i, 6);
+    v128 acc = 1;
+    u128 ml = (u128)(l < 0 ? -l : l);
+    for (v128 k = 0; k < n; k++) {
+        u128 ma = (u128)(acc < 0 ? -acc : acc);
+        if (ma > ((u128)1 << 65) / ml) /* past every type: no overflow here */
+            return fail(x, i, 6);
+        acc *= l;
+        if (!fits(t, acc))
+            return fail(x, i, 6);
+    }
+    return acc;
+}
+
 static v128 binary(X *x, uint32_t i)
 {
     const xe *e = &x->g->e[i];
@@ -2262,6 +2303,8 @@ static v128 binary(X *x, uint32_t i)
         return l | r;
     case O_XOR:
         return l ^ r;
+    case O_POW:
+        return power(x, i, t, l, r);
     case O_SHL:
     case O_SHR:
         if (r < 0 || r >= (v128)tbits(t))

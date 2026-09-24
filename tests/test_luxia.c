@@ -814,6 +814,18 @@ static const run_case run_cases[] = {
     {"program n; type Small = Int32 range 4..9; SP = ^Small; var q: SP := "
      "nil; begin q := new(Small);\n  writeln(q^); end n.",
      "", "trap 101 at 2:12"},
+    /* ** at run time: checked on numbers, modular on Bits, any unsigned
+       exponent */
+    {"program w; var a: UInt8 := 3; b: Bits8 := 3; c: Int64 := 1; d: Bits8 "
+     ":= 2; n: UInt64 := 18446744073709551615; begin writeln(a ** 4, \" \", b "
+     "** 7, \" \", c ** n, \" \", d ** n); end w.",
+     "81 139 1 0\n", "ok"},
+    {"program w; var a: Int8 := 3; n: Int32 := 5; begin writeln(a ** 4); "
+     "writeln(a ** n); end w.",
+     "81\n", "trap 6"},
+    {"program w; var a: UInt32 := 2; n: Int32 := 32; begin writeln(a ** n); "
+     "end w.",
+     "", "trap 6"},
     /* the target of an assignment before its value */
     {"program p;\nvar a: array[Int32 range 1..3] of Int32; z: Int32 := "
      "0;\nbegin\n  a[1 div z] := 7 div z;\nend p.",

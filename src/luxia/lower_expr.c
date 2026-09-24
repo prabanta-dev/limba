@@ -361,16 +361,35 @@ static limba_id power(lxl *L, uint32_t node, limba_ltype t, limba_id a,
         limba_id r = lxl_rt(L, LIMBA_RT_MATH_POW, LIMBA_T_F64, args, 2);
         return it == LIMBA_T_F64 ? r : un(L, LIMBA_OP_FPTRUNC, it, r);
     }
-    if (!lxl_signed(L, t)) {
-        lxs_error(L->S, LXE_UNSUPPORTED, node,
-                  "** on a type without a sign is not translated yet");
-        return a;
-    }
+    /* in 64 bits, then the width of t: past it is an overflow, except
+       for a Bits type, which wraps */
+    (void)node;
+    bool sg = lxl_signed(L, t), mod = is_modular(L, t);
     uint32_t args[2] = {lxl_to_i64(L, a, t), lxl_to_i64(L, e, et)};
-    limba_id r = lxl_rt(L, LIMBA_RT_INT_POW, LIMBA_T_I64, args, 2);
-    if (it == LIMBA_T_I64)
+    if (lxl_signed(L, et)) /* the runtime reads the exponent unsigned */
+        lxl_check(
+            L,
+            cmp(L, false, LIMBA_CC_SGE, args[1], lxl_iconst(L, LIMBA_T_I64, 0)),
+            LXR_OVERFLOW);
+    limba_id r = lxl_rt(L,
+                        sg    ? LIMBA_RT_INT_POW
+                        : mod ? LIMBA_RT_BITS_POW
+                              : LIMBA_RT_UINT_POW,
+                        LIMBA_T_I64, args, 2);
+    unsigned bits = limba_type_bits(it);
+    if (bits == 64)
         return r;
-    return lxl_conv(L, r, L->S->ty_int[3], lxs_base(L->S, t));
+    if (!mod) {
+        const limba_typeinfo *x = ti(L, lxs_base(L->S, t));
+        limba_id ok = cmp(L, false, sg ? LIMBA_CC_SLE : LIMBA_CC_ULE, r,
+                          lxl_iconst(L, LIMBA_T_I64, (int64_t)x->hi));
+        if (sg)
+            ok = bin(L, LIMBA_OP_AND, LIMBA_T_I1, ok,
+                     cmp(L, false, LIMBA_CC_SGE, r,
+                         lxl_iconst(L, LIMBA_T_I64, (int64_t)x->lo)));
+        lxl_check(L, ok, LXR_OVERFLOW);
+    }
+    return un(L, LIMBA_OP_TRUNC, it, r);
 }
 
 static limba_id shift(lxl *L, unsigned op, limba_ltype t, limba_id a,

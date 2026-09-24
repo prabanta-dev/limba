@@ -70,5 +70,12 @@ LIMBA_RT(MATH_LN, "math_ln", "(f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_TRUNC, "math_trunc", "(f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_FLOOR, "math_floor", "(f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_CEIL, "math_ceil", "(f64) -> f64", LIMBA_RTA_PURE)
+/* the powers: the exponent is a number without a sign (a negative one is
+   refused before); int_pow and uint_pow trap on overflow of 64 bits */
 LIMBA_RT(INT_POW, "int_pow", "(i64, i64) -> i64",
          LIMBA_RTA_PURE | LIMBA_RTA_MAY_TRAP)
+/* the base without a sign */
+LIMBA_RT(UINT_POW, "uint_pow", "(i64, i64) -> i64",
+         LIMBA_RTA_PURE | LIMBA_RTA_MAY_TRAP)
+/* modulo 2^64 */
+LIMBA_RT(BITS_POW, "bits_pow", "(i64, i64) -> i64", LIMBA_RTA_PURE)

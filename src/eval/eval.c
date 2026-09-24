@@ -285,9 +285,8 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         *r = fbits(ceil(dv(a[0])), LIMBA_T_F64);
         return true;
     case LIMBA_RT_INT_POW: {
-        int64_t base = (int64_t)a[0], ex = (int64_t)a[1], acc = 1;
-        if (ex < 0)
-            return trap(e, LIMBA_TRAP_OVERFLOW);
+        int64_t base = (int64_t)a[0], acc = 1;
+        uint64_t ex = a[1]; /* without a sign */
         while (ex) {
             if ((ex & 1) && __builtin_mul_overflow(acc, base, &acc))
                 return trap(e, LIMBA_TRAP_OVERFLOW);
@@ -296,6 +295,20 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
                 return trap(e, LIMBA_TRAP_OVERFLOW);
         }
         *r = (uint64_t)acc;
+        return true;
+    }
+    case LIMBA_RT_UINT_POW:
+    case LIMBA_RT_BITS_POW: {
+        uint64_t base = a[0], acc = 1, ex = a[1];
+        bool wrap = rt == LIMBA_RT_BITS_POW;
+        while (ex) {
+            if ((ex & 1) && __builtin_mul_overflow(acc, base, &acc) && !wrap)
+                return trap(e, LIMBA_TRAP_OVERFLOW);
+            ex >>= 1;
+            if (ex && __builtin_mul_overflow(base, base, &base) && !wrap)
+                return trap(e, LIMBA_TRAP_OVERFLOW);
+        }
+        *r = acc;
         return true;
     }
     }

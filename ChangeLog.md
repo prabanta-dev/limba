@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `**` at run time on every integer type: checked on `IntN` and `UIntN`
+  (overflow, and no longer a conversion error on `Int8`..`Int32`),
+  modular on `BitsN`; the exponent may be any unsigned value
+  (`1 ** 18446744073709551615` is 1). New run-time functions `uint_pow`
+  and `bits_pow`; the random programs use `**`.
 - What `new` gives, as Ada's bounded error in the strict form of
   `Normalize_Scalars` with validity checks: every scalar of a range
   narrower than its base gets a value outside it (the rest is 0), and a
