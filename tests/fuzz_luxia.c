@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * fuzz_luxia.c - fuzzing target of the Luxia front end, for now its lexer.
- * Whatever the bytes, lexing must not crash, must end with one EOF token,
- * and the tokens and the report must print.
+ * fuzz_luxia.c - fuzzing target of the Luxia front end: lexer and parser.
+ * Whatever the bytes, nothing may crash, the tokens must end with one EOF
+ * token, and the tokens, the tree and the report must print.
  *
  * With clang: clang -fsanitize=fuzzer,address -DLIMBA_FUZZER ... builds a
  * libFuzzer program. Without, it is a driver that runs the files named on
@@ -13,6 +13,7 @@
 #include "front/diag.h"
 #include "front/source.h"
 #include "luxia/lex.h"
+#include "luxia/parse.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,10 +36,15 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         limba_lx_run(&lx, &src, f, &rep);
         if (lx.ntok == 0 || lx.tok[lx.ntok - 1].kind != LX_EOF)
             abort();
+        limba_lx_ast t;
+        limba_lx_ast_init(&t);
+        limba_lx_parse(&t, &lx, &src, &rep);
         if (null) {
             limba_lx_dump(null, &lx, &src);
+            limba_lx_ast_show(null, &t, &lx, t.root, 0);
             limba_report_print(&rep, null);
         }
+        limba_lx_ast_free(&t);
         limba_lx_free(&lx);
         limba_report_free(&rep);
     }

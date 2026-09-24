@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The Luxia parser: recursive descent for declarations and statements,
+  expressions through a Pratt engine shared by any front end
+  (`src/front/pratt.h`), whose table carries the rules of rigour (no
+  mixing of and/or/xor, no chained comparisons, no `a * -b`). Statements
+  end with `;`, `case` branches start with `when`, loops exit with
+  `exit when`, `for var i := a to b` declares its variable. After an
+  error the parser goes on, one message per mistake; an `end` out of line
+  with its opening gets a warning. `limba --emit=ast`; `test_luxia` adds
+  35 expression and 17 program cases.
 - The Luxia lexer (`src/luxia/`): names folded to lowercase, keywords in
   lowercase only, literals converted on the spot (strings and characters
   as in Ada, no escapes), stable error codes `L0001`-`L0009`;

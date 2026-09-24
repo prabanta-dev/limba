@@ -21,11 +21,12 @@ static void usage(FILE *out)
           "Reads the IR in its text (.lit) or binary (.lir) form, verifies\n"
           "it and writes it in the other form. Reads a Luxia source\n"
           "(.luxia) and reports its errors; the front end stops at the\n"
-          "tokens for now.\n"
+          "syntax tree for now.\n"
           "\n"
           "Options\n"
           "  --emit=lir|lit  the form to write; by default the other one\n"
           "  --emit=tokens   the tokens of a Luxia source, one per line\n"
+          "  --emit=ast      the syntax tree of a Luxia source\n"
           "  -o FILE         where to write; by default a .lir goes next to\n"
           "                  the input, a .lit to the standard output\n"
           "  --check         verify only, write nothing\n"
@@ -102,8 +103,9 @@ int main(int argc, char **argv)
         } else if (!strncmp(a, "--emit=", 7)) {
             emit = a + 7;
             if (strcmp(emit, "lir") && strcmp(emit, "lit") &&
-                strcmp(emit, "tokens")) {
-                fprintf(stderr, "limba: --emit takes lir, lit or tokens\n");
+                strcmp(emit, "tokens") && strcmp(emit, "ast")) {
+                fprintf(stderr,
+                        "limba: --emit takes lir, lit, tokens or ast\n");
                 return 2;
             }
         } else if (!strcmp(a, "-o") && i + 1 < argc) {
@@ -130,8 +132,8 @@ int main(int argc, char **argv)
                 in);
         return 2;
     }
-    if (emit && !strcmp(emit, "tokens")) {
-        fprintf(stderr, "limba: --emit=tokens is for a .luxia source\n");
+    if (emit && (!strcmp(emit, "tokens") || !strcmp(emit, "ast"))) {
+        fprintf(stderr, "limba: --emit=%s is for a .luxia source\n", emit);
         return 2;
     }
     if (!emit)

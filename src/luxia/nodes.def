@@ -1,0 +1,70 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+/*
+ * nodes.def - the nodes of the Luxia syntax tree.
+ *
+ *   LX_NODE(name, text, fields)
+ *
+ * fields tells what a, b, c and d hold, one character each:
+ *   -  unused          n  a node (0: none)     l  a LIST node
+ *   i  a name id       I  index in ints        R  index in reals
+ *   C  a code point    S  a string id          B  0 or 1
+ * The op byte holds a token kind: the operator, the mode of a parameter,
+ * the direction of a for, the kind of a routine.
+ */
+LX_NODE(NONE, "none", "----")
+LX_NODE(LIST, "list", "----")  /* a: start in the pool, b: count */
+LX_NODE(NAME, "name", "i---")  /* a name being declared */
+LX_NODE(ERROR, "error", "----")
+/* declarations */
+LX_NODE(PROGRAM, "program", "nll-")  /* name, declarations, body */
+LX_NODE(CONST, "const", "nnn-")      /* name, type, value */
+LX_NODE(TYPEDECL, "type", "nn--")    /* name, type */
+LX_NODE(VAR, "var", "lnn-")          /* names, type, initial value */
+LX_NODE(ROUTINE, "routine", "nlnn")  /* op: procedure or function; name,
+                                        parameters, result, body */
+LX_NODE(BODY, "body", "ll--")        /* declarations, statements */
+LX_NODE(PARAM, "param", "ln--")      /* op: 0, var or out; names, type */
+/* types */
+LX_NODE(TNAME, "tname", "inn-")      /* name, low and high of a range */
+LX_NODE(TNEW, "tnew", "n---")
+LX_NODE(TENUM, "tenum", "l---")      /* the values, NAME nodes */
+LX_NODE(TARRAY, "tarray", "nn--")    /* index type, element type */
+LX_NODE(TOPEN, "topen", "n---")      /* array of T */
+LX_NODE(TRECORD, "trecord", "l---")  /* FIELD nodes */
+LX_NODE(FIELD, "field", "ln--")      /* names, type */
+LX_NODE(TPTR, "tptr", "n---")
+/* statements */
+LX_NODE(ASSIGN, "assign", "nn--")
+LX_NODE(CALLST, "callst", "n---")    /* a CALL used as a statement */
+LX_NODE(IF, "if", "ll--")            /* ARM nodes, else statements */
+LX_NODE(ARM, "arm", "nl--")          /* condition, statements */
+LX_NODE(CASE, "case", "nll-")        /* selector, WHEN nodes, else */
+LX_NODE(WHEN, "when", "ll--")        /* LABEL nodes, statements */
+LX_NODE(LABEL, "label", "nn--")      /* value, or low and high */
+LX_NODE(WHILE, "while", "nl--")
+LX_NODE(REPEAT, "repeat", "ln--")
+LX_NODE(FOR, "for", "nnnl")          /* op: to or downto; name, type,
+                                        RANGE, statements */
+LX_NODE(RANGE, "range", "nn--")
+LX_NODE(LOOP, "loop", "l---")
+LX_NODE(EXIT, "exit", "n---")        /* condition */
+LX_NODE(CONTINUE, "continue", "n---")
+LX_NODE(RETURN, "return", "n---")
+/* expressions */
+LX_NODE(INT, "int", "I---")
+LX_NODE(REAL, "real", "R---")
+LX_NODE(CHAR, "char", "C---")
+LX_NODE(STRING, "string", "S---")
+LX_NODE(BOOL, "bool", "B---")
+LX_NODE(NIL, "nil", "----")
+LX_NODE(REF, "ref", "i---")          /* a name being used */
+LX_NODE(UNARY, "unary", "n---")      /* op */
+LX_NODE(BINARY, "binary", "nn--")    /* op */
+LX_NODE(IN, "in", "nnn-")            /* value, low or type, high */
+LX_NODE(SEL, "sel", "ni--")          /* record, field name */
+LX_NODE(INDEX, "index", "nn--")
+LX_NODE(DEREF, "deref", "n---")
+LX_NODE(CALL, "call", "nl--")        /* callee, arguments */
+LX_NODE(FMT, "fmt", "nnn-")          /* value:width:decimals */
+LX_NODE(NEW, "new", "n---")          /* the type */

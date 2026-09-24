@@ -16,3 +16,14 @@ LX_ERROR(6, KEYWORD_CASE)      /* a keyword not in lowercase */
 LX_ERROR(7, BAD_NUMBER)        /* a malformed number */
 LX_ERROR(8, REAL_RANGE)        /* a real number past Float64 */
 LX_ERROR(9, CONTROL_IN_LITERAL) /* a control character in a literal */
+LX_ERROR(10, EXPECTED)          /* a token other than the grammar wants */
+LX_ERROR(11, MIXED_LOGICAL)     /* and, or, xor mixed without parentheses */
+LX_ERROR(12, CHAINED)           /* a < b < c, a ** b ** c */
+LX_ERROR(13, PREFIX_PARENS)     /* a * -b, 2 ** -1, not -a */
+LX_ERROR(14, PREFIX_POWER)      /* not a ** b */
+LX_ERROR(15, END_NAME)          /* end Other, closing routine Name */
+LX_ERROR(16, NOT_A_STATEMENT)   /* neither an assignment nor a call */
+LX_ERROR(17, NESTED_ROUTINE)    /* a routine inside a routine */
+LX_ERROR(18, EMPTY_STATEMENT)   /* ;; */
+LX_ERROR(19, AFTER_END)         /* text after the final end. */
+LX_ERROR(20, END_ALIGN)         /* warning: end not under its opening */
