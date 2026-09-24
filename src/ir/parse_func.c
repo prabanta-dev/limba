@@ -350,8 +350,17 @@ static bool statement(P *p)
 
     if (p->cur == LIMBA_NONE)
         return lp_fail(p, "%s", "an instruction before the first block");
+    f->pos_cur = 0;
+    if (lp_peek(p)->kind == TK_POS) {
+        uint64_t k = lp_peek(p)->num;
+        if (k == 0 || k > p->m->npos)
+            return lp_fail(p, "%s", "a position not declared with pos");
+        f->pos_cur = (uint32_t)k;
+        p->i++;
+    }
     limba_id id =
         limba_inst_add(f, p->cur, op, ty, cc, imm, imm2, p->ops, p->nops);
+    f->pos_cur = 0;
     uint32_t first = f->insts[id].first;
     for (uint32_t k = 0; k < p->npend; k++) {
         fixup x = {first + p->pend[k].rel, p->pend[k].num, p->pend[k].line};

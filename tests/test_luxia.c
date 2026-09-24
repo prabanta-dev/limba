@@ -593,7 +593,7 @@ static const run_case run_cases[] = {
      "", "trap 104"},
     {"program p; type Vec = array[Int32 range 1..3] of Int32; var v: Vec; i: "
      "Int32 := 4; begin v[i] := 1; end.",
-     "", "trap 100"},
+     "", "trap 100 at 1:91"},
     {"program p; type P = Int32 range 0..100; var x: P; y: Int32 := 101; "
      "begin x := y; end.",
      "", "trap 101"},
@@ -602,7 +602,10 @@ static const run_case run_cases[] = {
      "", "trap 102"},
     {"program p; var a: Int32 := 1; z: Int32 := 0; begin writeln(a div z); "
      "end.",
-     "", "trap 11"},
+     "", "trap 11 at 1:62"},
+    {"program p; function f(x: Int32): Int32; begin return 10 div x; end; "
+     "begin writeln(f(0)); end.",
+     "", "trap 11 at 1:57"},
     {"program p; var a: Int64 := -9223372036854775807 - 1; m: Int64 := -1; "
      "begin writeln(a div m); end.",
      "", "trap 6"},
@@ -717,6 +720,11 @@ static char *run_module(limba_module *m, char *end, size_t size)
         snprintf(end, size, "halt %lld", (long long)r.code);
     else if (r.status != LIMBA_EVAL_OK)
         snprintf(end, size, "status %d", r.status);
+    if (r.pos && r.pos <= m->npos) {
+        size_t n = strlen(end);
+        snprintf(end + n, size - n, " at %u:%u", m->pos[r.pos - 1].line,
+                 m->pos[r.pos - 1].col);
+    }
     char *out = r.out;
     r.out = NULL;
     limba_eval_result_free(&r);
@@ -796,6 +804,10 @@ static int test_run(void)
         limba_report dummy;
         char *out = compile_run(c->src, end, sizeof(end), &dummy);
         const char *o = out ? out : "";
+        /* the place of a trap is compared only when the case gives it */
+        char *at = strstr(end, " at ");
+        if (at && !strstr(c->end, " at "))
+            *at = 0;
         if (strcmp(o, c->out) || strcmp(end, c->end)) {
             fprintf(stderr,
                     "test_luxia: run case %zu\n  printed  \"%s\"\n  expected "

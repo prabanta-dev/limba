@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Positions of the source in the IR (version 2 of the binary form): a
+  table of (file, line, column) in the module and one index per
+  instruction, kept through `edit.c` and every pass, written as
+  `pos k "file" line column` and `!k` in the text form. The reference
+  interpreter reports where a trap stopped the program, innermost call
+  first, and `lir_run` prints it: `trap 11 at err.luxia:5:13`. The Luxia
+  generator gives each instruction the place of the construct it comes
+  from.
 - Luxia to the IR: SSA construction after Braun et al.
   (`src/front/ssa.c`), with block parameters, trivial ones removed, the
   check of definite assignment and of the return on every path; the

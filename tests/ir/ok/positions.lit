@@ -1,0 +1,15 @@
+; positions of the source: a table, and !k after the instructions
+module "positions"
+memory strict
+pos 1 "prog.luxia" 3 5
+pos 2 "prog.luxia" 4 13
+pos 3 "other.luxia" 1 1
+
+func @main : fn() -> i64 export {
+b0:
+  v0 = iconst i64 7 !1
+  v1 = iconst i64 0
+  v2 = icmp.ne i1 v1, v1 !2
+  check v2, 11 !2
+  ret v0 !3
+}

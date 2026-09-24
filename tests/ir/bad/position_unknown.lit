@@ -1,0 +1,8 @@
+; expect: a position not declared with pos
+pos 1 "prog.luxia" 3 5
+
+func @main : fn() -> i64 export {
+b0:
+  v0 = iconst i64 7 !2
+  ret v0
+}

@@ -44,6 +44,7 @@ typedef struct {
     void **globals;
     int status;
     int64_t code;
+    uint32_t pos; /* where the run stopped, innermost call first */
 } E;
 
 static void *keep(E *e, void *p)
@@ -975,6 +976,8 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
             case LIMBA_F_PARAM:
                 break;
             }
+            if (!ok && !e->pos)
+                e->pos = limba_inst_pos(f, id);
             v[id] = r;
         }
         if (!ok)
@@ -1040,6 +1043,7 @@ void limba_eval(const limba_module *m, const char *entry,
     call(&e, &m->funcs[fid], NULL, &ret);
     r->status = e.status;
     r->code = e.code;
+    r->pos = e.pos;
     r->ret = e.status == LIMBA_EVAL_OK ? ret : 0;
     r->steps = e.steps;
     limba_w_byte(&e.out, 0);

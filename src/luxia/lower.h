@@ -82,6 +82,8 @@ limba_id lxl_rt(lxl *L, unsigned rt, limba_id type, const uint32_t *args,
 void lxl_check(lxl *L, limba_id cond, int64_t code);
 /* a new block that is where the code goes now */
 void lxl_goto_new(lxl *L, limba_id b);
+/* the instructions made from now on come from node */
+void lxl_at(lxl *L, uint32_t node);
 
 /* expressions (lower_expr.c) */
 limba_id lxl_value(lxl *L, uint32_t node);

@@ -69,6 +69,8 @@ void limba_edit_end(limba_edit *e)
     }
 
     limba_inst *insts = limba_xmalloc(((size_t)next + 1) * sizeof(*insts));
+    uint32_t *locs =
+        f->locs ? limba_xcalloc((size_t)next + 1, sizeof(*locs)) : NULL;
     uint32_t *ops = NULL, nops = 0, capops = 0;
     limba_block *blocks = limba_xcalloc((size_t)nextb + 1, sizeof(*blocks));
     uint8_t *kinds = NULL;
@@ -89,6 +91,8 @@ void limba_edit_end(limba_edit *e)
             limba_inst *out = &insts[newid[id]];
             *out = *in;
             out->block = newblock[b];
+            if (locs)
+                locs[newid[id]] = limba_inst_pos(f, id);
             out->first = nops;
             if (in->nops > capkinds) {
                 capkinds = in->nops;
@@ -121,6 +125,9 @@ void limba_edit_end(limba_edit *e)
     f->nblocks = f->capblocks = nextb;
     f->insts = insts;
     f->ninsts = f->capinsts = next;
+    free(f->locs);
+    f->locs = locs;
+    f->caplocs = locs ? next : 0;
     f->operands = ops;
     f->noperands = nops;
     f->capoperands = capops;

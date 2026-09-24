@@ -77,6 +77,13 @@ int main(int argc, char **argv)
     fprintf(stderr, "lir_run: %s", status_text[r.status]);
     if (r.status == LIMBA_EVAL_TRAP || r.status == LIMBA_EVAL_HALT)
         fprintf(stderr, " %" PRId64, r.code);
+    if (r.pos && r.pos <= m->npos) {
+        const limba_pos *p = &m->pos[r.pos - 1];
+        size_t n;
+        const char *file = limba_str(m, p->file, &n);
+        fprintf(stderr, " at %.*s:%" PRIu32 ":%" PRIu32, (int)n, file, p->line,
+                p->col);
+    }
     if (r.status == LIMBA_EVAL_OK)
         fprintf(stderr, " %" PRId64, (int64_t)r.ret);
     fprintf(stderr, ", %" PRIu64 " steps\n", r.steps);

@@ -256,6 +256,8 @@ static void print_inst(pctx *p, uint32_t id)
         }
         break;
     }
+    if (limba_inst_pos(f, id))
+        fprintf(out, " !%" PRIu32, limba_inst_pos(f, id));
     fputc('\n', out);
 }
 
@@ -377,6 +379,16 @@ void limba_print(const limba_module *m, FILE *out)
             print_bytes(out, s, n);
         }
         fputc('\n', out);
+    }
+
+    /* the positions in the source, which instructions refer to as !k */
+    for (uint32_t k = 0; k < m->npos; k++) {
+        size_t n;
+        const char *s = limba_str(m, m->pos[k].file, &n);
+        fprintf(out, "pos %" PRIu32 " ", k + 1);
+        print_bytes(out, s, n);
+        fprintf(out, " %" PRIu32 " %" PRIu32 "\n", m->pos[k].line,
+                m->pos[k].col);
     }
 
     for (uint32_t i = 0; i < m->nfuncs; i++)

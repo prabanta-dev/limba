@@ -557,6 +557,7 @@ static limba_id index_addr(lxl *L, uint32_t node)
     lxl_array_parts(L, base, &p, &len, &lo, &hi);
     limba_id i = lxl_value(L, idx);
     limba_ltype it = ntype(L, idx);
+    lxl_at(L, node);
     limba_id i64 = lxl_to_i64(L, i, it);
     uint64_t esize = ti(L, at->elem)->size;
     if (at->kind == LIMBA_LTK_OPEN) {
@@ -600,6 +601,7 @@ limba_id lxl_addr(lxl *L, uint32_t node)
             if (L->S->ts.field[r->first + i].name == fname)
                 off = L->S->ts.field[r->first + i].offset;
         limba_id b = base_addr(L, base);
+        lxl_at(L, node);
         return addr(L, b, lxl_iconst(L, LIMBA_T_I64, 0), 0, (int64_t)off);
     }
     case LXN_INDEX:
@@ -627,6 +629,7 @@ static limba_id binary(lxl *L, uint32_t node)
     if (is_logic(L, node))
         return bool_value(L, node);
     limba_id a = lxl_value(L, l), b = lxl_value(L, nd(L, node)->b);
+    lxl_at(L, node);
     switch (op) {
     case LX_EQ:
     case LX_NE:
@@ -664,6 +667,7 @@ static limba_id unary(lxl *L, uint32_t node)
     if (is_logic(L, node))
         return bool_value(L, node);
     limba_id v = lxl_value(L, x->a), it = lxl_type(L, t);
+    lxl_at(L, node);
     switch (op) {
     case LX_PLUS:
         return v;

@@ -542,6 +542,12 @@ static bool check_func(vctx *v)
                  "power of two",
                  fname, s);
 
+    for (uint32_t i = 0; i < f->ninsts; i++)
+        if (limba_inst_pos(f, i) > m->npos)
+            FAIL("@%s: an instruction at position %" PRIu32 ", which does "
+                 "not exist",
+                 fname, limba_inst_pos(f, i));
+
     /* every instruction in exactly one block, at a known position */
     free(v->pos);
     v->pos = limba_xmalloc(((size_t)f->ninsts + 1) * sizeof(uint32_t));
@@ -614,6 +620,13 @@ int limba_verify(const limba_module *m, limba_diag *d)
 {
     vctx v = {.m = m, .d = d};
     bool ok = check_types(&v) && check_symbols(&v);
+    for (uint32_t k = 0; ok && k < m->npos; k++)
+        if (m->pos[k].file >= limba_str_count(m)) {
+            limba_diag_set(d, 0, "position %" PRIu32 ": no such file string",
+                           k + 1);
+            free(v.pos);
+            return -1;
+        }
     for (uint32_t i = 0; ok && i < m->nfuncs; i++) {
         v.f = &m->funcs[i];
         v.fid = i;

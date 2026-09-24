@@ -97,8 +97,10 @@ void limba_module_free(limba_module *m)
         free(f->insts);
         free(f->operands);
         free(f->slots);
+        free(f->locs);
     }
     free(m->funcs);
+    free(m->pos);
     free(m->globals);
     free(m->externs);
     free(m->members);
@@ -370,6 +372,15 @@ limba_id limba_inst_add(limba_func *f, limba_id b, unsigned op, limba_id type,
 {
     LIMBA_GROW(f->insts, f->ninsts, f->capinsts);
     limba_id id = f->ninsts++;
+    if (f->locs || f->pos_cur) {
+        if (f->caplocs < f->capinsts) {
+            f->locs = limba_xrealloc(f->locs, f->capinsts, sizeof(*f->locs));
+            memset(f->locs + f->caplocs, 0,
+                   (f->capinsts - f->caplocs) * sizeof(*f->locs));
+            f->caplocs = f->capinsts;
+        }
+        f->locs[id] = f->pos_cur;
+    }
     limba_inst *in = &f->insts[id];
     in->op = (uint16_t)op;
     in->cc = (uint8_t)cc;
@@ -395,6 +406,19 @@ limba_id limba_inst_add(limba_func *f, limba_id b, unsigned op, limba_id type,
 limba_id limba_param_add(limba_func *f, limba_id b, limba_id t)
 {
     return limba_inst_add(f, b, LIMBA_OP_PARAM, t, 0, 0, 0, NULL, 0);
+}
+
+uint32_t limba_pos_add(limba_module *m, limba_id file, uint32_t line,
+                       uint32_t col)
+{
+    if (m->npos) {
+        const limba_pos *last = &m->pos[m->npos - 1];
+        if (last->file == file && last->line == line && last->col == col)
+            return m->npos;
+    }
+    LIMBA_GROW(m->pos, m->npos, m->cappos);
+    m->pos[m->npos++] = (limba_pos){file, line, col};
+    return m->npos;
 }
 
 /* ---- odds and ends shared by the other files ---- */

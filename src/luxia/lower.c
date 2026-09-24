@@ -149,6 +149,17 @@ void lxl_check(lxl *L, limba_id cond, int64_t code)
     lxl_emit(L, LIMBA_OP_CHECK, LIMBA_T_VOID, 0, code, 0, &cond, 1);
 }
 
+void lxl_at(lxl *L, uint32_t node)
+{
+    limba_where w;
+    const limba_source *src = L->S->src;
+    if (!L->ssa || !limba_source_where(src, L->S->t->node[node].loc, &w))
+        return;
+    const char *path = src->file[w.file].path;
+    limba_id file = limba_str_intern(L->m, path, strlen(path));
+    limba_ssa_func(L->ssa)->pos_cur = limba_pos_add(L->m, file, w.line, w.col);
+}
+
 void lxl_goto_new(lxl *L, limba_id b)
 {
     limba_ssa_br(L->ssa, L->cur, b);
@@ -499,6 +510,7 @@ static void stmt(lxl *L, uint32_t node)
 {
     const limba_lx_node *x = nd(L, node);
     limba_id r;
+    lxl_at(L, node);
     switch (x->kind) {
     case LXN_ASSIGN:
         lxl_assign(L, x->a, x->b);
@@ -649,6 +661,8 @@ static void end_function(lxl *L, uint32_t node, bool function)
             limba_ssa_ret(L->ssa, L->cur, LIMBA_NONE);
         }
     }
+    /* the jumps belong to no single place */
+    limba_ssa_func(L->ssa)->pos_cur = 0;
     limba_ssa_finish(L->ssa, undefined, L);
     limba_ssa_free(L->ssa);
     L->ssa = NULL;

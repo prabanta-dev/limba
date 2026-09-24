@@ -158,9 +158,22 @@ static bool module(P *p)
         } else if (lp_accept_word(p, "func")) {
             if (!lp_func(p))
                 return false;
+        } else if (lp_accept_word(p, "pos")) {
+            /* pos 3 "file" 12 5: in order, before the functions */
+            int64_t k, line, col;
+            limba_id file;
+            if (!lp_integer(p, &k) || !lp_string(p, &file) ||
+                !lp_integer(p, &line) || !lp_integer(p, &col))
+                return false;
+            if (k != (int64_t)p->m->npos + 1 || line < 0 || col < 0 ||
+                line > UINT32_MAX || col > UINT32_MAX)
+                return lp_fail(p, "%s", "pos: numbered in order from 1");
+            LIMBA_GROW(p->m->pos, p->m->npos, p->m->cappos);
+            p->m->pos[p->m->npos++] =
+                (limba_pos){file, (uint32_t)line, (uint32_t)col};
         } else {
             return lp_fail(p, "%s",
-                           "module, memory, type, global, extern or "
+                           "module, memory, type, global, extern, pos or "
                            "func expected");
         }
     }

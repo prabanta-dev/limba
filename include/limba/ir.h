@@ -22,7 +22,7 @@
 #include <stdio.h>
 
 /* bumped whenever the binary form or the tables change incompatibly */
-#define LIMBA_IR_VERSION 1
+#define LIMBA_IR_VERSION 2
 
 typedef uint32_t limba_id;
 #define LIMBA_NONE UINT32_MAX
@@ -252,10 +252,23 @@ typedef struct {
     uint32_t nparams;
 } limba_block;
 
+/* a place in the source a front end compiled: a file (a string id), a
+   line and a column, from 1; an instruction refers to one by index, from
+   1, and 0 means none */
+typedef struct {
+    limba_id file;
+    uint32_t line, col;
+} limba_pos;
+
 typedef struct {
     limba_id name;
     limba_id type;  /* a function type */
     uint32_t flags; /* LIMBA_SYM_* */
+    /* the position of every instruction, NULL if none has one; new
+       instructions get pos_cur */
+    uint32_t *locs;
+    uint32_t caplocs;
+    uint32_t pos_cur;
     limba_inst *insts;
     uint32_t ninsts, capinsts;
     uint32_t *operands;
@@ -287,6 +300,8 @@ typedef struct limba_module {
     uint32_t nexterns, capexterns;
     limba_func *funcs;
     uint32_t nfuncs, capfuncs;
+    limba_pos *pos; /* pos[k - 1] is position k */
+    uint32_t npos, cappos;
 } limba_module;
 
 /* ---- building ---- */
@@ -332,6 +347,15 @@ limba_id limba_inst_add(limba_func *f, limba_id b, unsigned op, limba_id type,
                         const uint32_t *ops, uint32_t nops);
 /* a parameter of block b, of type t */
 limba_id limba_param_add(limba_func *f, limba_id b, limba_id t);
+
+/* a position, by index from 1; the last one again if it is the same */
+uint32_t limba_pos_add(limba_module *m, limba_id file, uint32_t line,
+                       uint32_t col);
+/* the position of an instruction, 0 if none */
+static inline uint32_t limba_inst_pos(const limba_func *f, limba_id i)
+{
+    return f->locs && i < f->caplocs ? f->locs[i] : 0;
+}
 
 /* ---- control flow ---- */
 

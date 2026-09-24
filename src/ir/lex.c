@@ -179,6 +179,14 @@ limba_tok *limba_lex(const char *text, size_t len, size_t *count,
                 k->n = w - 1;
             }
             break;
+        case '!':
+            k->kind = TK_POS;
+            while (p + w < end && isdigit((unsigned char)p[w]) &&
+                   k->num < UINT32_MAX)
+                k->num = k->num * 10 + (uint64_t)(p[w++] - '0');
+            if (w == 1 || (p + w < end && isdigit((unsigned char)p[w])))
+                k->kind = TK_BAD;
+            break;
         case '$':
             k->kind = TK_SLOT;
             while (p + w < end && isdigit((unsigned char)p[w]) &&

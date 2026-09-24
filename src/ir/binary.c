@@ -160,6 +160,24 @@ int limba_write(const limba_module *m, uint8_t **buf, size_t *len)
     for (uint32_t i = 0; i < m->nfuncs; i++)
         w_func(&w, &m->funcs[i]);
 
+    /* positions in the source: the table, then for each function a flag
+       and, if set, the position of every instruction in canonical order */
+    limba_w_uleb(&w, m->npos);
+    for (uint32_t k = 0; k < m->npos; k++) {
+        limba_w_uleb(&w, m->pos[k].file);
+        limba_w_uleb(&w, m->pos[k].line);
+        limba_w_uleb(&w, m->pos[k].col);
+    }
+    for (uint32_t i = 0; i < m->nfuncs; i++) {
+        const limba_func *f = &m->funcs[i];
+        limba_w_byte(&w, f->locs != NULL);
+        if (!f->locs)
+            continue;
+        for (uint32_t b = 0; b < f->nblocks; b++)
+            for (uint32_t k = 0; k < f->blocks[b].ninsts; k++)
+                limba_w_uleb(&w, limba_inst_pos(f, f->blocks[b].insts[k]));
+    }
+
     *buf = w.buf;
     *len = w.len;
     return 0;
@@ -361,6 +379,27 @@ limba_module *limba_read(const uint8_t *buf, size_t len, limba_diag *d)
                 goto fail;
             break;
         }
+
+    uint32_t npos = limba_r_count(&r, 3);
+    for (uint32_t k = 0; k < npos && !r.bad; k++) {
+        limba_id file = r_id(&r);
+        uint32_t line = r_id(&r), col = r_id(&r);
+        LIMBA_GROW(m->pos, m->npos, m->cappos);
+        m->pos[m->npos++] = (limba_pos){file, line, col};
+    }
+    for (uint32_t i = 0; i < m->nfuncs && !r.bad; i++) {
+        limba_func *f = &m->funcs[i];
+        uint8_t has = limba_r_byte(&r);
+        if (has > 1)
+            r.bad = true;
+        if (!has || r.bad)
+            continue;
+        /* instructions were made in canonical order: id = index */
+        f->locs = limba_xcalloc((size_t)f->capinsts + 1, sizeof(*f->locs));
+        f->caplocs = f->capinsts;
+        for (uint32_t k = 0; k < f->ninsts && !r.bad; k++)
+            f->locs[k] = r_id(&r);
+    }
 
     if (r.bad || r.p != r.end) {
         limba_diag_set(d, 0,

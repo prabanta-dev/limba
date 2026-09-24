@@ -93,6 +93,7 @@ static void routine(lxl *L, uint32_t node, limba_sym s, limba_id *result)
             ops[n++] = v[j];
         }
     }
+    lxl_at(L, node);
     limba_id rt =
         sig->elem == S->ts.void_ ? LIMBA_T_VOID : lxl_type(L, sig->elem);
     limba_id r = lxl_emit(L, LIMBA_OP_CALL, rt, 0, L->func_of[s], 0, ops, n);
@@ -393,13 +394,16 @@ void lxl_call(lxl *L, uint32_t node, limba_id *result)
     switch (y->kind) {
     case LIMBA_LSYM_TYPE: {
         uint32_t a = arg(L, node, 0);
-        *result = lxl_conv(L, lxl_value(L, a), S->type[a], S->type[node]);
+        limba_id v = lxl_value(L, a);
+        lxl_at(L, node);
+        *result = lxl_conv(L, v, S->type[a], S->type[node]);
         return;
     }
     case LIMBA_LSYM_ROUTINE:
         routine(L, node, s, result);
         return;
     case LIMBA_LSYM_BUILTIN:
+        lxl_at(L, node);
         builtin(L, node, y->value, result);
         return;
     }

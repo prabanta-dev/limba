@@ -32,6 +32,7 @@ enum {
     TK_EQ,
     TK_ARROW,
     TK_ELLIPSIS,
+    TK_POS, /* !12: a position of the source */
     TK_BAD,
 };
 
