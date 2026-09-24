@@ -14,13 +14,16 @@ type
     next: Lines;
   end;
   Codes = array[Byte] of Bits64;
+  Sequence = array[Int64 range <>] of Bits64;
+  Counts = array[Int64 range <>] of Int64;
+  Flags = array[Int64 range <>] of Boolean;
 
 var
   code: Codes;
 
-// the slot of key k, or of the free place where it would go
-function Slot(k: Bits64; keys: array of Bits64; used: array of Boolean):
-  Int64;
+// the slot of key k, or of the free place where it would go; the table
+// starts at 0 and its length is a power of two
+function Slot(k: Bits64; keys: Sequence; used: Flags): Int64;
 begin
   var mask := Bits64(length(keys) - 1);
   var p := Int64((k * 2654435761) and mask);
@@ -31,9 +34,9 @@ begin
 end Slot;
 
 // counts every fragment of k nucleotides of the sequence
-procedure CountFrames(dna: array of Bits64; k: Int32;
-                      var keys: array of Bits64; var counts: array of Int64;
-                      var used: array of Boolean);
+procedure CountFrames(dna: Sequence; k: Int32;
+                      var keys: Sequence; var counts: Counts;
+                      var used: Flags);
 begin
   for var i := low(used) to high(used) do
     used[i] := false;
@@ -42,7 +45,7 @@ begin
   var acc: Bits64 := 0;
   for var i := low(dna) to high(dna) do
     acc := ((acc shl 2) or dna[i]) and mask;
-    if i >= Int64(k) - 1 then
+    if i - low(dna) >= Int64(k) - 1 then
       var p := Slot(acc, keys, used);
       if used[p] then
         counts[p] := counts[p] + 1;
@@ -55,8 +58,8 @@ begin
   end;
 end CountFrames;
 
-function Count(k: Bits64; keys: array of Bits64; counts: array of Int64;
-               used: array of Boolean): Int64;
+function Count(k: Bits64; keys: Sequence; counts: Counts;
+               used: Flags): Int64;
 begin
   var p := Slot(k, keys, used);
   if used[p] then
@@ -84,9 +87,9 @@ begin
 end KeyOf;
 
 // every fragment of k nucleotides with its share, the most frequent first
-procedure Frequency(dna: array of Bits64; k: Int32;
-                    var keys: array of Bits64; var counts: array of Int64;
-                    var used: array of Boolean);
+procedure Frequency(dna: Sequence; k: Int32;
+                    var keys: Sequence; var counts: Counts;
+                    var used: Flags);
 begin
   CountFrames(dna, k, keys, counts, used);
   var total: Int64 := 1;
@@ -122,9 +125,9 @@ begin
   writeln();
 end Frequency;
 
-procedure CountFragment(dna: array of Bits64; s: String;
-                        var keys: array of Bits64; var counts: array of Int64;
-                        var used: array of Boolean);
+procedure CountFragment(dna: Sequence; s: String;
+                        var keys: Sequence; var counts: Counts;
+                        var used: Flags);
 begin
   CountFrames(dna, Int32(length(s)), keys, counts, used);
   writeln(Count(KeyOf(s), keys, counts, used), TAB, s);

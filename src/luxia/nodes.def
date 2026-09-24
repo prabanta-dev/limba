@@ -30,7 +30,7 @@ LX_NODE(TNAME, "tname", "inn-")      /* name, low and high of a range */
 LX_NODE(TNEW, "tnew", "n---")
 LX_NODE(TENUM, "tenum", "l---")      /* the values, NAME nodes */
 LX_NODE(TARRAY, "tarray", "nn--")    /* index type, element type */
-LX_NODE(TOPEN, "topen", "n---")      /* array of T */
+LX_NODE(TOPEN, "topen", "nn--")      /* array[I range <>] of T: box, T */
 LX_NODE(TRECORD, "trecord", "l---")  /* FIELD nodes */
 LX_NODE(FIELD, "field", "ln--")      /* names, type */
 LX_NODE(TPTR, "tptr", "n---")
@@ -68,3 +68,4 @@ LX_NODE(DEREF, "deref", "n---")
 LX_NODE(CALL, "call", "nl--")        /* callee, arguments */
 LX_NODE(FMT, "fmt", "nnn-")          /* value:width:decimals */
 LX_NODE(NEW, "new", "n---")          /* the type */
+LX_NODE(TBOX, "tbox", "i---")        /* I range <>: the name of I */

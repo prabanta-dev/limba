@@ -281,7 +281,7 @@ static const parse_case program_cases[] = {
      "  end;\n"
      "  V = array[Int32 range 1..10] of Float64;\n"
      "  M = new Float64;\n"
-     "procedure q(out r: array of Byte);\n"
+     "procedure q(out r: array[Int32 range <>] of Byte);\n"
      "begin\n"
      "end;\n"
      "begin\n"
@@ -290,7 +290,7 @@ static const parse_case program_cases[] = {
      "nodo - -))) (type nodo (trecord [(field [x y] (tname float64 - -)) "
      "(field [next] (tname p - -))])) (type v (tarray (tname int32 1 10) "
      "(tname float64 - -))) (type m (tnew (tname float64 - -))) (routine "
-     "procedure q [(param out [r] (topen (tname byte - -)))] - (body [] "
+     "procedure q [(param out [r] (topen (tbox int32) (tname byte - -)))] - (body [] "
      "[]))] [])",
      ""},
     {"program p;\n"
@@ -430,7 +430,7 @@ static const sema_case sema_cases[] = {
      "  p: PNodo := nil;\n"
      "  s: String := \"ciao\" & ' ' & \"mondo\";\n"
      "  b: Bits32 := 0xFF;\n"
-     "function Somma(a: array of Float64): Float64;\n"
+     "function Somma(a: array[Int32 range <>] of Float64): Float64;\n"
      "var t: Float64 := 0.0;\n"
      "begin\n"
      "  for var i := low(a) to high(a) do\n"
@@ -510,7 +510,8 @@ static const sema_case sema_cases[] = {
     {"program p; procedure q(); begin end; var x: Int32 := q(); begin end.",
      "L0038@1:54"},
     {"program p; var s: String := str(1:2); begin end.", "L0048@1:33"},
-    {"program p; var a: array of Int32; begin end.", "L0049@1:19"},
+    {"program p; var a: array[Int32 range <>] of Int32; begin end.",
+     "L0049@1:19"},
     {"program p; var n: Int32 := 3; var a: array[Int32 range 1..n] of Int32;"
      " begin end.",
      "L0051@1:44"},
@@ -528,6 +529,19 @@ static const sema_case sema_cases[] = {
     /* 1 is the exit status of the errors at run time */
     {"program p; begin halt(1); end.", "L0055@1:23"},
     {"program p; begin halt(256); end.", "L0055@1:23"},
+    /* open arrays: index of the same base, same elements, bounds inside a
+       range, only for parameters */
+    {"program p; var b: array[Int16 range 1..2] of Int8; procedure Q(v: "
+     "array[Int32 range <>] of Int8); begin end Q; begin Q(b); end.",
+     "L0027@1:120"},
+    {"program p; type S = Int32 range 1..10; var a: array[Int32 range 0..20] "
+     "of Int8; procedure P(v: array[S range <>] of Int8); begin end P; begin "
+     "P(a); end.",
+     "L0029@1:145"},
+    {"program p; var y: Int32 range <>; begin end.", "L0049@1:19"},
+    {"program p; type V = array[Int8 range <>] of Int8; function F(): V; "
+     "begin end F; begin end.",
+     "L0049@1:65"},
 };
 
 static void check_string(const char *src, char **errors)
@@ -659,10 +673,11 @@ static const run_case run_cases[] = {
     /* records, arrays, parameters */
     {"program p;\ntype\n  Pt = record x, y: Int32; end;\n"
      "  Vec = array[Int32 range 0..4] of Int32;\nvar v: Vec; q: Pt;\n"
-     "procedure Fill(var a: array of Int32);\nbegin\n"
+     "procedure Fill(var a: array[Int32 range <>] of Int32);\nbegin\n"
      "  for var i := low(a) to high(a) do a[i] := Int32(i) * 10; end;\n"
      "end;\n"
-     "function Sum(a: array of Int32): Int64;\nvar s: Int64 := 0;\nbegin\n"
+     "function Sum(a: array[Int32 range <>] of Int32): Int64;\nvar s: Int64 := "
+     "0;\nbegin\n"
      "  for var i := 0 to high(a) do s := s + Int64(a[i]); end;\n"
      "  return s;\nend;\n"
      "procedure Move(var p: Pt; dx: Int32);\nbegin p.x := p.x + dx; end;\n"
@@ -737,6 +752,32 @@ static const run_case run_cases[] = {
     /* halt with a computed 1 is an error at run time, status 1 */
     {"program p; var n: Int32 := 1; begin halt(n); end p.", "", "trap 101"},
     {"program p; var n: Int32 := 0; begin halt(n); end p.", "", "halt 0"},
+    /* an open array takes the bounds of its argument (Ada) */
+    {"program p; type V = array[Int32 range <>] of Int64; var a: "
+     "array[Int32 range 5..9] of Int64; n: Int32 := 3; procedure F(var v: "
+     "V); begin writeln(low(v), \" \", high(v), \" \", length(v)); for var "
+     "i := low(v) to high(v) do v[i] := Int64(i); end; end F; function "
+     "S(v: V): Int64; var s: Int64 := 0; begin for var i := low(v) to "
+     "high(v) do s := s + v[i]; end; return s; end S; begin F(a); "
+     "writeln(S(a)); var d: array[Int32 range -2..n] of Int64; F(d); "
+     "writeln(S(d)); var e: array[Int32 range 4..n] of Int64; F(e); "
+     "writeln(S(e), \" \", a[5]); end p.",
+     "5 9 5\n35\n-2 3 6\n3\n4 3 0\n0 5\n", "ok"},
+    {"program p; type Small = Int32 range 1..10; var n: Int32 := 3; "
+     "procedure Only(v: array[Small range <>] of Int8); begin "
+     "writeln(low(v)); end Only; begin var e: array[Int32 range 4..n] of "
+     "Int8; Only(e); var d: array[Int32 range 0..n] of Int8; Only(d); end "
+     "p.",
+     "4\n", "trap 101"},
+    {"program p; var a: array[Int32 range 0..20] of Int8; procedure Q(v: "
+     "array[Int32 range <>] of Int8); begin writeln(v[25]); end Q; begin "
+     "Q(a); end p.",
+     "", "trap 100"},
+    /* no value with a sign fits a range above INT64_MAX */
+    {"program p; type R = UInt64 range "
+     "18446744073709551610..18446744073709551611; var x: Int8 := 1; begin "
+     "writeln(R(x)); end p.",
+     "", "trap 103"},
     /* the target of an assignment before its value */
     {"program p;\nvar a: array[Int32 range 1..3] of Int32; z: Int32 := "
      "0;\nbegin\n  a[1 div z] := 7 div z;\nend p.",

@@ -85,12 +85,12 @@ static v128 tmax(unsigned t)
     return ((v128)1 << tbits(t)) - 1;
 }
 
-enum { K_BASE, K_RANGE, K_ARRAY };
+enum { K_BASE, K_RANGE, K_ARRAY, K_OPEN };
 
 typedef struct {
-    uint8_t k, base; /* base: the scalar type of a range or of itself */
-    uint32_t index, elem;
-    v128 lo, hi; /* of a range; of the index of an array */
+    uint8_t k, base;      /* base: the scalar type of a range or of itself */
+    uint32_t index, elem; /* of an open array, the index is a scalar */
+    v128 lo, hi;          /* of a range; of the index of an array */
 } xt;
 
 enum {
@@ -121,8 +121,22 @@ static const char *const otext[] = {
     "shr", "=", "<>", "<",   "<=",  ">",   ">=",  "-",  "abs", "not",
 };
 
-/* E_IN: a in type fn, or a in b..c when fn is 0 */
-enum { E_LIT, E_VAR, E_BIN, E_UN, E_CONV, E_CALL, E_STR, E_INDEX, E_IN };
+/* E_IN: a in type fn, or a in b..c when fn is 0; E_LOW, E_HIGH, E_LEN:
+   of the array variable var */
+enum {
+    E_LIT,
+    E_VAR,
+    E_BIN,
+    E_UN,
+    E_CONV,
+    E_CALL,
+    E_STR,
+    E_INDEX,
+    E_IN,
+    E_LOW,
+    E_HIGH,
+    E_LEN
+};
 
 typedef struct {
     uint8_t k, op;
@@ -297,7 +311,13 @@ static v128 hi_of(const G *g, uint32_t t)
 
 static bool is_array(const G *g, uint32_t t)
 {
-    return g->ty[t].k == K_ARRAY;
+    return g->ty[t].k == K_ARRAY || g->ty[t].k == K_OPEN;
+}
+
+/* the base type of the index of an array type */
+static unsigned index_base(const G *g, uint32_t at)
+{
+    return g->ty[g->ty[at].index].base;
 }
 
 static uint32_t new_type(G *g, xt x)
@@ -476,8 +496,11 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var);
 static uint32_t value_for(G *g, uint32_t t, int d)
 {
     uint32_t e = expr(g, base(g, t), d, false);
-    if (g->e[e].cst && base(g, t) != T_BOOL)
+    if (g->e[e].cst && base(g, t) != T_BOOL) {
+        if (g->e[e].k != E_LIT)
+            e = lit(g, t, 0); /* low(a) of a static array: a constant */
         g->e[e].lit = rand_in(g, lo_of(g, t), hi_of(g, t));
+    }
     return e;
 }
 
@@ -487,15 +510,67 @@ static int depth(G *g)
 }
 
 /* an index of array type at: a literal inside it, or any value */
-static uint32_t index_for(G *g, uint32_t at, int d)
+/* low(a), high(a) or length(a) of array variable v: constants for an
+   array of the program, values for an open parameter */
+static uint32_t bound(G *g, unsigned k, uint32_t v)
 {
+    uint32_t i = new_e(g, k, index_base(g, g->v[v].t));
+    g->e[i].var = v;
+    g->e[i].cst = g->ty[g->v[v].t].k == K_ARRAY;
+    return i;
+}
+
+/* an index of array variable v: a literal inside a static array, or low
+   and high and near them, or any value */
+static uint32_t index_for(G *g, uint32_t v, int d)
+{
+    uint32_t at = g->v[v].t;
+    if (g->ty[at].k == K_OPEN && chance(g, 70)) {
+        unsigned b = index_base(g, at);
+        uint32_t e = bound(g, chance(g, 50) ? E_LOW : E_HIGH, v);
+        if (chance(g, 50))
+            e = binop(g, g->e[e].k == E_LOW ? O_ADD : O_SUB, b, e,
+                      lit(g, b, below(g, 3)));
+        return e;
+    }
     return value_for(g, g->ty[at].index, d);
+}
+
+/* a visible array variable whose index has base b; -1 if none */
+static int pick_indexed(G *g, unsigned b)
+{
+    uint32_t n = 0, chosen = 0;
+    for (uint32_t i = 0; i < g->nscope; i++) {
+        uint32_t v = g->scope[i];
+        if (is_array(g, g->v[v].t) && index_base(g, g->v[v].t) == b &&
+            below(g, ++n) == 0)
+            chosen = v;
+    }
+    return n ? (int)chosen : -1;
+}
+
+/* a visible array variable to pass to open parameter type ot: an index
+   of the same base, the same elements; -1 if none */
+static int pick_argument(G *g, uint32_t ot, bool write)
+{
+    uint32_t n = 0, chosen = 0;
+    for (uint32_t i = 0; i < g->nscope; i++) {
+        uint32_t v = g->scope[i], vt = g->v[v].t;
+        if (!is_array(g, vt) || index_base(g, vt) != index_base(g, ot) ||
+            g->ty[vt].elem != g->ty[ot].elem)
+            continue;
+        if (write && !writable(g, v))
+            continue;
+        if (below(g, ++n) == 0)
+            chosen = v;
+    }
+    return n ? (int)chosen : -1;
 }
 
 static uint32_t element(G *g, uint32_t v, int d)
 {
     uint32_t at = g->v[v].t;
-    uint32_t ix = index_for(g, at, d - 1);
+    uint32_t ix = index_for(g, v, d - 1);
     uint32_t i = new_e(g, E_INDEX, g->ty[at].elem);
     g->e[i].var = v;
     g->e[i].a = ix;
@@ -506,8 +581,15 @@ static uint32_t call_expr(G *g, uint32_t fn, int d)
 {
     uint32_t a[4];
     uint32_t np = g->r[fn].np;
-    for (uint32_t k = 0; k < np; k++)
-        a[k] = value_for(g, g->v[g->r[fn].par[k]].t, d - 1);
+    for (uint32_t k = 0; k < np; k++) {
+        uint32_t pt = g->v[g->r[fn].par[k]].t;
+        if (g->ty[pt].k == K_OPEN) {
+            /* the array its type came from is a global: always there */
+            a[k] = var_ref(g, (uint32_t)pick_argument(g, pt, false));
+        } else {
+            a[k] = value_for(g, pt, d - 1);
+        }
+    }
     uint32_t i = new_e(g, E_CALL, g->r[fn].rt);
     g->e[i].fn = fn;
     g->e[i].args = keep_list(g, a, np);
@@ -540,6 +622,12 @@ static uint32_t leaf(G *g, unsigned t, bool need_var, int d)
     int a = d > 0 && chance(g, 25) ? pick_array(g, t, false) : -1;
     if (a >= 0)
         return element(g, (uint32_t)a, d);
+    int x = t != T_BOOL && chance(g, 10) ? pick_indexed(g, t) : -1;
+    if (x >= 0) {
+        uint32_t b = bound(g, E_LOW + below(g, 3), (uint32_t)x);
+        if (!need_var || !g->e[b].cst)
+            return b;
+    }
     if (v >= 0 && (need_var || chance(g, 65)))
         return var_ref(g, (uint32_t)v);
     if (!need_var)
@@ -746,6 +834,8 @@ static uint32_t stmt(G *g, uint32_t *out)
     unsigned c = below(g, 100);
     bool pure = in_function(g);
     bool deep = g->nesting < 4 && g->budget > 4;
+    if (!pure && chance(g, 10))
+        c = 84; /* a call of a procedure, more often */
     if (c < 14) {
         out[0] = declare(g, var_type(g));
         return 1;
@@ -755,7 +845,7 @@ static uint32_t stmt(G *g, uint32_t *out)
         if (a >= 0) {
             uint32_t at = g->v[a].t;
             uint32_t s = new_s(g, S_ASSIGN);
-            uint32_t ix = index_for(g, at, depth(g));
+            uint32_t ix = index_for(g, (uint32_t)a, depth(g));
             uint32_t e = value_for(g, g->ty[at].elem, depth(g));
             g->st[s].var = (uint32_t)a;
             g->st[s].idx = ix;
@@ -841,7 +931,13 @@ static uint32_t stmt(G *g, uint32_t *out)
         bool down = chance(g, 30);
         uint32_t lo, hi;
         int x = pick_var(g, b, false, false);
-        if (x >= 0 && chance(g, 50)) {
+        int arr = chance(g, 35) ? pick_indexed(g, b) : -1;
+        if (arr >= 0) {
+            /* over an array: t is the base of its index */
+            t = b;
+            lo = bound(g, down ? E_HIGH : E_LOW, (uint32_t)arr);
+            hi = bound(g, down ? E_LOW : E_HIGH, (uint32_t)arr);
+        } else if (x >= 0 && chance(g, 50)) {
             /* from a variable to a few steps away: the bound may overflow
                or leave the range */
             lo = var_ref(g, (uint32_t)x);
@@ -938,7 +1034,13 @@ static uint32_t stmt(G *g, uint32_t *out)
             bool ok = true;
             for (uint32_t k = 0; k < g->r[fn].np && ok; k++) {
                 uint32_t p = g->r[fn].par[k];
-                if (g->v[p].kind == V_VAR) {
+                if (g->ty[g->v[p].t].k == K_OPEN) {
+                    int v = pick_argument(g, g->v[p].t, g->v[p].kind == V_VAR);
+                    if (v < 0)
+                        ok = false;
+                    else
+                        a[k] = var_ref(g, (uint32_t)v);
+                } else if (g->v[p].kind == V_VAR) {
                     /* a var parameter takes a variable of its very type */
                     int v = pick_var(g, g->v[p].t, true, true);
                     if (v < 0)
@@ -1035,6 +1137,14 @@ static void routine(G *g)
     uint32_t mark = g->nscope;
     for (uint32_t k = 0; k < g->r[id].np; k++) {
         uint32_t t = var_type(g);
+        /* sometimes an open array, made from an array of the program */
+        uint32_t n = 0, from = 0;
+        for (uint32_t u = NTYPES; u < g->nty; u++)
+            if (g->ty[u].k == K_ARRAY && below(g, ++n) == 0)
+                from = u;
+        if (n && chance(g, 30))
+            t = new_type(g, (xt){K_OPEN, g->ty[from].base, index_base(g, from),
+                                 g->ty[from].elem, 0, 0});
         bool byref = !g->r[id].func && chance(g, 40);
         uint32_t p = new_v(g, t, byref ? V_VAR : V_IN);
         g->r[id].par[k] = p;
@@ -1043,9 +1153,45 @@ static void routine(G *g)
     g->cur = (int)id;
     uint32_t n;
     uint32_t b = block(g, 2 + (int)below(g, 5), &n);
+    /* an open parameter, so that its elements reach the output */
+    int open = -1;
+    for (uint32_t k = 0; k < g->r[id].np; k++)
+        if (g->ty[g->v[g->r[id].par[k]].t].k == K_OPEN)
+            open = (int)g->r[id].par[k];
+    if (open >= 0 && !g->r[id].func && chance(g, 70)) {
+        /* for var i := low(a) to high(a) do writeln(a[i]); end; */
+        uint32_t at = g->v[open].t;
+        uint32_t s = new_s(g, S_FOR);
+        uint32_t i = new_v(g, index_base(g, at), V_LOOP);
+        g->st[s].var = i;
+        g->st[s].e = bound(g, E_LOW, (uint32_t)open);
+        g->st[s].e2 = bound(g, E_HIGH, (uint32_t)open);
+        uint32_t ix = var_ref(g, i); /* before: it may move the nodes */
+        uint32_t el = new_e(g, E_INDEX, g->ty[at].elem);
+        g->e[el].var = (uint32_t)open;
+        g->e[el].a = ix;
+        uint32_t w = new_s(g, S_WRITE);
+        g->st[w].args = keep_list(g, &el, 1);
+        g->st[w].nargs = 1;
+        g->st[s].blk = keep_list(g, &w, 1);
+        g->st[s].nblk = 1;
+        append(g, &b, &n, s, chance(g, 50));
+    }
     if (g->r[id].func) {
         uint32_t s = new_s(g, S_RETURN);
-        g->st[s].e = value_for(g, g->r[id].rt, depth(g));
+        uint32_t rt = g->r[id].rt;
+        if (open >= 0 && base(g, g->ty[g->v[open].t].elem) == base(g, rt) &&
+            chance(g, 60)) {
+            /* an element of the open parameter */
+            uint32_t el = new_e(g, E_INDEX, g->ty[g->v[open].t].elem);
+            uint32_t ix =
+                bound(g, chance(g, 50) ? E_LOW : E_HIGH, (uint32_t)open);
+            g->e[el].var = (uint32_t)open;
+            g->e[el].a = ix;
+            g->st[s].e = el;
+        } else {
+            g->st[s].e = value_for(g, rt, depth(g));
+        }
         append(g, &b, &n, s, false);
     }
     g->r[id].blk = b;
@@ -1113,7 +1259,11 @@ static void put_type(text *o, const G *g, uint32_t t)
     if (t < NTYPES)
         put(o, tname[t]);
     else
-        putf(o, "%c%u", is_array(g, t) ? 'A' : 'R', t);
+        putf(o, "%c%u",
+             g->ty[t].k == K_OPEN ? 'O'
+             : is_array(g, t)     ? 'A'
+                                  : 'R',
+             t);
 }
 
 static void put_value(text *o, unsigned t, v128 v)
@@ -1191,6 +1341,13 @@ static void pexpr(G *g, text *o, uint32_t i)
         put(o, "[");
         pexpr(g, o, g->e[i].a);
         put(o, "]");
+        break;
+    case E_LOW:
+    case E_HIGH:
+    case E_LEN:
+        put(o, x->k == E_LOW ? "low(" : x->k == E_HIGH ? "high(" : "length(");
+        put_name(o, g, x->var);
+        put(o, ")");
         break;
     case E_IN:
         put(o, "(");
@@ -1390,7 +1547,7 @@ static void program(G *g, text *o, uint32_t nglob)
             } else {
                 put(o, "array[");
                 put_type(o, g, x->index);
-                put(o, "] of ");
+                put(o, x->k == K_OPEN ? " range <>] of " : "] of ");
                 put_type(o, g, x->elem);
             }
             put(o, ";\n");
@@ -1452,7 +1609,9 @@ enum { X_NEXT, X_EXIT, X_CONT, X_RET };
 typedef struct {
     G *g;
     v128 *cell;
-    uint32_t *ref; /* the first cell of a variable, a var parameter's too */
+    uint32_t *ref;   /* the first cell of a variable, a var parameter's too */
+    v128 *alo, *ahi; /* the bounds of an array variable, or of an open
+                        parameter's argument */
     text out;
     bool trap, toolong;
     int code;
@@ -1513,7 +1672,9 @@ static v128 call(X *x, uint32_t fn, uint32_t args, uint32_t nargs,
     uint32_t target[4];
     for (uint32_t k = 0; k < nargs; k++) {
         uint32_t a = g->ls[args + k], p = g->r[fn].par[k];
-        if (g->v[p].kind == V_VAR) {
+        if (g->ty[g->v[p].t].k == K_OPEN) {
+            target[k] = g->e[a].var; /* an array: bound below */
+        } else if (g->v[p].kind == V_VAR) {
             target[k] = x->ref[g->e[a].var];
         } else {
             val[k] = ev(x, a);
@@ -1525,7 +1686,12 @@ static v128 call(X *x, uint32_t fn, uint32_t args, uint32_t nargs,
     }
     for (uint32_t k = 0; k < nargs; k++) {
         uint32_t p = g->r[fn].par[k];
-        if (g->v[p].kind == V_VAR) {
+        if (g->ty[g->v[p].t].k == K_OPEN) {
+            uint32_t a = target[k];
+            x->ref[p] = x->ref[a];
+            x->alo[p] = x->alo[a];
+            x->ahi[p] = x->ahi[a];
+        } else if (g->v[p].kind == V_VAR) {
             x->ref[p] = target[k];
         } else {
             x->cell[x->ref[p]] = val[k];
@@ -1542,11 +1708,9 @@ static v128 call(X *x, uint32_t fn, uint32_t args, uint32_t nargs,
 /* the cell of element index of array variable v; false if outside */
 static bool element_cell(X *x, uint32_t v, v128 index, uint32_t *cell)
 {
-    const G *g = x->g;
-    uint32_t at = g->v[v].t;
-    if (index < g->ty[at].lo || index > g->ty[at].hi)
+    if (index < x->alo[v] || index > x->ahi[v])
         return false;
-    *cell = x->ref[v] + (uint32_t)(index - g->ty[at].lo);
+    *cell = x->ref[v] + (uint32_t)(index - x->alo[v]);
     return true;
 }
 
@@ -1681,6 +1845,14 @@ static v128 ev(X *x, uint32_t i)
             return fail(x, i, 100);
         return x->cell[c];
     }
+    case E_LOW:
+        return x->alo[e->var];
+    case E_HIGH:
+        return x->ahi[e->var];
+    case E_LEN:
+        return x->ahi[e->var] < x->alo[e->var]
+                   ? 0
+                   : x->ahi[e->var] - x->alo[e->var] + 1;
     case E_IN: {
         v128 v = ev(x, e->a), lo, hi;
         if (e->fn) {
@@ -1969,6 +2141,13 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         ncell += is_array(&g, t) ? (uint32_t)(g.ty[t].hi - g.ty[t].lo) + 1 : 1;
     }
     x.cell = limba_xcalloc(ncell ? ncell : 1, sizeof(v128));
+    x.alo = limba_xcalloc(g.nv ? g.nv : 1, sizeof(v128));
+    x.ahi = limba_xcalloc(g.nv ? g.nv : 1, sizeof(v128));
+    for (uint32_t v = 0; v < g.nv; v++)
+        if (g.ty[g.v[v].t].k == K_ARRAY) {
+            x.alo[v] = g.ty[g.v[v].t].lo;
+            x.ahi[v] = g.ty[g.v[v].t].hi;
+        }
     x.out.line = x.out.col = 1;
     for (uint32_t v = 0; v < nglob; v++)
         if (!is_array(&g, g.v[v].t))
@@ -1993,6 +2172,8 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     free(x.out.b);
     free(x.cell);
     free(x.ref);
+    free(x.alo);
+    free(x.ahi);
     g_free(&g);
     return ok;
 }

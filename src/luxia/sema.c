@@ -398,7 +398,7 @@ static void resolve_typedecl(limba_lxs *S, limba_sym s)
 {
     limba_symbol *y = &S->st.sym[s];
     limba_lx_node *x = lxs_node(S, y->node);
-    limba_ltype t = type_node(S, x->b, y->scope, 0, s);
+    limba_ltype t = type_node(S, x->b, y->scope, LXT_DECL, s);
     y = &S->st.sym[s];
     y->type = t;
     limba_types_set_name(&S->ts, t, s);
@@ -596,8 +596,19 @@ static limba_ltype type_node(limba_lxs *S, uint32_t node, uint32_t scope,
     switch (x->kind) {
     case LXN_TNAME: {
         limba_ltype t = named(S, node, scope, false, &dyn);
+        if (t && lxs_ty(S, t)->kind == LIMBA_LTK_OPEN &&
+            !(where & (LXT_PARAM | LXT_DECL))) {
+            lxs_error(S, LXE_OPEN_ARRAY_PLACE, node,
+                      "an array with the bounds of its argument is a type "
+                      "for parameters only");
+            return 0;
+        }
         return t;
     }
+    case LXN_TBOX:
+        lxs_error(S, LXE_OPEN_ARRAY_PLACE, node,
+                  "'range <>' is the index of an array parameter only");
+        return 0;
     case LXN_TNEW: {
         limba_ltype b = type_node(S, x->a, scope, 0, 0);
         if (!b)
@@ -659,14 +670,32 @@ static limba_ltype type_node(limba_lxs *S, uint32_t node, uint32_t scope,
         return a;
     }
     case LXN_TOPEN: {
-        if (!(where & LXT_PARAM)) {
+        /* array[I range <>] of T: the bounds come with the argument */
+        if (!(where & (LXT_PARAM | LXT_DECL))) {
             lxs_error(S, LXE_OPEN_ARRAY_PLACE, node,
-                      "an array of any length is a type for parameters "
-                      "only");
+                      "an array with the bounds of its argument is a type "
+                      "for parameters only");
             return 0;
         }
-        limba_ltype elem = type_node(S, x->a, scope, 0, 0);
-        return elem ? limba_types_open(&S->ts, elem) : 0;
+        limba_ltype index = named(S, x->a, scope, false, &dyn);
+        limba_ltype elem = type_node(S, x->b, scope, 0, 0);
+        if (!index || !elem)
+            return 0;
+        if (!limba_types_is_discrete(&S->ts, index)) {
+            lxs_error(S, LXE_TYPE_MISMATCH, x->a,
+                      "an array is indexed by a discrete type, not %s",
+                      lxs_tname(S, index, tb));
+            return 0;
+        }
+        const limba_typeinfo *et = lxs_ty(S, elem);
+        if (et->kind == LIMBA_LTK_OPEN ||
+            (et->flags & (LIMBA_TF_DYNAMIC | LIMBA_TF_INCOMPLETE))) {
+            lxs_error(S, LXE_TYPE_MISMATCH, x->b,
+                      "the elements of an array have a size known in "
+                      "advance");
+            return 0;
+        }
+        return limba_types_open(&S->ts, index, elem);
     }
     case LXN_TRECORD: {
         limba_ltype r = limba_types_record_begin(&S->ts);

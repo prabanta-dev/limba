@@ -627,12 +627,13 @@ static void undefined(void *ctx, uint32_t tag)
 static limba_id func_type(lxl *L, limba_sym s)
 {
     const limba_typeinfo *sig = ti(L, L->S->st.sym[s].type);
-    limba_id *ps = limba_xmalloc((2 * sig->count + 1) * sizeof(*ps));
+    limba_id *ps = limba_xmalloc((3 * sig->count + 1) * sizeof(*ps));
     uint32_t n = 0;
     for (uint32_t i = 0; i < sig->count; i++) {
         limba_param p = L->S->ts.param[sig->first + i];
         if (ti(L, p.type)->kind == LIMBA_LTK_OPEN) {
-            ps[n++] = LIMBA_T_PTR;
+            ps[n++] = LIMBA_T_PTR; /* address, low, high */
+            ps[n++] = LIMBA_T_I64;
             ps[n++] = LIMBA_T_I64;
         } else if (p.mode != LXS_IN || !lxl_scalar(L, p.type)) {
             ps[n++] = LIMBA_T_PTR;
@@ -712,8 +713,9 @@ static void routine_body(lxl *L, limba_sym s)
             if (ti(L, pp.type)->kind == LIMBA_LTK_OPEN) {
                 st->kind = LXL_OPEN;
                 st->addr = first;
-                st->len = f->blocks[0].insts[v + 1];
-                v += 2;
+                st->lo = f->blocks[0].insts[v + 1];
+                st->hi = f->blocks[0].insts[v + 2];
+                v += 3;
             } else if (pp.mode != LXS_IN || !lxl_scalar(L, pp.type)) {
                 st->kind = LXL_MEM;
                 st->addr = first;

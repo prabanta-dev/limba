@@ -210,7 +210,10 @@ limba_id lxl_conv(lxl *L, limba_id v, limba_ltype from, limba_ltype to)
         bool fsg = lxl_signed(L, from);
         __int128 lo = tx->lo, hi = tx->hi;
         limba_id ok = LIMBA_NONE;
-        if (fsg) {
+        if (fsg && lo > INT64_MAX) {
+            /* no value with a sign reaches a range above INT64_MAX */
+            ok = cmp(L, false, LIMBA_CC_NE, w, w);
+        } else if (fsg) {
             if (lo > INT64_MIN)
                 ok = cmp(L, false, LIMBA_CC_SGE, w,
                          lxl_iconst(L, LIMBA_T_I64, (int64_t)lo));
@@ -534,7 +537,8 @@ void lxl_array_parts(lxl *L, uint32_t base, limba_id *p, limba_id *len,
         const lxl_store *st = &L->store[L->S->sym[base]];
         if (st->kind == LXL_OPEN) {
             *p = st->addr;
-            *len = st->len;
+            *lo = st->lo; /* i64 values */
+            *hi = st->hi;
             return;
         }
         if (st->kind == LXL_DYN) {
@@ -564,8 +568,13 @@ static limba_id index_addr(lxl *L, uint32_t node)
     limba_id i64 = lxl_to_i64(L, i, it);
     uint64_t esize = ti(L, at->elem)->size;
     if (at->kind == LIMBA_LTK_OPEN) {
-        lxl_check(L, cmp(L, false, LIMBA_CC_ULT, i64, len), LXR_INDEX);
-        return addr(L, p, i64, (int64_t)esize, 0);
+        /* the bounds of the argument, i64 values */
+        bool osg = lxl_signed(L, at->index);
+        limba_id a = cmp(L, false, osg ? LIMBA_CC_SGE : LIMBA_CC_UGE, i64, lo);
+        limba_id b = cmp(L, false, osg ? LIMBA_CC_SLE : LIMBA_CC_ULE, i64, hi);
+        lxl_check(L, bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b), LXR_INDEX);
+        return addr(L, p, bin(L, LIMBA_OP_SUB, LIMBA_T_I64, i64, lo),
+                    (int64_t)esize, 0);
     }
     const limba_typeinfo *ix = ti(L, at->index);
     bool sg = lxl_signed(L, at->index);

@@ -139,9 +139,11 @@ limba_ltype limba_types_array(limba_types *ts, limba_ltype index,
     return id;
 }
 
-limba_ltype limba_types_open(limba_types *ts, limba_ltype elem)
+limba_ltype limba_types_open(limba_types *ts, limba_ltype index,
+                             limba_ltype elem)
 {
-    limba_ltype id = add(ts, LIMBA_LTK_OPEN, 0, 2 * PTR_SIZE, PTR_SIZE);
+    limba_ltype id = add(ts, LIMBA_LTK_OPEN, 0, 3 * PTR_SIZE, PTR_SIZE);
+    ts->t[id].index = index;
     ts->t[id].elem = elem;
     return id;
 }
@@ -224,8 +226,10 @@ bool limba_types_same(const limba_types *ts, limba_ltype a, limba_ltype b)
     if (x->kind != y->kind)
         return false;
     switch (x->kind) {
-    case LIMBA_LTK_POINTER:
     case LIMBA_LTK_OPEN:
+        return limba_types_same(ts, x->index, y->index) &&
+               limba_types_same(ts, x->elem, y->elem);
+    case LIMBA_LTK_POINTER:
         return limba_types_same(ts, x->elem, y->elem);
     case LIMBA_LTK_ROUTINE:
         if (x->count != y->count || !limba_types_same(ts, x->elem, y->elem))
@@ -306,7 +310,9 @@ static size_t show(const limba_types *ts, limba_ltype id, limba_name_fn name,
         len = put(buf, size, len, "] of ", 5);
         return show(ts, t->elem, name, ctx, buf, size, len, depth + 1);
     case LIMBA_LTK_OPEN:
-        len = put(buf, size, len, "array of ", 9);
+        len = put(buf, size, len, "array[", 6);
+        len = show(ts, t->index, name, ctx, buf, size, len, depth + 1);
+        len = put(buf, size, len, " range <>] of ", 14);
         return show(ts, t->elem, name, ctx, buf, size, len, depth + 1);
     case LIMBA_LTK_POINTER:
         len = put(buf, size, len, "^", 1);

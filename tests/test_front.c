@@ -340,9 +340,9 @@ static void test_types(void)
     char buf[128];
     limba_types_show(&ts, arr, strtab_name, names, buf, sizeof(buf));
     CHECK(!strcmp(buf, "array[Int16 range 1..10] of Float64"), "%s", buf);
-    limba_types_show(&ts, limba_types_open(&ts, p1), strtab_name, names, buf,
-                     sizeof(buf));
-    CHECK(!strcmp(buf, "array of ^a record"), "%s", buf);
+    limba_types_show(&ts, limba_types_open(&ts, i16, p1), strtab_name, names,
+                     buf, sizeof(buf));
+    CHECK(!strcmp(buf, "array[Int16 range <>] of ^a record"), "%s", buf);
     limba_types_show(&ts, ts.uint, strtab_name, names, buf, sizeof(buf));
     CHECK(!strcmp(buf, "an integer constant"), "%s", buf);
 

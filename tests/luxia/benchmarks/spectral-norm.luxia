@@ -7,16 +7,18 @@
 // Jason Stitt, Matt Vollrath, Adam Beckmeyer).
 program SpectralNorm;
 
+type Vector = array[Int32 range <>] of Float64;
+
 // A(i,j) = (i+j)(i+j+1)/2 + i + 1: the infinite matrix, evaluated rather
 // than stored
-function EvalA(i, j: Int64): Float64;
+function EvalA(i, j: Int32): Float64;
 begin
-  var ij := i + j;
-  return Float64(ij * (ij + 1) div 2 + i + 1);
+  var ij := Int64(i) + Int64(j);
+  return Float64(ij * (ij + 1) div 2 + Int64(i) + 1);
 end EvalA;
 
 // b = A a
-procedure MultiplyAv(a: array of Float64; var b: array of Float64);
+procedure MultiplyAv(a: Vector; var b: Vector);
 begin
   for var i := low(b) to high(b) do
     var s: Float64 := 0.0;
@@ -28,7 +30,7 @@ begin
 end MultiplyAv;
 
 // b = A' a
-procedure MultiplyAtv(a: array of Float64; var b: array of Float64);
+procedure MultiplyAtv(a: Vector; var b: Vector);
 begin
   for var i := low(b) to high(b) do
     var s: Float64 := 0.0;
@@ -40,7 +42,7 @@ begin
 end MultiplyAtv;
 
 // b = A'A a
-procedure MultiplyAtAv(a: array of Float64; var b, t: array of Float64);
+procedure MultiplyAtAv(a: Vector; var b, t: Vector);
 begin
   MultiplyAv(a, t);
   MultiplyAtv(t, b);

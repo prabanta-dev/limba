@@ -135,9 +135,10 @@ static inline const limba_typeinfo *lxs_ty(const limba_lxs *S, limba_ltype t)
 limba_sym lxs_lookup(limba_lxs *S, uint32_t scope, uint32_t node);
 void lxs_force(limba_lxs *S, limba_sym s);
 /* where a type is written: a variable may have computed bounds, a
-   parameter may be an open array */
+   parameter may be an open array, and a type declaration may name one */
 #define LXT_VAR 1u
 #define LXT_PARAM 2u
+#define LXT_DECL 4u
 limba_ltype lxs_type(limba_lxs *S, uint32_t node, uint32_t scope,
                      unsigned where);
 /* the spelling of a symbol, as declared */

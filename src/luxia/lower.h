@@ -41,8 +41,8 @@ typedef struct {
     uint8_t kind;
     uint32_t var;    /* SSA */
     limba_id addr;   /* MEM, OPEN, DYN: the address, a value */
-    limba_id len;    /* OPEN: the length, an i64 value */
-    limba_id lo, hi; /* DYN: the bounds, values of the index type */
+    limba_id lo, hi; /* DYN: the bounds, values of the index type; OPEN:
+                        those of the argument, i64 values */
     limba_id global; /* GLOBAL */
 } lxl_store;
 

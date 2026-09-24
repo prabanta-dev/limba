@@ -105,7 +105,9 @@ limba_ltype limba_types_distinct(limba_types *ts, limba_ltype base);
    overflows (the type is made anyway, with size 0) */
 limba_ltype limba_types_array(limba_types *ts, limba_ltype index,
                               limba_ltype elem, bool dynamic, bool *ok);
-limba_ltype limba_types_open(limba_types *ts, limba_ltype elem);
+/* array[index range <>] of elem: the bounds come with the argument */
+limba_ltype limba_types_open(limba_types *ts, limba_ltype index,
+                             limba_ltype elem);
 /* target may be completed later with limba_types_set_target */
 limba_ltype limba_types_pointer(limba_types *ts, limba_ltype target);
 void limba_types_set_target(limba_types *ts, limba_ltype p, limba_ltype target);

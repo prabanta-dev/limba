@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Open arrays as Ada has them: `array[I range <>] of T`, for parameters
+  (written there or named with `type`), takes the bounds of its
+  argument; `low`, `high` and `length` are those bounds, in the base
+  type of `I`; an index is checked against them; when `I` is a range the
+  bounds of a non-empty argument must belong to it (at compile time when
+  known, at the call otherwise). The IR passes the address and both
+  bounds. `array of T` is gone; spectral-norm and k-nucleotide use the
+  new form. A `String` is read as such an array that always starts at 1.
+- The random programs pass arrays to open parameters and use `low`,
+  `high`, `length` and loops over arrays. They found that a conversion
+  from a signed value to a range above `INT64_MAX` never failed (fixed,
+  with a case in `test_luxia`).
 - Run-time errors as Ada has them: a program stops with exit status 1
   and a message that says which check failed and where; the codes of the
   checks are a table shared with Meri (`include/limba/traps.def`), and

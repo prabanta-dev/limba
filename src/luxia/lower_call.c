@@ -46,10 +46,9 @@ static limba_id icmp(lxl *L, unsigned cc, limba_id a, limba_id b)
     return lxl_emit(L, LIMBA_OP_ICMP, LIMBA_T_I1, cc, 0, 0, o, 2);
 }
 
-/* the length of a computed array: 0 when its range is empty */
-static limba_id dyn_length(lxl *L, limba_id lo, limba_id hi, limba_ltype it)
+/* the length of the bounds l..h, i64 values: 0 when the range is empty */
+static limba_id length64(lxl *L, limba_id l, limba_id h)
 {
-    limba_id l = lxl_to_i64(L, lo, it), h = lxl_to_i64(L, hi, it);
     limba_id n = bin(L, LIMBA_OP_ADD, LIMBA_T_I64,
                      bin(L, LIMBA_OP_SUB, LIMBA_T_I64, h, l),
                      lxl_iconst(L, LIMBA_T_I64, 1));
@@ -58,24 +57,61 @@ static limba_id dyn_length(lxl *L, limba_id lo, limba_id hi, limba_ltype it)
     return lxl_emit(L, LIMBA_OP_SELECT, LIMBA_T_I64, 0, 0, 0, sel, 3);
 }
 
-/* an array argument for an open parameter: address and length */
-static void open_arg(lxl *L, uint32_t a, limba_id *p, limba_id *len)
+/* the length of a computed array, whose bounds are values of type it */
+static limba_id dyn_length(lxl *L, limba_id lo, limba_id hi, limba_ltype it)
+{
+    return length64(L, lxl_to_i64(L, lo, it), lxl_to_i64(L, hi, it));
+}
+
+/* an i64 value as a value of the integer type t */
+static limba_id from_i64(lxl *L, limba_id v, limba_ltype t)
+{
+    limba_id it = lxl_type(L, t);
+    return limba_type_bits(it) < 64 ? un(L, LIMBA_OP_TRUNC, it, v) : v;
+}
+
+/* an array argument for an open parameter of type pt, in the call node:
+   its address and its bounds as i64 values (§ 4.5) */
+static void open_arg(lxl *L, uint32_t node, uint32_t a, limba_ltype pt,
+                     limba_id *p, limba_id *lo, limba_id *hi)
 {
     limba_ltype t = L->S->type[a];
     if (ti(L, t)->kind == LIMBA_LTK_POINTER)
         t = ti(L, t)->elem;
-    limba_id lo, hi;
-    lxl_array_parts(L, a, p, len, &lo, &hi);
-    if (*len != LIMBA_NONE)
-        return;
+    limba_id len, l, h;
+    lxl_array_parts(L, a, p, &len, &l, &h);
     const limba_typeinfo *at = ti(L, t);
-    if (at->flags & LIMBA_TF_DYNAMIC) {
-        *len = dyn_length(L, lo, hi, at->index);
+    if (at->kind == LIMBA_LTK_OPEN) {
+        *lo = l;
+        *hi = h;
+    } else if (at->flags & LIMBA_TF_DYNAMIC) {
+        *lo = lxl_to_i64(L, l, at->index);
+        *hi = lxl_to_i64(L, h, at->index);
+    } else {
+        /* bounds known now, already checked against the parameter */
+        const limba_typeinfo *ix = ti(L, at->index);
+        *lo = lxl_iconst(L, LIMBA_T_I64, (int64_t)ix->lo);
+        *hi = lxl_iconst(L, LIMBA_T_I64, (int64_t)(uint64_t)ix->hi);
         return;
     }
-    const limba_typeinfo *ix = ti(L, at->index);
-    *len = lxl_iconst(L, LIMBA_T_I64,
-                      ix->hi < ix->lo ? 0 : (int64_t)(ix->hi - ix->lo + 1));
+    /* the index of the parameter may be a range: the bounds of a
+       non-empty argument belong to it */
+    limba_ltype pix = ti(L, pt)->index;
+    const limba_typeinfo *pi = ti(L, pix);
+    if (!(pi->flags & LIMBA_TF_RANGE))
+        return;
+    bool sg = lxl_signed(L, pix);
+    limba_id empty = icmp(L, sg ? LIMBA_CC_SGT : LIMBA_CC_UGT, *lo, *hi);
+    limba_id in_lo = icmp(L, sg ? LIMBA_CC_SGE : LIMBA_CC_UGE, *lo,
+                          lxl_iconst(L, LIMBA_T_I64, (int64_t)pi->lo));
+    limba_id in_hi =
+        icmp(L, sg ? LIMBA_CC_SLE : LIMBA_CC_ULE, *hi,
+             lxl_iconst(L, LIMBA_T_I64, (int64_t)(uint64_t)pi->hi));
+    lxl_at(L, node);
+    lxl_check(L,
+              bin(L, LIMBA_OP_OR, LIMBA_T_I1, empty,
+                  bin(L, LIMBA_OP_AND, LIMBA_T_I1, in_lo, in_hi)),
+              LXR_RANGE);
 }
 
 static void routine(lxl *L, uint32_t node, limba_sym s, limba_id *result)
@@ -87,11 +123,11 @@ static void routine(lxl *L, uint32_t node, limba_sym s, limba_id *result)
     for (uint32_t i = 0; i < count && i < nargs(L, node); i++) {
         limba_param p = S->ts.param[first + i];
         uint32_t a = arg(L, node, i);
-        limba_id v[2];
+        limba_id v[3];
         uint32_t k = 1;
         if (ti(L, p.type)->kind == LIMBA_LTK_OPEN) {
-            open_arg(L, a, &v[0], &v[1]);
-            k = 2;
+            open_arg(L, node, a, p.type, &v[0], &v[1], &v[2]);
+            k = 3;
         } else if (p.mode != LXS_IN || !lxl_scalar(L, p.type)) {
             v[0] = lxl_addr(L, a);
         } else {
@@ -238,10 +274,11 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
             x = ti(L, x->elem);
         lxl_array_parts(L, a0, &p, &len, &lo, &hi);
         if (x->kind == LIMBA_LTK_OPEN) {
-            *result = id == LXB_LENGTH ? len
-                      : id == LXB_LOW  ? lxl_iconst(L, LIMBA_T_I64, 0)
-                                       : bin(L, LIMBA_OP_SUB, LIMBA_T_I64, len,
-                                             lxl_iconst(L, LIMBA_T_I64, 1));
+            /* the bounds of the argument, i64 values */
+            *result = id == LXB_LOW ? from_i64(L, lo, rt)
+                      : id == LXB_HIGH
+                          ? from_i64(L, hi, rt)
+                          : lxl_conv(L, length64(L, lo, hi), S->ty_int[3], rt);
             return;
         }
         /* a computed array (a static one is a constant) */

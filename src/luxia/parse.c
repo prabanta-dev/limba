@@ -196,6 +196,9 @@ uint32_t limba_lxp_type(limba_lxp *P)
         uint32_t name = P->lx->tok[P->pos].val, lo = 0, hi = 0;
         limba_lxp_next(P);
         if (limba_lxp_accept(P, LX_KW_RANGE)) {
+            /* I range <>: the bounds come with the argument (Ada's box) */
+            if (limba_lxp_accept(P, LX_NE))
+                return lxp_node(P, LXN_TBOX, loc, name, 0, 0, 0);
             lo = limba_lxp_expr(P, LXP_SIMPLE);
             limba_lxp_expect(P, LX_DOTDOT, "between the bounds of a range");
             hi = limba_lxp_expr(P, LXP_SIMPLE);
@@ -213,14 +216,16 @@ uint32_t limba_lxp_type(limba_lxp *P)
     }
     case LX_KW_ARRAY:
         limba_lxp_next(P);
-        if (limba_lxp_accept(P, LX_LBRACK)) {
+        {
+            limba_lxp_expect(P, LX_LBRACK, "after array");
             uint32_t index = limba_lxp_type(P);
             limba_lxp_expect(P, LX_RBRACK, "after the index type");
             limba_lxp_expect(P, LX_KW_OF, NULL);
-            return lxp_node(P, LXN_TARRAY, loc, index, limba_lxp_type(P), 0, 0);
+            uint32_t elem = limba_lxp_type(P);
+            bool open = P->t->node[index].kind == LXN_TBOX;
+            return lxp_node(P, open ? LXN_TOPEN : LXN_TARRAY, loc, index, elem,
+                            0, 0);
         }
-        limba_lxp_expect(P, LX_KW_OF, NULL);
-        return lxp_node(P, LXN_TOPEN, loc, limba_lxp_type(P), 0, 0, 0);
     case LX_KW_RECORD: {
         limba_lxp_next(P);
         uint32_t mark = limba_lx_list_begin(P->t);

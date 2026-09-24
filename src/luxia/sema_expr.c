@@ -429,7 +429,8 @@ static limba_ltype index_expr(limba_lxs *S, uint32_t node, uint32_t scope)
         elem = ti->elem;
         break;
     case LIMBA_LTK_OPEN:
-        index = S->ty_int[3];
+        /* checked against the bounds of the argument, at run time */
+        index = lxs_base(S, ti->index);
         elem = ti->elem;
         break;
     case LIMBA_LTK_STRING:
@@ -553,14 +554,29 @@ static limba_ltype routine_call(limba_lxs *S, uint32_t node, uint32_t scope,
         limba_param p = S->ts.param[first + i];
         char ta[128], tb[128];
         if (kind(S, p.type) == LIMBA_LTK_OPEN) {
+            /* the same elements, an index of the same base (§ 4.5) */
             limba_ltype at = lxs_expr(S, a, scope, 0);
             unsigned ak = at ? kind(S, at) : 0;
-            if (at && !((ak == LIMBA_LTK_ARRAY || ak == LIMBA_LTK_OPEN) &&
-                        lxs_compatible(S, lxs_ty(S, at)->elem,
-                                       lxs_ty(S, p.type)->elem)))
+            const limba_typeinfo *pt = lxs_ty(S, p.type);
+            if (at &&
+                !((ak == LIMBA_LTK_ARRAY || ak == LIMBA_LTK_OPEN) &&
+                  lxs_compatible(S, lxs_ty(S, at)->elem, pt->elem) &&
+                  lxs_base(S, lxs_ty(S, at)->index) == lxs_base(S, pt->index)))
                 lxs_error(S, LXE_TYPE_MISMATCH, a,
                           "this is %s, the parameter is %s",
                           lxs_tname(S, at, ta), lxs_tname(S, p.type, tb));
+            else if (at && ak == LIMBA_LTK_ARRAY &&
+                     !(lxs_ty(S, at)->flags & LIMBA_TF_DYNAMIC) &&
+                     (lxs_ty(S, pt->index)->flags & LIMBA_TF_RANGE)) {
+                /* bounds known now: those of a non-empty array must
+                   belong to the index of the parameter */
+                const limba_typeinfo *ai = lxs_ty(S, lxs_ty(S, at)->index);
+                const limba_typeinfo *pi = lxs_ty(S, pt->index);
+                if (ai->lo <= ai->hi && (ai->lo < pi->lo || ai->hi > pi->hi))
+                    lxs_error(S, LXE_CONST_RANGE, a,
+                              "the bounds of this array are past %s",
+                              lxs_tname(S, pt->index, tb));
+            }
         } else if (p.mode == LXS_IN) {
             lxs_expr(S, a, scope, p.type);
             lxs_assign_to(S, a, p.type, "the parameter");
@@ -687,8 +703,10 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         if (!t)
             return set(S, node, 0);
         const limba_typeinfo *ti = lxs_ty(S, t);
-        if (ti->kind == LIMBA_LTK_STRING || ti->kind == LIMBA_LTK_OPEN)
+        if (ti->kind == LIMBA_LTK_STRING)
             return set(S, node, S->ty_int[3]);
+        if (ti->kind == LIMBA_LTK_OPEN)
+            return set(S, node, lxs_base(S, ti->index));
         if (ti->kind != LIMBA_LTK_ARRAY) {
             lxs_error(S, LXE_TYPE_MISMATCH, a,
                       "%s takes an array or a "
