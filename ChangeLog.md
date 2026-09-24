@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The semantic phase of Luxia (`src/luxia/sema*.c`): names with the rule
+  of consistent spelling, types and routines visible in all their scope,
+  constants and variables after their declaration; subtypes with ranges,
+  distinct types, records, pointers that refer to each other; constants
+  computed exactly and checked when they take a type; the same type for
+  both operands of every operator, no implicit conversion, shifts and
+  bit operators on `BitsN` only; calls, modes of parameters, the routines
+  of the language; `case` with coverage and without overlaps; `exit` and
+  `return` where they belong. Errors L0021-L0051. `test_luxia` adds 37
+  semantic cases and checks every program of `tests/luxia/benchmarks`
+  (for now n-body, translated).
 - The shared table of types (`src/front/types.c`): identity through a
   root (a range stays compatible with its base, `new` makes a type of
   its own), records laid out as C lays them out, arrays with overflow

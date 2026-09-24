@@ -27,3 +27,34 @@ LX_ERROR(17, NESTED_ROUTINE)    /* a routine inside a routine */
 LX_ERROR(18, EMPTY_STATEMENT)   /* ;; */
 LX_ERROR(19, AFTER_END)         /* text after the final end. */
 LX_ERROR(20, END_ALIGN)         /* warning: end not under its opening */
+LX_ERROR(21, UNKNOWN_NAME)      /* a name declared nowhere */
+LX_ERROR(22, SPELLING)          /* conto used, Conto declared */
+LX_ERROR(23, DUPLICATE)         /* a name declared twice in a scope */
+LX_ERROR(24, BEFORE_DECL)       /* a constant or variable used before it */
+LX_ERROR(25, NOT_A_TYPE)        /* a value where a type is wanted */
+LX_ERROR(26, NOT_A_VALUE)       /* a type or routine where a value is */
+LX_ERROR(27, TYPE_MISMATCH)     /* a value of another type */
+LX_ERROR(28, OPERATOR_TYPE)     /* an operator on a type it does not take */
+LX_ERROR(29, CONST_RANGE)       /* a constant out of the range of its type */
+LX_ERROR(30, NOT_CONSTANT)      /* a value not known at compile time */
+LX_ERROR(31, CONST_OVERFLOW)    /* a constant past the size limit */
+LX_ERROR(32, DIV_ZERO)          /* a constant divided by zero */
+LX_ERROR(33, NEED_TYPE)         /* var x := 0: no type to give */
+LX_ERROR(34, NOT_ASSIGNABLE)    /* not a variable, or a constant one */
+LX_ERROR(35, ARG_COUNT)         /* too many or too few arguments */
+LX_ERROR(36, NOT_CALLABLE)      /* a call of something not a routine */
+LX_ERROR(37, RESULT_IGNORED)    /* a function called as a statement */
+LX_ERROR(38, NO_RESULT)         /* a procedure used as a value */
+LX_ERROR(39, BAD_CONVERSION)    /* T(x) between types that do not convert */
+LX_ERROR(40, NO_FIELD)          /* r.x with no field x */
+LX_ERROR(41, NOT_INDEXABLE)     /* a[i] on a value that has no index */
+LX_ERROR(42, NOT_POINTER)       /* p^ on a value that is no pointer */
+LX_ERROR(43, CASE_DUPLICATE)    /* a value in two branches of a case */
+LX_ERROR(44, CASE_COVERAGE)     /* a case without else missing values */
+LX_ERROR(45, OUTSIDE_LOOP)      /* exit or continue outside a loop */
+LX_ERROR(46, RETURN_VALUE)      /* return with or without the wrong value */
+LX_ERROR(47, SELF_REFERENCE)    /* defined in terms of itself */
+LX_ERROR(48, FORMAT_PLACE)      /* x:w:d outside write and writeln */
+LX_ERROR(49, OPEN_ARRAY_PLACE)  /* array of T outside a parameter */
+LX_ERROR(50, BAD_RANGE)         /* a range on a type that has none, low > high */
+LX_ERROR(51, DYNAMIC_PLACE)     /* computed bounds outside a variable */

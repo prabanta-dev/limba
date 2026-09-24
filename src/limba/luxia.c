@@ -2,8 +2,8 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * luxia.c - the limba program on a Luxia source. For now the front end
- * stops at the syntax tree: --emit=tokens and --emit=ast print what it
- * made, and anything else only reports the errors.
+ * stops after the semantic checks: --emit=tokens and --emit=ast print
+ * what it made, and anything else only reports the errors.
  */
 #include "luxia.h"
 
@@ -11,6 +11,7 @@
 #include "front/source.h"
 #include "luxia/lex.h"
 #include "luxia/parse.h"
+#include "luxia/sema.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -38,8 +39,18 @@ int limba_luxia_main(const char *in, const char *emit, const char *outpath,
     limba_lx_ast ast;
     limba_lx_ast_init(&ast);
     bool tokens = emit && !strcmp(emit, "tokens");
-    if (!tokens)
+    limba_lxs sema;
+    bool checked = false;
+    if (!tokens) {
         limba_lx_parse(&ast, &lx, &src, &rep);
+        /* the tree of a program with syntax errors would give errors
+           that are only their echo */
+        if (rep.errors == 0 && !(emit && !strcmp(emit, "ast"))) {
+            limba_lxs_init(&sema, &ast, &lx, &src, &rep);
+            limba_lxs_check(&sema);
+            checked = true;
+        }
+    }
     limba_report_print(&rep, stderr);
 
     int status = rep.errors ? 1 : 0;
@@ -60,11 +71,13 @@ int limba_luxia_main(const char *in, const char *emit, const char *outpath,
         }
     } else if (!check && status == 0) {
         fprintf(stderr,
-                "limba: %s: the Luxia front end stops at the syntax tree "
-                "for now (--emit=tokens, --emit=ast)\n",
+                "limba: %s: the Luxia front end stops after the semantic "
+                "checks for now (--emit=tokens, --emit=ast)\n",
                 in);
         status = 2;
     }
+    if (checked)
+        limba_lxs_free(&sema);
     limba_lx_ast_free(&ast);
     limba_lx_free(&lx);
     limba_report_free(&rep);

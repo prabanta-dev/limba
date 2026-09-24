@@ -208,7 +208,8 @@ uint32_t limba_lxp_designator(limba_lxp *P)
             }
             limba_lxp_expect(P, LX_RPAREN, "after the arguments");
             uint32_t args = limba_lx_list_end(P->t, mark, loc);
-            d = lxp_node(P, LXN_CALL, loc, d, args, 0, 0);
+            /* a call is where its callee is */
+            d = lxp_node(P, LXN_CALL, P->t->node[d].loc, d, args, 0, 0);
             break;
         }
         default:

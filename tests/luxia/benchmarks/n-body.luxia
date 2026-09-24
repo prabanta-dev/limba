@@ -1,0 +1,125 @@
+// The Computer Language Benchmarks Game
+// https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+//
+// n-body in Luxia 0, ported from the Python version (Kevin Carson, Tupteq, Fredrik
+// Johansson, Daniel Nanz, Maciej Fijalkowski). Sequential, as the
+// original: every step depends on the one before.
+program NBody;
+
+const
+  NumBodies = 5;
+  Pi = 3.14159265358979323;
+  SolarMass = 4.0 * Pi * Pi;
+  DaysPerYear = 365.24;
+  Dt = 0.01;
+
+type
+  Body = record
+    x, y, z, vx, vy, vz, mass: Float64;
+  end;
+  System = array[Int32 range 0..NumBodies - 1] of Body;
+
+var
+  bodies: System;
+
+procedure Place(var b: Body; x, y, z, vx, vy, vz, mass: Float64);
+begin
+  b.x := x;
+  b.y := y;
+  b.z := z;
+  b.vx := vx * DaysPerYear;
+  b.vy := vy * DaysPerYear;
+  b.vz := vz * DaysPerYear;
+  b.mass := mass * SolarMass;
+end Place;
+
+// the sun absorbs the total momentum, so the centre of mass stays put
+procedure OffsetMomentum(var b: System);
+var px, py, pz: Float64 := 0.0;
+begin
+  for var i := low(b) to high(b) do
+    px := px - b[i].vx * b[i].mass;
+    py := py - b[i].vy * b[i].mass;
+    pz := pz - b[i].vz * b[i].mass;
+  end;
+  b[0].vx := px / SolarMass;
+  b[0].vy := py / SolarMass;
+  b[0].vz := pz / SolarMass;
+end OffsetMomentum;
+
+function Energy(b: System): Float64;
+var e: Float64 := 0.0;
+begin
+  for var i := low(b) to high(b) do
+    e := e + 0.5 * b[i].mass *
+         (b[i].vx * b[i].vx + b[i].vy * b[i].vy + b[i].vz * b[i].vz);
+    for var j := i + 1 to high(b) do
+      var dx := b[i].x - b[j].x;
+      var dy := b[i].y - b[j].y;
+      var dz := b[i].z - b[j].z;
+      e := e - b[i].mass * b[j].mass / sqrt(dx * dx + dy * dy + dz * dz);
+    end;
+  end;
+  return e;
+end Energy;
+
+procedure Advance(var b: System; dt: Float64);
+begin
+  for var i := low(b) to high(b) do
+    for var j := i + 1 to high(b) do
+      var dx := b[i].x - b[j].x;
+      var dy := b[i].y - b[j].y;
+      var dz := b[i].z - b[j].z;
+      var d2 := dx * dx + dy * dy + dz * dz;
+      var mag := dt / (d2 * sqrt(d2));
+      var m1 := b[i].mass * mag;
+      var m2 := b[j].mass * mag;
+      b[i].vx := b[i].vx - dx * m2;
+      b[i].vy := b[i].vy - dy * m2;
+      b[i].vz := b[i].vz - dz * m2;
+      b[j].vx := b[j].vx + dx * m1;
+      b[j].vy := b[j].vy + dy * m1;
+      b[j].vz := b[j].vz + dz * m1;
+    end;
+  end;
+  for var i := low(b) to high(b) do
+    b[i].x := b[i].x + dt * b[i].vx;
+    b[i].y := b[i].y + dt * b[i].vy;
+    b[i].z := b[i].z + dt * b[i].vz;
+  end;
+end Advance;
+
+begin
+  Place(bodies[0], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+  Place(bodies[1], 4.84143144246472090, -1.16032004402742839,
+        -0.103622044471123109, 1.66007664274403694e-03,
+        7.69901118419740425e-03, -6.90460016972063023e-05,
+        9.54791938424326609e-04);
+  Place(bodies[2], 8.34336671824457987, 4.12479856412430479,
+        -0.403523417114321381, -2.76742510726862411e-03,
+        4.99852801234917238e-03, 2.30417297573763929e-05,
+        2.85885980666130812e-04);
+  Place(bodies[3], 12.8943695621391310, -15.1111514016986312,
+        -0.223307578892655734, 2.96460137564761618e-03,
+        2.37847173959480950e-03, -2.96589568540237556e-05,
+        4.36624404335156298e-05);
+  Place(bodies[4], 15.3796971148509165, -25.9193146099879641,
+        0.179258772950371181, 2.68067772490389322e-03,
+        1.62824170038242295e-03, -9.51592254519715870e-05,
+        5.15138902046611451e-05);
+
+  // the number of steps comes from the command line, 1000 without one
+  var n: Int32 := 1000;
+  if argcount() > 0 then
+    if not val(arg(1), n) then
+      halt(1);
+    end;
+  end;
+
+  OffsetMomentum(bodies);
+  writeln(Energy(bodies):0:9);
+  for var tick := 1 to n do
+    Advance(bodies, Dt);
+  end;
+  writeln(Energy(bodies):0:9);
+end NBody.
