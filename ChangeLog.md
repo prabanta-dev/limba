@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Limba is now the front end of Luxia only.
 - `fround` (ties to even) and `fround.away` (ties away from zero) in the
   IR. NaN results of arithmetic have no fixed sign or payload, as in IEEE
   754: `fold` leaves NaN-producing operations to run time and `fadd`/`fmul`

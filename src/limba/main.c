@@ -3,7 +3,7 @@
 /*
  * main.c - the limba program. For now it reads and writes the IR: the text
  * form (.lit) and the binary form (.lir), verifying it on the way. The
- * front end of Luxia will make it read sources.
+ * Luxia front end will make it read sources.
  */
 #include "limba/ir.h"
 #include "limba/opt.h"

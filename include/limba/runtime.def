@@ -2,8 +2,8 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * runtime.def - the functions of the run-time library that the IR calls
- * with call.rt, read by Limba and by Meri. A draft: the library of Luxia
- * will fill it family by family.
+ * with call.rt, read by Limba and by Meri. A draft: the Luxia library will
+ * fill it family by family.
  *
  *   LIMBA_RT(name, text, signature, attributes)
  *
