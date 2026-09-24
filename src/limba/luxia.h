@@ -6,11 +6,13 @@
 #ifndef LIMBA_TOOL_LUXIA_H
 #define LIMBA_TOOL_LUXIA_H
 
+#include "limba/opt.h"
+
 #include <stdbool.h>
 
-/* compile in as far as the front end goes; emit may be NULL; the exit
-   status of the program */
+/* compile a Luxia source: tokens, tree, or the IR (lir by default, lit),
+   optimised at level; emit may be NULL; the exit status of the program */
 int limba_luxia_main(const char *in, const char *emit, const char *outpath,
-                     bool check);
+                     bool check, int level, const limba_opt_options *opt);
 
 #endif

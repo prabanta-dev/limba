@@ -18,6 +18,7 @@
 #include "common/xalloc.h"
 #include "ir/internal.h"
 
+#include <errno.h>
 #include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
@@ -138,6 +139,171 @@ static void out_f64(E *e, double v)
     limba_w_bytes(&e->out, buf, (size_t)n);
 }
 
+static void store(void *p, limba_id t, uint64_t v);
+
+/* UTF-8 of a code point, into buf (4 bytes); its length */
+static size_t utf8(uint32_t c, char *buf)
+{
+    if (c < 0x80) {
+        buf[0] = (char)c;
+        return 1;
+    }
+    size_t n = c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+    for (size_t k = n; k-- > 1;) {
+        buf[k] = (char)(0x80 | (c & 0x3f));
+        c >>= 6;
+    }
+    buf[0] = (char)((0xf00 >> n) | c);
+    return n;
+}
+
+/* a whole string as a number: optional blanks around, nothing else */
+static bool parse_number(const estr *s, bool real, uint64_t *out)
+{
+    char buf[128];
+    size_t n = s->len < sizeof(buf) - 1 ? s->len : sizeof(buf) - 1;
+    memcpy(buf, s->data, n);
+    buf[n] = 0;
+    char *end;
+    errno = 0;
+    if (real) {
+        double d = strtod(buf, &end);
+        *out = fbits(d, LIMBA_T_F64);
+    } else {
+        long long v = strtoll(buf, &end, 10);
+        *out = (uint64_t)v;
+    }
+    while (*end == ' ' || *end == '\t')
+        end++;
+    return errno == 0 && end != buf && *end == 0 && n == s->len;
+}
+
+static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
+{
+    char buf[512];
+    int n;
+    switch (rt) {
+    case LIMBA_RT_PRINT_U64:
+        n = snprintf(buf, sizeof(buf), "%" PRIu64, a[0]);
+        limba_w_bytes(&e->out, buf, (size_t)n);
+        return true;
+    case LIMBA_RT_PRINT_BOOL:
+        limba_w_bytes(&e->out, a[0] & 1 ? "true" : "false", a[0] & 1 ? 4 : 5);
+        return true;
+    case LIMBA_RT_PRINT_CHAR:
+        limba_w_bytes(&e->out, buf, utf8((uint32_t)a[0], buf));
+        return true;
+    case LIMBA_RT_PRINT_BYTE:
+        buf[0] = (char)a[0];
+        limba_w_bytes(&e->out, buf, 1);
+        return true;
+    case LIMBA_RT_PRINT_STR_W: {
+        const estr *s = str_of(a[0]);
+        int64_t width = (int32_t)a[1], chars = 0;
+        for (size_t i = 0; i < s->len; i++)
+            chars += ((unsigned char)s->data[i] & 0xc0) != 0x80;
+        for (; width > chars; width--)
+            limba_w_bytes(&e->out, " ", 1);
+        limba_w_bytes(&e->out, s->data, s->len);
+        return true;
+    }
+    case LIMBA_RT_STR_FROM_U64:
+        n = snprintf(buf, sizeof(buf), "%" PRIu64, a[0]);
+        *r = sv(str_make(e, buf, (size_t)n));
+        return true;
+    case LIMBA_RT_STR_FROM_F64_FIXED: {
+        int d = (int32_t)a[1];
+        d = d < 0 ? 0 : d > 100 ? 100 : d;
+        n = snprintf(buf, sizeof(buf), "%.*f", d, dv(a[0]));
+        *r = sv(str_make(e, buf,
+                         n < (int)sizeof(buf) ? (size_t)n : sizeof(buf) - 1));
+        return true;
+    }
+    case LIMBA_RT_STR_FROM_CHAR:
+        *r = sv(str_make(e, buf, utf8((uint32_t)a[0], buf)));
+        return true;
+    case LIMBA_RT_STR_FROM_BOOL:
+        *r = sv(str_make(e, a[0] & 1 ? "true" : "false", a[0] & 1 ? 4 : 5));
+        return true;
+    case LIMBA_RT_READ_LINE: {
+        char *line = NULL;
+        size_t cap = 0;
+        ssize_t got = e->lim.in ? getline(&line, &cap, e->lim.in) : -1;
+        bool ok = got >= 0;
+        size_t len = ok ? (size_t)got : 0;
+        if (len && line[len - 1] == '\n')
+            len--;
+        if (len && line[len - 1] == '\r')
+            len--;
+        uint64_t s = sv(str_make(e, ok ? line : "", len));
+        free(line);
+        store((void *)(uintptr_t)a[0], LIMBA_T_STR, s);
+        *r = ok;
+        return true;
+    }
+    case LIMBA_RT_STR_TO_I64:
+    case LIMBA_RT_STR_TO_F64: {
+        uint64_t v;
+        bool ok = parse_number(str_of(a[0]), rt == LIMBA_RT_STR_TO_F64, &v);
+        if (ok)
+            store((void *)(uintptr_t)a[1],
+                  rt == LIMBA_RT_STR_TO_F64 ? LIMBA_T_F64 : LIMBA_T_I64, v);
+        *r = ok;
+        return true;
+    }
+    case LIMBA_RT_ARG_COUNT:
+        *r = (uint64_t)(e->lim.argc > 0 ? e->lim.argc : 0);
+        return true;
+    case LIMBA_RT_ARG: {
+        int32_t i = (int32_t)a[0];
+        const char *s = i >= 1 && i <= e->lim.argc ? e->lim.argv[i - 1] : "";
+        *r = sv(str_make(e, s, strlen(s)));
+        return true;
+    }
+    case LIMBA_RT_HALT:
+        e->status = LIMBA_EVAL_HALT;
+        e->code = (int32_t)a[0];
+        return false;
+    case LIMBA_RT_MATH_TAN:
+        *r = fbits(tan(dv(a[0])), LIMBA_T_F64);
+        return true;
+    case LIMBA_RT_MATH_ATAN:
+        *r = fbits(atan(dv(a[0])), LIMBA_T_F64);
+        return true;
+    case LIMBA_RT_MATH_EXP:
+        *r = fbits(exp(dv(a[0])), LIMBA_T_F64);
+        return true;
+    case LIMBA_RT_MATH_LN:
+        *r = fbits(log(dv(a[0])), LIMBA_T_F64);
+        return true;
+    case LIMBA_RT_MATH_TRUNC:
+        *r = fbits(trunc(dv(a[0])), LIMBA_T_F64);
+        return true;
+    case LIMBA_RT_MATH_FLOOR:
+        *r = fbits(floor(dv(a[0])), LIMBA_T_F64);
+        return true;
+    case LIMBA_RT_MATH_CEIL:
+        *r = fbits(ceil(dv(a[0])), LIMBA_T_F64);
+        return true;
+    case LIMBA_RT_INT_POW: {
+        int64_t base = (int64_t)a[0], ex = (int64_t)a[1], acc = 1;
+        if (ex < 0)
+            return trap(e, TRAP_OVERFLOW);
+        while (ex) {
+            if ((ex & 1) && __builtin_mul_overflow(acc, base, &acc))
+                return trap(e, TRAP_OVERFLOW);
+            ex >>= 1;
+            if (ex && __builtin_mul_overflow(base, base, &base))
+                return trap(e, TRAP_OVERFLOW);
+        }
+        *r = (uint64_t)acc;
+        return true;
+    }
+    }
+    e->status = LIMBA_EVAL_UNSUPPORTED;
+    return false;
+}
+
 static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
 {
     char buf[40];
@@ -225,6 +391,8 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_MATH_POW:
         *r = fbits(pow(dv(a[0]), dv(a[1])), LIMBA_T_F64);
         return true;
+    default:
+        return runtime_luxia(e, rt, a, r);
     }
     e->status = LIMBA_EVAL_UNSUPPORTED;
     return false;
@@ -827,6 +995,11 @@ void limba_eval(const limba_module *m, const char *entry,
     e.lim.max_steps =
         limits && limits->max_steps ? limits->max_steps : 100000000;
     e.lim.max_depth = limits && limits->max_depth ? limits->max_depth : 10000;
+    if (limits) {
+        e.lim.argc = limits->argc;
+        e.lim.argv = limits->argv;
+        e.lim.in = limits->in;
+    }
     memset(r, 0, sizeof(*r));
 
     limba_id name = LIMBA_NONE, fid = LIMBA_NONE;

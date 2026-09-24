@@ -58,3 +58,6 @@ LX_ERROR(48, FORMAT_PLACE)      /* x:w:d outside write and writeln */
 LX_ERROR(49, OPEN_ARRAY_PLACE)  /* array of T outside a parameter */
 LX_ERROR(50, BAD_RANGE)         /* a range on a type that has none, low > high */
 LX_ERROR(51, DYNAMIC_PLACE)     /* computed bounds outside a variable */
+LX_ERROR(52, MISSING_RETURN)    /* a path out of a function without return */
+LX_ERROR(53, UNASSIGNED)        /* a variable read before any assignment */
+LX_ERROR(54, UNSUPPORTED)       /* valid, not yet translated to the IR */

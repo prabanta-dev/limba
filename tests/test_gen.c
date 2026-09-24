@@ -26,7 +26,7 @@
 
 static int failures;
 
-static const limba_eval_limits limits = {5000000, 0};
+static const limba_eval_limits limits = {5000000, 0, 0, NULL, NULL};
 
 static char *print(const limba_module *m)
 {

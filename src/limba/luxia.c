@@ -11,17 +11,60 @@
 #include "front/source.h"
 #include "luxia/lex.h"
 #include "luxia/parse.h"
+#include "luxia/lower.h"
 #include "luxia/sema.h"
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* errors reported before giving up */
 #define MAX_ERRORS 20
 
+/* write the module as text or binary; a .lir goes next to the input */
+static int write_module(const limba_module *m, const char *in, const char *emit,
+                        const char *outpath)
+{
+    int status = 0;
+    if (emit && !strcmp(emit, "lit")) {
+        FILE *out = outpath ? fopen(outpath, "w") : stdout;
+        if (!out) {
+            fprintf(stderr, "limba: %s: %s\n", outpath, strerror(errno));
+            return 1;
+        }
+        limba_print(m, out);
+        if (out != stdout && fclose(out) != 0)
+            status = 1;
+        return status;
+    }
+    char *derived = NULL;
+    if (!outpath) {
+        size_t n = strlen(in);
+        derived = malloc(n + 1);
+        if (!derived)
+            return 1;
+        memcpy(derived, in, n + 1);
+        memcpy(derived + n - 6, ".lir", 5);
+        outpath = derived;
+    }
+    uint8_t *buf;
+    size_t blen;
+    limba_write(m, &buf, &blen);
+    FILE *out = fopen(outpath, "wb");
+    if (!out || fwrite(buf, 1, blen, out) != blen) {
+        fprintf(stderr, "limba: %s: %s\n", outpath, strerror(errno));
+        status = 1;
+    }
+    if (out && fclose(out) != 0)
+        status = 1;
+    free(buf);
+    free(derived);
+    return status;
+}
+
 int limba_luxia_main(const char *in, const char *emit, const char *outpath,
-                     bool check)
+                     bool check, int level, const limba_opt_options *opt)
 {
     limba_source src;
     limba_source_init(&src);
@@ -69,12 +112,31 @@ int limba_luxia_main(const char *in, const char *emit, const char *outpath,
             if (out != stdout && fclose(out) != 0)
                 status = 1;
         }
-    } else if (!check && status == 0) {
-        fprintf(stderr,
-                "limba: %s: the Luxia front end stops after the semantic "
-                "checks for now (--emit=tokens, --emit=ast)\n",
-                in);
-        status = 2;
+    } else if (checked && status == 0) {
+        /* what was printed is not printed again */
+        limba_report_free(&rep);
+        limba_report_init(&rep, &src, 'L', MAX_ERRORS);
+        limba_module *m = limba_lxl_program(&sema);
+        if (m) {
+            limba_report_print(&rep, stderr);
+            limba_diag d = {{0}, 0};
+            if (limba_verify(m, &d) != 0) {
+                fprintf(stderr,
+                        "limba: %s: internal error, the IR made is "
+                        "not valid: %s\n",
+                        in, d.msg);
+                status = 3;
+            } else if (level > 0 && limba_optimize(m, opt, &d) != 0) {
+                fprintf(stderr, "limba: %s: %s\n", in, d.msg);
+                status = 3;
+            } else if (!check) {
+                status = write_module(m, in, emit, outpath);
+            }
+            limba_module_free(m);
+        } else {
+            limba_report_print(&rep, stderr);
+            status = 1;
+        }
     }
     if (checked)
         limba_lxs_free(&sema);

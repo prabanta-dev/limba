@@ -356,12 +356,12 @@ static void test_symtab(void)
     uint32_t top = limba_scope_new(&st, 0, 0);
     uint32_t inner = limba_scope_new(&st, top, 0);
     limba_sym dup,
-        a = limba_sym_declare(&st, top, 7, LIMBA_SYM_VAR, 1, 1, &dup);
+        a = limba_sym_declare(&st, top, 7, LIMBA_LSYM_VAR, 1, 1, &dup);
     CHECK(a && !dup, "a first declaration");
-    CHECK(!limba_sym_declare(&st, top, 7, LIMBA_SYM_CONST, 2, 1, &dup) &&
+    CHECK(!limba_sym_declare(&st, top, 7, LIMBA_LSYM_CONST, 2, 1, &dup) &&
               dup == a,
           "a second one in the same scope is a duplicate");
-    limba_sym b = limba_sym_declare(&st, inner, 7, LIMBA_SYM_VAR, 3, 1, &dup);
+    limba_sym b = limba_sym_declare(&st, inner, 7, LIMBA_LSYM_VAR, 3, 1, &dup);
     CHECK(b && b != a, "an inner scope may shadow");
     CHECK(limba_sym_lookup(&st, inner, 7) == b, "the inner one is found");
     CHECK(limba_sym_lookup(&st, top, 7) == a, "the outer one from outside");
@@ -370,7 +370,7 @@ static void test_symtab(void)
               limba_sym_local(&st, top, 8) == 0,
           "local lookups");
     for (uint32_t i = 0; i < 10000; i++)
-        limba_sym_declare(&st, top, 100 + i, LIMBA_SYM_VAR, 1, 1, NULL);
+        limba_sym_declare(&st, top, 100 + i, LIMBA_LSYM_VAR, 1, 1, NULL);
     CHECK(limba_sym_lookup(&st, inner, 100 + 9999) != 0 &&
               limba_sym_get(&st, limba_sym_lookup(&st, inner, 5000))->name ==
                   5000,

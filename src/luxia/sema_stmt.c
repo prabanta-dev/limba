@@ -50,7 +50,7 @@ static void local_var(limba_lxs *S, uint32_t d, uint32_t scope)
     uint32_t names = x->a;
     for (uint32_t k = 0; k < lxs_node(S, names)->b; k++) {
         limba_sym s = lxs_declare(S, scope, limba_lx_list_at(S->t, names, k),
-                                  LIMBA_SYM_VAR, d);
+                                  LIMBA_LSYM_VAR, d);
         if (s)
             S->st.sym[s].type = t;
     }
@@ -72,7 +72,7 @@ static void local_const(limba_lxs *S, uint32_t d, uint32_t scope)
         vt = t;
         v = S->val[x->c];
     }
-    limba_sym s = lxs_declare(S, scope, x->a, LIMBA_SYM_CONST, d);
+    limba_sym s = lxs_declare(S, scope, x->a, LIMBA_LSYM_CONST, d);
     if (s) {
         S->st.sym[s].type = vt;
         S->st.sym[s].value = v;
@@ -197,7 +197,7 @@ static void for_stmt(limba_lxs *S, uint32_t node, uint32_t scope)
         lxs_assign_to(S, to, t, "the loop");
     }
     uint32_t inner = limba_scope_new(&S->st, scope, LXS_BLOCK);
-    limba_sym s = lxs_declare(S, inner, name, LIMBA_SYM_VAR, node);
+    limba_sym s = lxs_declare(S, inner, name, LIMBA_LSYM_VAR, node);
     if (s) {
         S->st.sym[s].type = t;
         S->st.sym[s].flags |= LXS_LOOPVAR;

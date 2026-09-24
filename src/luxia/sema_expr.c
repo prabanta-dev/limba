@@ -354,13 +354,13 @@ static limba_ltype reference(limba_lxs *S, uint32_t node, uint32_t scope)
     size_t n;
     const char *sp;
     switch (y->kind) {
-    case LIMBA_SYM_CONST:
+    case LIMBA_LSYM_CONST:
         S->val[node] = y->value;
         return set(S, node, y->type);
-    case LIMBA_SYM_VAR:
-    case LIMBA_SYM_PARAM:
+    case LIMBA_LSYM_VAR:
+    case LIMBA_LSYM_PARAM:
         return set(S, node, y->type);
-    case LIMBA_SYM_TYPE:
+    case LIMBA_LSYM_TYPE:
         sp = lxs_spell(S, s, &n);
         lxs_error(S, LXE_NOT_A_VALUE, node,
                   "'%.*s' is a type: to convert a value write %.*s(x)", (int)n,
@@ -842,11 +842,11 @@ static limba_ltype call(limba_lxs *S, uint32_t node, uint32_t scope,
     }
     lxs_force(S, s);
     switch (S->st.sym[s].kind) {
-    case LIMBA_SYM_TYPE:
+    case LIMBA_LSYM_TYPE:
         return conversion(S, node, scope, S->st.sym[s].type);
-    case LIMBA_SYM_ROUTINE:
+    case LIMBA_LSYM_ROUTINE:
         return routine_call(S, node, scope, s);
-    case LIMBA_SYM_BUILTIN:
+    case LIMBA_LSYM_BUILTIN:
         return builtin(S, node, scope, s, expected);
     }
     size_t n;
@@ -869,7 +869,7 @@ static limba_ltype membership(limba_lxs *S, uint32_t node, uint32_t scope)
     limba_lx_node *lx_ = lxs_node(S, lo);
     if (!hi && lx_->kind == LXN_REF) {
         limba_sym s = limba_sym_lookup(&S->st, scope, lx_->a);
-        if (s && S->st.sym[s].kind == LIMBA_SYM_TYPE) {
+        if (s && S->st.sym[s].kind == LIMBA_LSYM_TYPE) {
             lxs_lookup(S, scope, lo); /* the spelling */
             lxs_force(S, s);
             limba_ltype rt = S->st.sym[s].type;
@@ -991,16 +991,16 @@ bool lxs_writable(limba_lxs *S, uint32_t node, bool report)
         if (!s)
             return true; /* reported */
         limba_symbol *y = &S->st.sym[s];
-        if (y->kind == LIMBA_SYM_VAR && !(y->flags & LXS_LOOPVAR))
+        if (y->kind == LIMBA_LSYM_VAR && !(y->flags & LXS_LOOPVAR))
             return true;
-        if (y->kind == LIMBA_SYM_PARAM && y->mode != LXS_IN)
+        if (y->kind == LIMBA_LSYM_PARAM && y->mode != LXS_IN)
             return true;
-        why = y->kind == LIMBA_SYM_VAR ? "the variable of a for is constant "
-                                         "in the loop"
-              : y->kind == LIMBA_SYM_PARAM
+        why = y->kind == LIMBA_LSYM_VAR ? "the variable of a for is constant "
+                                          "in the loop"
+              : y->kind == LIMBA_LSYM_PARAM
                   ? "a parameter without var or out is read-only"
-              : y->kind == LIMBA_SYM_CONST ? "a constant cannot change"
-                                           : why;
+              : y->kind == LIMBA_LSYM_CONST ? "a constant cannot change"
+                                            : why;
         break;
     }
     case LXN_SEL:

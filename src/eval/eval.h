@@ -28,11 +28,15 @@ enum limba_eval_status {
     LIMBA_EVAL_LIMIT,       /* too many steps or calls too deep */
     LIMBA_EVAL_UNSUPPORTED, /* call.ext: no C here */
     LIMBA_EVAL_BAD,         /* no such entry, or it takes parameters */
+    LIMBA_EVAL_HALT,        /* halt(code): code is the exit status */
 };
 
 typedef struct {
     uint64_t max_steps; /* instructions executed; 0 for 100 million */
     uint32_t max_depth; /* nested calls; 0 for 10000 */
+    int argc;           /* the command line of the program, for arg() */
+    char **argv;
+    FILE *in; /* what read_line reads; NULL: nothing */
 } limba_eval_limits;
 
 typedef struct {

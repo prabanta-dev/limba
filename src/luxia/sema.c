@@ -116,7 +116,7 @@ static limba_sym universe_sym(limba_lxs *S, const char *spelling, unsigned kind)
 
 static void universe_type(limba_lxs *S, const char *spelling, limba_ltype t)
 {
-    limba_sym s = universe_sym(S, spelling, LIMBA_SYM_TYPE);
+    limba_sym s = universe_sym(S, spelling, LIMBA_LSYM_TYPE);
     S->st.sym[s].type = t;
     limba_types_set_name(&S->ts, t, s);
 }
@@ -172,7 +172,7 @@ static void universe(limba_lxs *S)
         universe_type(S, bits[i], S->ty_bits[i]);
     }
     /* Byte is Bits8 itself, not a copy */
-    limba_sym byte = universe_sym(S, "Byte", LIMBA_SYM_TYPE);
+    limba_sym byte = universe_sym(S, "Byte", LIMBA_LSYM_TYPE);
     S->st.sym[byte].type = S->ty_bits[0];
     S->ty_f32 = limba_types_float(&S->ts, 32);
     S->ty_f64 = limba_types_float(&S->ts, 64);
@@ -186,12 +186,12 @@ static void universe(limba_lxs *S)
         int code;
     } chars[] = {{"LF", 10}, {"CR", 13}, {"TAB", 9}, {"NUL", 0}};
     for (size_t i = 0; i < sizeof(chars) / sizeof(chars[0]); i++) {
-        limba_sym s = universe_sym(S, chars[i].name, LIMBA_SYM_CONST);
+        limba_sym s = universe_sym(S, chars[i].name, LIMBA_LSYM_CONST);
         S->st.sym[s].type = S->ts.char_;
         S->st.sym[s].value = lxs_value_int(S, chars[i].code);
     }
     for (size_t i = 0; i < sizeof(builtins) / sizeof(builtins[0]); i++) {
-        limba_sym s = universe_sym(S, builtins[i].name, LIMBA_SYM_BUILTIN);
+        limba_sym s = universe_sym(S, builtins[i].name, LIMBA_LSYM_BUILTIN);
         S->st.sym[s].value = builtins[i].id;
     }
 }
@@ -254,7 +254,7 @@ limba_sym lxs_lookup(limba_lxs *S, uint32_t scope, uint32_t node)
         return 0;
     }
     limba_symbol *y = &S->st.sym[s];
-    if ((y->kind == LIMBA_SYM_CONST || y->kind == LIMBA_SYM_VAR) &&
+    if ((y->kind == LIMBA_LSYM_CONST || y->kind == LIMBA_LSYM_VAR) &&
         y->loc != LIMBA_NOLOC && y->loc > x->loc && y->node &&
         lxs_node(S, y->node)->kind != LXN_TYPEDECL) {
         lxs_error(S, LXE_BEFORE_DECL, node,
@@ -307,17 +307,17 @@ void lxs_declare_all(limba_lxs *S, uint32_t list, uint32_t scope, bool top)
         limba_lx_node *x = lxs_node(S, d);
         switch (x->kind) {
         case LXN_CONST:
-            mark(S, lxs_declare(S, scope, x->a, LIMBA_SYM_CONST, d), top);
+            mark(S, lxs_declare(S, scope, x->a, LIMBA_LSYM_CONST, d), top);
             break;
         case LXN_TYPEDECL: {
-            mark(S, lxs_declare(S, scope, x->a, LIMBA_SYM_TYPE, d), top);
+            mark(S, lxs_declare(S, scope, x->a, LIMBA_LSYM_TYPE, d), top);
             limba_lx_node *tn = lxs_node(S, x->b);
             if (tn->kind == LXN_TENUM) {
                 limba_lx_node *vals = lxs_node(S, tn->a);
                 for (uint32_t k = 0; k < vals->b; k++)
                     mark(S,
                          lxs_declare(S, scope, limba_lx_list_at(S->t, tn->a, k),
-                                     LIMBA_SYM_CONST, d),
+                                     LIMBA_LSYM_CONST, d),
                          top);
             }
             break;
@@ -327,12 +327,12 @@ void lxs_declare_all(limba_lxs *S, uint32_t list, uint32_t scope, bool top)
             for (uint32_t k = 0; k < names->b; k++)
                 mark(S,
                      lxs_declare(S, scope, limba_lx_list_at(S->t, x->a, k),
-                                 LIMBA_SYM_VAR, d),
+                                 LIMBA_LSYM_VAR, d),
                      top);
             break;
         }
         case LXN_ROUTINE:
-            mark(S, lxs_declare(S, scope, x->a, LIMBA_SYM_ROUTINE, d), top);
+            mark(S, lxs_declare(S, scope, x->a, LIMBA_LSYM_ROUTINE, d), top);
             break;
         }
     }
@@ -424,7 +424,7 @@ static void resolve_routine(limba_lxs *S, limba_sym s)
         uint32_t names = px->a;
         for (uint32_t k = 0; k < lxs_node(S, names)->b; k++) {
             uint32_t nn = limba_lx_list_at(S->t, names, k);
-            limba_sym ps_ = lxs_declare(S, scope, nn, LIMBA_SYM_PARAM, p);
+            limba_sym ps_ = lxs_declare(S, scope, nn, LIMBA_LSYM_PARAM, p);
             if (ps_) {
                 S->st.sym[ps_].type = pt;
                 S->st.sym[ps_].mode = (uint8_t)mode;
@@ -465,7 +465,7 @@ void lxs_force(limba_lxs *S, limba_sym s)
         resolve_const(S, s);
         break;
     case LXN_TYPEDECL:
-        if (y->kind == LIMBA_SYM_TYPE) {
+        if (y->kind == LIMBA_LSYM_TYPE) {
             resolve_typedecl(S, s);
         } else {
             /* a value of an enumeration: resolving the type sets it */
@@ -541,7 +541,7 @@ static limba_ltype named(limba_lxs *S, uint32_t node, uint32_t scope,
     if (!s)
         return 0;
     limba_symbol *y = &S->st.sym[s];
-    if (y->kind != LIMBA_SYM_TYPE) {
+    if (y->kind != LIMBA_LSYM_TYPE) {
         size_t n;
         const char *sp = lxs_spell(S, s, &n);
         lxs_error(S, LXE_NOT_A_TYPE, node, "'%.*s' is not a type", (int)n, sp);
@@ -620,7 +620,7 @@ static limba_ltype type_node(limba_lxs *S, uint32_t node, uint32_t scope,
             uint32_t nn = limba_lx_list_at(S->t, list, k);
             limba_sym vs = S->sym[nn];
             if (!vs)
-                vs = lxs_declare(S, scope, nn, LIMBA_SYM_CONST, 0);
+                vs = lxs_declare(S, scope, nn, LIMBA_LSYM_CONST, 0);
             if (vs) {
                 S->st.sym[vs].type = e;
                 S->st.sym[vs].value = lxs_value_int(S, k);

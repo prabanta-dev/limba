@@ -125,7 +125,7 @@ int main(int argc, char **argv)
         return 2;
     }
     if (ends_with(in, ".luxia"))
-        return limba_luxia_main(in, emit, outpath, check);
+        return limba_luxia_main(in, emit, outpath, check, level, &opt);
     bool binary_in = ends_with(in, ".lir");
     if (!binary_in && !ends_with(in, ".lit")) {
         fprintf(stderr, "limba: %s: a .lit, .lir or .luxia file is expected\n",

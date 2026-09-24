@@ -20,13 +20,13 @@
 typedef uint32_t limba_sym; /* 0: none */
 
 enum {
-    LIMBA_SYM_NONE,
-    LIMBA_SYM_CONST,
-    LIMBA_SYM_TYPE,
-    LIMBA_SYM_VAR,
-    LIMBA_SYM_PARAM,
-    LIMBA_SYM_ROUTINE,
-    LIMBA_SYM_BUILTIN, /* a routine of the language, not of the program */
+    LIMBA_LSYM_NONE,
+    LIMBA_LSYM_CONST,
+    LIMBA_LSYM_TYPE,
+    LIMBA_LSYM_VAR,
+    LIMBA_LSYM_PARAM,
+    LIMBA_LSYM_ROUTINE,
+    LIMBA_LSYM_BUILTIN, /* a routine of the language, not of the program */
 };
 
 typedef struct {

@@ -43,3 +43,32 @@ LIMBA_RT(MATH_SQRT, "math_sqrt", "(f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_SIN, "math_sin", "(f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_COS, "math_cos", "(f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_POW, "math_pow", "(f64, f64) -> f64", LIMBA_RTA_PURE)
+
+/* Luxia 0: output, formatted output, input, the command line */
+LIMBA_RT(PRINT_U64, "print_u64", "(i64) -> void", LIMBA_RTA_IO)
+LIMBA_RT(PRINT_BOOL, "print_bool", "(i1) -> void", LIMBA_RTA_IO)
+LIMBA_RT(PRINT_CHAR, "print_char", "(i32) -> void", LIMBA_RTA_IO)
+LIMBA_RT(PRINT_BYTE, "print_byte", "(i8) -> void", LIMBA_RTA_IO)
+LIMBA_RT(PRINT_STR_W, "print_str_w", "(str, i32) -> void", LIMBA_RTA_IO)
+LIMBA_RT(STR_FROM_U64, "str_from_u64", "(i64) -> str", LIMBA_RTA_ALLOC)
+LIMBA_RT(STR_FROM_F64_FIXED, "str_from_f64_fixed", "(f64, i32) -> str",
+         LIMBA_RTA_ALLOC)
+LIMBA_RT(STR_FROM_CHAR, "str_from_char", "(i32) -> str", LIMBA_RTA_ALLOC)
+LIMBA_RT(STR_FROM_BOOL, "str_from_bool", "(i1) -> str", LIMBA_RTA_ALLOC)
+LIMBA_RT(READ_LINE, "read_line", "(ptr) -> i1",
+         LIMBA_RTA_IO | LIMBA_RTA_ALLOC | LIMBA_RTA_WRITES_MEM)
+LIMBA_RT(STR_TO_I64, "str_to_i64", "(str, ptr) -> i1", LIMBA_RTA_WRITES_MEM)
+LIMBA_RT(STR_TO_F64, "str_to_f64", "(str, ptr) -> i1", LIMBA_RTA_WRITES_MEM)
+LIMBA_RT(ARG_COUNT, "arg_count", "() -> i32", LIMBA_RTA_IO)
+LIMBA_RT(ARG, "arg", "(i32) -> str", LIMBA_RTA_IO | LIMBA_RTA_ALLOC)
+LIMBA_RT(HALT, "halt", "(i32) -> void", LIMBA_RTA_IO | LIMBA_RTA_NORETURN)
+/* Luxia 0: mathematics */
+LIMBA_RT(MATH_TAN, "math_tan", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_ATAN, "math_atan", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_EXP, "math_exp", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_LN, "math_ln", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_TRUNC, "math_trunc", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_FLOOR, "math_floor", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_CEIL, "math_ceil", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(INT_POW, "int_pow", "(i64, i64) -> i64",
+         LIMBA_RTA_PURE | LIMBA_RTA_MAY_TRAP)

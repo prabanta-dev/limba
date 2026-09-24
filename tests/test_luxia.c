@@ -10,6 +10,9 @@
 #include "front/source.h"
 #include "luxia/lex.h"
 #include "luxia/parse.h"
+#include "eval/eval.h"
+#include "limba/opt.h"
+#include "luxia/lower.h"
 #include "luxia/sema.h"
 
 #include <dirent.h>
@@ -560,6 +563,251 @@ static void check_string(const char *src, char **errors)
     limba_source_free(&s);
 }
 
+/* programs compiled to the IR and run by the reference interpreter:
+   what they print, and how they end: "ok", "trap N", "halt N", or the
+   compile errors as "errors L0053@1:54" */
+typedef struct {
+    const char *src;
+    const char *out;
+    const char *end;
+} run_case;
+
+static const run_case run_cases[] = {
+    {"program p; begin writeln(\"ciao, \", 42, ' ', true); end.",
+     "ciao, 42 true\n", "ok"},
+    /* integers: div truncates, mod has the sign of the divisor, rem of
+       the dividend */
+    {"program p;\nvar a, b, c: Int32;\nbegin\n  a := -7; b := 2; c := -2;\n"
+     "  writeln(a div b, \" \", a mod b, \" \", a rem b);\n  a := 7;\n"
+     "  writeln(a div c, \" \", a mod c, \" \", a rem c);\nend.",
+     "-3 1 -1\n-3 -1 1\n", "ok"},
+    {"program p; var a: Int8 := 100; begin a := a + a; writeln(a); end.", "",
+     "trap 6"},
+    {"program p; var u: UInt32 := 0; begin u := u - 1; end.", "", "trap 6"},
+    {"program p; var u: UInt8 := 16; begin u := u * u; end.", "", "trap 6"},
+    {"program p; var b: Bits8 := 250;\nbegin\n  b := b + 10; writeln(b);\n"
+     "  b := not b; writeln(b);\n  b := b shl 1; writeln(b);\nend.",
+     "4\n251\n246\n", "ok"},
+    {"program p; var b: Bits8 := 1; n: Int32 := 8; begin b := b shl n; "
+     "end.",
+     "", "trap 104"},
+    {"program p; type Vec = array[Int32 range 1..3] of Int32; var v: Vec; i: "
+     "Int32 := 4; begin v[i] := 1; end.",
+     "", "trap 100"},
+    {"program p; type P = Int32 range 0..100; var x: P; y: Int32 := 101; "
+     "begin x := y; end.",
+     "", "trap 101"},
+    {"program p; type N = record a: Int32; end; var p: ^N; begin p.a := 1; "
+     "end.",
+     "", "trap 102"},
+    {"program p; var a: Int32 := 1; z: Int32 := 0; begin writeln(a div z); "
+     "end.",
+     "", "trap 11"},
+    {"program p; var a: Int64 := -9223372036854775807 - 1; m: Int64 := -1; "
+     "begin writeln(a div m); end.",
+     "", "trap 6"},
+    {"program p; var f: Float64 := 2.5;\nbegin\n  writeln(Int32(f), \" \", "
+     "Int32(-f), \" \", Int32(2.5));\n  f := 3.0e10; writeln(Int32(f));\n"
+     "end.",
+     "3 -3 3\n", "trap 103"},
+    /* loops */
+    {"program p;\nvar s: Int64 := 0;\nbegin\n"
+     "  for var i: Int8 := 120 to 127 do s := s + Int64(i); end;\n"
+     "  writeln(s);\n"
+     "  for var i: Int32 := 5 downto 1 do write(i); end;\n  writeln();\n"
+     "  for var i: Int32 := 3 to 1 do writeln(\"never\"); end;\nend.",
+     "988\n54321\n", "ok"},
+    {"program p;\nvar i: Int32 := 0; n: Int32 := 0;\nbegin\n"
+     "  while i < 10 do\n    i := i + 1;\n    continue when i mod 2 = 0;\n"
+     "    n := n + i;\n  end;\n  writeln(n);\n"
+     "  repeat i := i - 3; until i < 0;\n  writeln(i);\n"
+     "  loop i := i + 1; exit when i = 5; end;\n  writeln(i);\nend.",
+     "25\n-2\n5\n", "ok"},
+    {"program p;\ntype Col = (A, B, D);\nvar c: Col := B; k: Int32 := 7;\nbegin\n"
+     "  case c of when A: writeln(\"a\"); when B, D: writeln(\"bd\"); end;\n"
+     "  case k of when 1..5: writeln(\"low\"); when 6..9: writeln(\"mid\"); "
+     "else writeln(\"high\"); end;\n"
+     "  k := 42;\n"
+     "  case k of when 1..5: writeln(\"low\"); else writeln(\"high\"); end;\n"
+     "end.",
+     "bd\nmid\nhigh\n", "ok"},
+    /* strings and output */
+    {"program p;\nvar s: String := \"ciao\";\nbegin\n"
+     "  s := s & ' ' & \"mondo\";\n"
+     "  writeln(s, \" \", length(s), \" \", s[1], \" \", copy(s, 6, 5));\n"
+     "  writeln(s = \"ciao mondo\", \" \", \"a\" < \"b\");\n"
+     "  writeln(chr(65), ord('a'), str(12) & \"!\");\nend.",
+     "ciao mondo 10 99 mondo\ntrue true\nA9712!\n", "ok"},
+    {"program p; begin writeln(3.14159:0:2, \"|\", 42:5, \"|\", \"ab\":4, "
+     "\"|\", 1.5:8:3); end.",
+     "3.14|   42|  ab|   1.500\n", "ok"},
+    {"program p; var f: Float32 := 0.1; begin writeln(Float64(f):0:10); "
+     "end.",
+     "0.1000000015\n", "ok"},
+    /* and then: no nil reached */
+    {"program p; type N = record a: Int32; end; var p: ^N := nil; begin if "
+     "p <> nil and p.a = 1 then writeln(\"no\"); else writeln(\"safe\"); "
+     "end; end.",
+     "safe\n", "ok"},
+    /* records, arrays, parameters */
+    {"program p;\ntype\n  Pt = record x, y: Int32; end;\n"
+     "  Vec = array[Int32 range 0..4] of Int32;\nvar v: Vec; q: Pt;\n"
+     "procedure Fill(var a: array of Int32);\nbegin\n"
+     "  for var i := low(a) to high(a) do a[i] := Int32(i) * 10; end;\n"
+     "end;\n"
+     "function Sum(a: array of Int32): Int64;\nvar s: Int64 := 0;\nbegin\n"
+     "  for var i := 0 to high(a) do s := s + Int64(a[i]); end;\n"
+     "  return s;\nend;\n"
+     "procedure Move(var p: Pt; dx: Int32);\nbegin p.x := p.x + dx; end;\n"
+     "begin\n  Fill(v);\n  writeln(Sum(v), \" \", v[4]);\n"
+     "  q.x := 1; q.y := 2;\n  Move(q, 5);\n  var r: Pt := q;\n  r.y := 9;\n"
+     "  writeln(q.x, \" \", q.y, \" \", r.x, \" \", r.y);\nend.",
+     "100 40\n6 2 6 9\n", "ok"},
+    {"program p;\ntype PN = ^Node; Node = record v: Int32; next: PN; end;\n"
+     "var head: PN := nil; n: Int32 := 0;\nbegin\n"
+     "  for var i: Int32 := 1 to 5 do\n    var c := new(Node);\n"
+     "    c.v := i; c.next := head; head := c;\n  end;\n"
+     "  var p := head;\n  while p <> nil do\n    n := n + p.v;\n"
+     "    var q := p.next;\n    dispose(p);\n    p := q;\n  end;\n"
+     "  writeln(n);\nend.",
+     "15\n", "ok"},
+    {"program p;\nbegin\n  var n: Int32 := 4;\n"
+     "  var a: array[Int32 range 1..n] of Int64;\n"
+     "  for var i := 1 to n do a[i] := Int64(i) * Int64(i); end;\n"
+     "  writeln(a[4], \" \", length(a), \" \", low(a), \" \", high(a));\n"
+     "end.",
+     "16 4 1 4\n", "ok"},
+    {"program p;\nvar n: Int32 := 5;\nprocedure Get(out r: Int32);\nbegin r := "
+     "7; end;\nbegin\n  if not val(\"123\", n) then writeln(\"bad\"); end;\n"
+     "  writeln(n);\n  if val(\"x1\", n) then writeln(\"?\"); end;\n"
+     "  writeln(n);\n  var z: Int32;\n  Get(z);\n  writeln(z);\nend.",
+     "123\n123\n7\n", "ok"},
+    {"program p;\nfunction Fib(n: Int32): Int32;\nbegin\n  if n < 2 then "
+     "return n; end;\n  return Fib(n - 1) + Fib(n - 2);\nend;\nbegin "
+     "writeln(Fib(20)); end.",
+     "6765\n", "ok"},
+    {"program p; var b: Int64 := 3; begin writeln(b ** 4, \" \", 2.0 ** 10); "
+     "end.",
+     "81 1024\n", "ok"},
+    {"program p; begin writeln(\"a\"); halt(3); writeln(\"b\"); end.", "a\n",
+     "halt 3"},
+    /* checked on the SSA form */
+    {"program p; var x: Int32; begin var y: Int32; writeln(y); end.", "",
+     "errors L0053@1:54"},
+    {"program p; var b: Boolean := true; begin var y: Int32; if b then y := "
+     "1; end; writeln(y); end.",
+     "", "errors L0053@1:87"},
+    {"program p; var b: Boolean := true; begin var y: Int32; if b then y := "
+     "1; else y := 2; end; writeln(y); end.",
+     "1\n", "ok"},
+    {"program p; function f(x: Int32): Int32; begin if x > 0 then return 1; "
+     "end; end; begin writeln(f(1)); end.",
+     "", "errors L0052@1:21"},
+};
+
+/* run main; what it printed (malloc'd) and how it ended */
+static char *run_module(limba_module *m, char *end, size_t size)
+{
+    limba_eval_result r;
+    limba_eval(m, "main", NULL, &r);
+    snprintf(end, size, "ok");
+    if (r.status == LIMBA_EVAL_TRAP)
+        snprintf(end, size, "trap %lld", (long long)r.code);
+    else if (r.status == LIMBA_EVAL_HALT)
+        snprintf(end, size, "halt %lld", (long long)r.code);
+    else if (r.status != LIMBA_EVAL_OK)
+        snprintf(end, size, "status %d", r.status);
+    char *out = r.out;
+    r.out = NULL;
+    limba_eval_result_free(&r);
+    return out;
+}
+
+/* compile a Luxia source to a verified module, run it, then optimise it
+   and run it again: both runs must agree (the OPTDIFF net) */
+static char *compile_run(const char *src, char *end, size_t size,
+                         limba_report *keep)
+{
+    limba_source s;
+    limba_source_init(&s);
+    uint32_t f = limba_source_add(&s, "t.luxia", src, strlen(src));
+    limba_report rep;
+    limba_report_init(&rep, &s, 'L', 0);
+    limba_lx lx;
+    limba_lx_init(&lx);
+    limba_lx_run(&lx, &s, f, &rep);
+    limba_lx_ast t;
+    limba_lx_ast_init(&t);
+    limba_lx_parse(&t, &lx, &s, &rep);
+    limba_lxs sema;
+    limba_lxs_init(&sema, &t, &lx, &s, &rep);
+    if (rep.errors == 0)
+        limba_lxs_check(&sema);
+    limba_module *m = rep.errors ? NULL : limba_lxl_program(&sema);
+    char *out = NULL;
+    if (!m) {
+        size_t n = (size_t)snprintf(end, size, "errors");
+        for (uint32_t k = 0; k < rep.count && n < size; k++) {
+            limba_where w;
+            if (!limba_source_where(&s, rep.item[k].loc, &w))
+                w.line = w.col = 0;
+            n += (size_t)snprintf(end + n, size - n, " L%04u@%u:%u",
+                                  rep.item[k].code, w.line, w.col);
+        }
+    } else {
+        limba_diag d = {{0}, 0};
+        if (limba_verify(m, &d) != 0) {
+            snprintf(end, size, "invalid IR: %.200s", d.msg);
+        } else {
+            out = run_module(m, end, size);
+            char end2[256];
+            if (limba_optimize(m, NULL, &d) != 0) {
+                snprintf(end, size, "optimiser: %.200s", d.msg);
+            } else {
+                char *out2 = run_module(m, end2, sizeof(end2));
+                if (strcmp(out ? out : "", out2 ? out2 : "") ||
+                    strcmp(end, end2)) {
+                    char first[128];
+                    snprintf(first, sizeof(first), "%s", end);
+                    snprintf(end, size, "OPTDIFF: %.100s / %.100s", first,
+                             end2);
+                }
+                free(out2);
+            }
+        }
+        limba_module_free(m);
+    }
+    if (keep && getenv("LIMBA_TEST_VERBOSE"))
+        limba_report_print(&rep, stderr);
+    limba_lxs_free(&sema);
+    limba_lx_ast_free(&t);
+    limba_lx_free(&lx);
+    limba_report_free(&rep);
+    limba_source_free(&s);
+    return out;
+}
+
+static int test_run(void)
+{
+    int failures = 0;
+    for (size_t i = 0; i < sizeof(run_cases) / sizeof(run_cases[0]); i++) {
+        const run_case *c = &run_cases[i];
+        char end[256];
+        limba_report dummy;
+        char *out = compile_run(c->src, end, sizeof(end), &dummy);
+        const char *o = out ? out : "";
+        if (strcmp(o, c->out) || strcmp(end, c->end)) {
+            fprintf(stderr,
+                    "test_luxia: run case %zu\n  printed  \"%s\"\n  expected "
+                    "\"%s\"\n  ended    %s\n  expected %s\n",
+                    i, o, c->out, end, c->end);
+            failures++;
+        }
+        free(out);
+    }
+    return failures;
+}
+
 /* every program of tests/luxia/benchmarks is valid Luxia 0 */
 static int test_programs(unsigned *count)
 {
@@ -597,6 +845,27 @@ static int test_programs(unsigned *count)
             fprintf(stderr, "test_luxia: %s: %s\n", path, errors);
             failures++;
         }
+        snprintf(path + strlen(path) - 6, 7, ".out");
+        FILE *want = fopen(path, "rb");
+        if (want && !errors[0]) {
+            char *exp = NULL;
+            size_t elen = 0;
+            FILE *em = open_memstream(&exp, &elen);
+            while ((c = fgetc(want)) != EOF)
+                fputc(c, em);
+            fclose(em);
+            char end[256];
+            char *out = compile_run(text, end, sizeof(end), NULL);
+            if (strcmp(end, "ok") || strcmp(out ? out : "", exp)) {
+                fprintf(stderr, "test_luxia: %s: ended %s, printed\n%s\n", path,
+                        end, out ? out : "");
+                failures++;
+            }
+            free(out);
+            free(exp);
+        }
+        if (want)
+            fclose(want);
         (*count)++;
         free(errors);
         free(text);
@@ -632,10 +901,11 @@ int main(void)
     failures += test_sema();
     unsigned programs = 0;
     failures += test_programs(&programs);
-    printf("test_luxia: %zu lexer, %zu expression, %zu program and %zu "
-           "semantic cases, %u valid programs, report and limit, %d "
-           "failures\n",
+    failures += test_run();
+    printf("test_luxia: %zu lexer, %zu expression, %zu program, %zu "
+           "semantic and %zu run cases, %u valid programs, report and limit, "
+           "%d failures\n",
            COUNT(lex_cases), COUNT(expr_cases), COUNT(program_cases),
-           COUNT(sema_cases), programs, failures);
+           COUNT(sema_cases), COUNT(run_cases), programs, failures);
     return failures ? 1 : 0;
 }

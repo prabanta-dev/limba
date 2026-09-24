@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * fuzz_luxia.c - fuzzing target of the Luxia front end: lexer, parser and
- * semantic phase.
+ * fuzz_luxia.c - fuzzing target of the Luxia front end: lexer, parser,
+ * semantic phase and generation of the IR, which must always verify.
  * Whatever the bytes, nothing may crash, the tokens must end with one EOF
  * token, and the tokens, the tree and the report must print.
  *
@@ -15,6 +15,7 @@
 #include "front/source.h"
 #include "luxia/lex.h"
 #include "luxia/parse.h"
+#include "luxia/lower.h"
 #include "luxia/sema.h"
 
 #include <stdio.h>
@@ -45,6 +46,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
             limba_lxs sema;
             limba_lxs_init(&sema, &t, &lx, &src, &rep);
             limba_lxs_check(&sema);
+            limba_module *m = limba_lxl_program(&sema);
+            if (m && limba_verify(m, NULL) != 0)
+                abort(); /* the generator made an invalid IR */
+            limba_module_free(m);
             limba_lxs_free(&sema);
         }
         if (null) {

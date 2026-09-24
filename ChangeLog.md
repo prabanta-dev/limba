@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Luxia to the IR: SSA construction after Braun et al.
+  (`src/front/ssa.c`), with block parameters, trivial ones removed, the
+  check of definite assignment and of the return on every path; the
+  lowering of the checked tree (`src/luxia/lower*.c`) with the checks
+  Luxia promises at run time (overflow, unsigned underflow, index, range,
+  nil, division by zero, conversion, shift). `limba file.luxia` writes
+  `file.lir`. The run-time table gains the output, input, command line
+  and mathematics Luxia 0 needs, and the reference interpreter runs them;
+  `lir_run` passes arguments and standard input to the program. n-body,
+  translated to Luxia, prints the output of the Benchmarks Game.
+  `test_luxia` adds 31 run cases, each also optimised (OPTDIFF).
 - The semantic phase of Luxia (`src/luxia/sema*.c`): names with the rule
   of consistent spelling, types and routines visible in all their scope,
   constants and variables after their declaration; subtypes with ranges,
