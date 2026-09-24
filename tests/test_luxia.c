@@ -826,6 +826,15 @@ static const run_case run_cases[] = {
     {"program w; var a: UInt32 := 2; n: Int32 := 32; begin writeln(a ** n); "
      "end w.",
      "", "trap 6"},
+    /* reals: abs clears the sign (IEEE 754), a constant -0.0 is the
+       rational 0, a conversion fits by the exact bounds */
+    {"program f; var z: Float64 := 0.0; begin writeln(abs (-(z)), \" \", "
+     "-(z), \" \", -0.0); end f.",
+     "0.0 -0.0 0.0\n", "ok"},
+    {"program f; type R = Int64 range 0..9007199254740993; var a: Float64 := "
+     "9007199254740992.0; b: Float64 := 9007199254740994.0; begin "
+     "writeln(R(a)); writeln(R(b)); end f.",
+     "9007199254740992\n", "trap 103"},
     /* the target of an assignment before its value */
     {"program p;\nvar a: array[Int32 range 1..3] of Int32; z: Int32 := "
      "0;\nbegin\n  a[1 div z] := 7 div z;\nend p.",

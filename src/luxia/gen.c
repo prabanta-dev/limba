@@ -27,8 +27,10 @@
  */
 #include "gen.h"
 
+#include "common/fmt_f64.h"
 #include "common/xalloc.h"
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,17 +55,44 @@ enum {
     T_B32,
     T_B64,
     T_BOOL,
+    T_F64,
     NTYPES
 };
 
 static const char *const tname[NTYPES] = {
     "Int8",   "Int16", "Int32",  "Int64",  "UInt8",  "UInt16",  "UInt32",
-    "UInt64", "Bits8", "Bits16", "Bits32", "Bits64", "Boolean",
+    "UInt64", "Bits8", "Bits16", "Bits32", "Bits64", "Boolean", "Float64",
 };
 
+/* S signed, U unsigned, B bits, L Boolean, F real */
 static char fam(unsigned t)
 {
-    return t == T_BOOL ? 'L' : t < T_U8 ? 'S' : t < T_B8 ? 'U' : 'B';
+    return t == T_F64    ? 'F'
+           : t == T_BOOL ? 'L'
+           : t < T_U8    ? 'S'
+           : t < T_B8    ? 'U'
+                         : 'B';
+}
+
+static bool is_int_base(unsigned t)
+{
+    return t < T_BOOL;
+}
+
+/* a Float64 value travels in the low 64 bits of a v128 */
+static v128 fbits(double d)
+{
+    uint64_t u;
+    memcpy(&u, &d, sizeof(u));
+    return (v128)u;
+}
+
+static double fval(v128 v)
+{
+    uint64_t u = (uint64_t)v;
+    double d;
+    memcpy(&d, &u, sizeof(d));
+    return d;
 }
 
 static unsigned tbits(unsigned t)
@@ -116,12 +145,13 @@ enum {
     O_NEG,
     O_ABS,
     O_NOT,
-    O_POW
+    O_POW,
+    O_FDIV
 };
 
 static const char *const otext[] = {
     "+", "-",  "*", "div", "mod", "rem", "and", "or",  "xor", "shl", "shr",
-    "=", "<>", "<", "<=",  ">",   ">=",  "-",   "abs", "not", "**",
+    "=", "<>", "<", "<=",  ">",   ">=",  "-",   "abs", "not", "**",  "/",
 };
 
 /* E_IN: a in type fn, or a in b..c when fn is 0; E_LOW, E_HIGH, E_LEN:
@@ -271,7 +301,7 @@ static unsigned int_type(G *g)
 
 static unsigned any_type(G *g)
 {
-    return chance(g, 15) ? T_BOOL : int_type(g);
+    return chance(g, 15) ? T_BOOL : chance(g, 12) ? T_F64 : int_type(g);
 }
 
 static v128 clamp_in(v128 lo, v128 hi, v128 v)
@@ -303,8 +333,37 @@ static v128 rand_in(G *g, v128 lo, v128 hi)
     }
 }
 
+/* a real for a literal: small binary fractions, decimals that are not,
+   large and tiny ones */
+static double rand_real(G *g)
+{
+    static const double some[] = {0.1,  0.5,     1.0,   2.5,    0.3,  1e16,
+                                  1e-5, 1.5e-05, 1e300, 1e-300, 3.75, 100.0};
+    double d;
+    switch (below(g, 4)) {
+    case 0:
+        d = some[below(g, sizeof(some) / sizeof(some[0]))];
+        break;
+    case 1:
+        d = (double)((int64_t)below(g, 2001) - 1000) / 8.0;
+        break;
+    case 2:
+        d = (double)(rnd(g) >> 11) * 0x1p-53 * 1e6;
+        break;
+    default:
+        d = (double)below(g, 100);
+    }
+    /* a constant is an exact rational (§ 4.4): -0.0 written is 0.0 */
+    return chance(g, 20) && d != 0 ? -d : d;
+}
+
+/* a value of type t for a literal that must fit it */
+static v128 init_value(G *g, uint32_t t);
+
 static v128 rand_value(G *g, unsigned t)
 {
+    if (t == T_F64)
+        return fbits(rand_real(g));
     return t == T_BOOL ? below(g, 2) : rand_in(g, tmin(t), tmax(t));
 }
 
@@ -355,6 +414,14 @@ static bool is_array(const G *g, uint32_t t)
 static unsigned index_base(const G *g, uint32_t at)
 {
     return g->ty[g->ty[at].index].base;
+}
+
+static v128 init_value(G *g, uint32_t t)
+{
+    unsigned b = g->ty[t].base;
+    if (b == T_BOOL || b == T_F64)
+        return rand_value(g, b);
+    return rand_in(g, g->ty[t].lo, g->ty[t].hi);
 }
 
 static uint32_t new_type(G *g, xt x)
@@ -494,7 +561,7 @@ static int pick_var(G *g, uint32_t t, bool write, bool exact)
         if (!is_scalar(g, vt) || is_const(g, v))
             continue;
         if (exact         ? vt != t
-            : t == NTYPES ? base(g, vt) == T_BOOL
+            : t == NTYPES ? !is_int_base(base(g, vt))
                           : base(g, vt) != t)
             continue;
         if (write && !writable(g, v))
@@ -543,7 +610,7 @@ static uint32_t value_for(G *g, uint32_t t, int d)
 {
     uint32_t e = expr(g, base(g, t), d, false);
     /* a constant must fit where it goes, or the front end refuses it */
-    if (g->e[e].cst && base(g, t) != T_BOOL &&
+    if (g->e[e].cst && is_int_base(base(g, t)) &&
         (g->e[e].lit < lo_of(g, t) || g->e[e].lit > hi_of(g, t)))
         e = lit(g, t, rand_in(g, lo_of(g, t), hi_of(g, t)));
     return e;
@@ -798,10 +865,7 @@ static uint32_t heap_stmt(G *g, uint32_t *out)
             if (chance(g, 45))
                 continue;
             uint32_t ft = field_type(g, rt, k);
-            uint32_t e = lit(g, ft,
-                             base(g, ft) == T_BOOL
-                                 ? below(g, 2)
-                                 : rand_in(g, lo_of(g, ft), hi_of(g, ft)));
+            uint32_t e = lit(g, ft, init_value(g, ft));
             uint32_t a = new_s(g, S_ASSIGN);
             g->st[a].var = (uint32_t)p;
             g->st[a].fld = k + 1;
@@ -941,7 +1005,7 @@ static uint32_t constant(G *g)
     unsigned kind = V_CONST;
     if (chance(g, 40)) {
         t = var_type(g);
-        if (base(g, t) == T_BOOL)
+        if (!is_int_base(base(g, t)))
             t = int_type(g);
         kind = V_TCONST;
         e = cexpr_in(g, t, depth(g));
@@ -979,7 +1043,7 @@ static uint32_t const_leaf(G *g, unsigned t)
    into t */
 static uint32_t leaf(G *g, unsigned t, bool need_var, int d)
 {
-    if (!need_var && t != T_BOOL && chance(g, 12))
+    if (!need_var && is_int_base(t) && chance(g, 12))
         return const_leaf(g, t);
     if (chance(g, 15)) {
         uint32_t f;
@@ -1063,6 +1127,23 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
             return call_expr(g, (uint32_t)fn, d);
         choice = 0;
     }
+    if (f == 'F') {
+        /* + - * /, the minus and abs, a conversion from an integer */
+        if (choice < 6) {
+            static const unsigned fops[] = {O_ADD, O_SUB, O_MUL, O_FDIV};
+            uint32_t a = expr(g, t, d - 1, false);
+            uint32_t b = expr(g, t, d - 1, g->e[a].cst);
+            return binop(g, fops[below(g, 4)], t, a, b);
+        }
+        if (choice < 8) {
+            uint32_t a = expr(g, t, d - 1, true);
+            uint32_t i = new_e(g, E_UN, t);
+            g->e[i].op = chance(g, 50) ? O_NEG : O_ABS;
+            g->e[i].a = a;
+            return i;
+        }
+        return conv(g, t, expr(g, int_type(g), d - 1, true));
+    }
     if (f == 'L') {
         int p = chance(g, 10) ? pick_typed(g, 2, false) : -1;
         if (p >= 0) {
@@ -1132,9 +1213,12 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
     for (uint32_t r = NTYPES; r < g->nty; r++)
         if (g->ty[r].k == K_RANGE && base(g, r) == t && chance(g, 30))
             to = r;
-    return conv(
-        g, to,
-        expr(g, chance(g, 60) ? within(g, t) : int_type(g), d - 1, true));
+    return conv(g, to,
+                expr(g,
+                     chance(g, 10)   ? T_F64
+                     : chance(g, 60) ? within(g, t)
+                                     : int_type(g),
+                     d - 1, true));
 }
 
 /* ---- statements ---- */
@@ -1334,7 +1418,7 @@ static uint32_t stmt(G *g, uint32_t *out)
     if (c < 72 && deep) {
         /* an integer type, or a range, for the loop variable */
         uint32_t t = var_type(g);
-        if (base(g, t) == T_BOOL)
+        if (!is_int_base(base(g, t)))
             t = int_type(g);
         unsigned b = base(g, t);
         uint32_t s = new_s(g, S_FOR);
@@ -1690,7 +1774,15 @@ static void put_type(text *o, const G *g, uint32_t t)
 
 static void put_value(text *o, unsigned t, v128 v)
 {
-    if (t == T_BOOL) {
+    if (t == T_F64) {
+        /* the shortest form reads back to the same double */
+        char buf[LIMBA_FMT_F64_MAX];
+        double d = fval(v);
+        limba_fmt_f64(buf, fabs(d));
+        put(o, signbit(d) ? "(-" : "");
+        put(o, buf);
+        put(o, signbit(d) ? ")" : "");
+    } else if (t == T_BOOL) {
         put(o, v ? "true" : "false");
     } else if (v < 0) {
         put(o, "(-");
@@ -2253,6 +2345,32 @@ static v128 binary(X *x, uint32_t i)
     v128 r = ev(x, e->b);
     if (x->trap)
         return 0;
+    if (base(x->g, x->g->e[e->a].t) == T_F64) {
+        /* IEEE 754: a comparison with NaN is false, except <> */
+        double a = fval(l), b = fval(r);
+        switch (op) {
+        case O_EQ:
+            return a == b;
+        case O_NE:
+            return a != b;
+        case O_LT:
+            return a < b;
+        case O_LE:
+            return a <= b;
+        case O_GT:
+            return a > b;
+        case O_GE:
+            return a >= b;
+        case O_ADD:
+            return fbits(a + b);
+        case O_SUB:
+            return fbits(a - b);
+        case O_MUL:
+            return fbits(a * b);
+        default:
+            return fbits(a / b);
+        }
+    }
     bool mod = fam(t) == 'B';
     v128 v;
     switch (op) {
@@ -2346,6 +2464,8 @@ static v128 ev(X *x, uint32_t i)
         v128 v = ev(x, e->a);
         if (x->trap)
             return 0;
+        if (t == T_F64) /* the sign bit, as IEEE 754 negate and abs */
+            return e->op == O_NEG ? fbits(-fval(v)) : fbits(fabs(fval(v)));
         if (e->op == O_NOT)
             return t == T_BOOL ? !v : wrap(t, ~v);
         if (e->op == O_NEG && fam(t) == 'B')
@@ -2357,8 +2477,22 @@ static v128 ev(X *x, uint32_t i)
         v128 v = ev(x, e->a);
         if (x->trap)
             return 0;
-        if (fam(t) == 'B')
+        unsigned from = base(g, g->e[e->a].t);
+        if (t == T_F64) {
+            if (from == T_F64)
+                return v;
+            return fbits(fam(from) == 'S' ? (double)(int64_t)v
+                                          : (double)(uint64_t)v);
+        }
+        if (from == T_F64) {
+            /* halves away from zero (Ada), then it must fit, Bits too */
+            double d = round(fval(v));
+            if (!(fabs(d) < 0x1p100))
+                return fail(x, i, 103);
+            v = (v128)d;
+        } else if (fam(t) == 'B') {
             return wrap(t, v);
+        }
         return v >= lo_of(g, e->t) && v <= hi_of(g, e->t) ? v : fail(x, i, 103);
     }
     case E_CALL:
@@ -2413,7 +2547,11 @@ static v128 ev(X *x, uint32_t i)
 
 static void print_value(text *o, unsigned t, v128 v)
 {
-    if (t == T_BOOL) {
+    if (t == T_F64) {
+        char buf[LIMBA_FMT_F64_MAX];
+        limba_fmt_f64(buf, fval(v));
+        put(o, buf);
+    } else if (t == T_BOOL) {
         put(o, v ? "true" : "false");
     } else if (v < 0) {
         put(o, "-");
@@ -2687,13 +2825,9 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         uint32_t s = new_s(&g, S_VAR);
         g.st[s].var = v;
         if (!is_array(&g, t))
-            g.st[s].e = is_ptr(&g, t) ? nil_of(&g, t)
-                        : is_record(&g, t)
-                            ? 0
-                            : lit(&g, t,
-                                  t == T_BOOL ? below(&g, 2)
-                                              : rand_in(&g, lo_of(&g, t),
-                                                        hi_of(&g, t)));
+            g.st[s].e = is_ptr(&g, t)      ? nil_of(&g, t)
+                        : is_record(&g, t) ? 0
+                                           : lit(&g, t, init_value(&g, t));
         show(&g, v);
     }
     nglob += narrays;
@@ -2726,11 +2860,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
             uint32_t rt = record_of(&g, t);
             for (uint32_t f = 0; f < g.ty[rt].elem; f++) {
                 uint32_t ft = field_type(&g, rt, f);
-                uint32_t e =
-                    lit(&g, ft,
-                        base(&g, ft) == T_BOOL
-                            ? below(&g, 2)
-                            : rand_in(&g, lo_of(&g, ft), hi_of(&g, ft)));
+                uint32_t e = lit(&g, ft, init_value(&g, ft));
                 uint32_t s = new_s(&g, S_ASSIGN);
                 g.st[s].var = v;
                 g.st[s].fld = f + 1;
@@ -2755,10 +2885,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
             uint32_t el = g.ty[at].elem;
             g.st[s].var = v;
             g.st[s].idx = lit(&g, base(&g, g.ty[at].index), k);
-            g.st[s].e = lit(&g, el,
-                            base(&g, el) == T_BOOL
-                                ? below(&g, 2)
-                                : rand_in(&g, lo_of(&g, el), hi_of(&g, el)));
+            g.st[s].e = lit(&g, el, init_value(&g, el));
             append(&g, &g.main_blk, &g.main_n, s, true);
         }
     }

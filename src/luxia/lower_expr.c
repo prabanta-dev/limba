@@ -184,15 +184,24 @@ limba_id lxl_conv(lxl *L, limba_id v, limba_ltype from, limba_ltype to)
     if (ff && !tf) {
         /* round half away from zero (Ada), then it must fit */
         v = un(L, LIMBA_OP_FROUNDA, fi, v);
-        double lo = (double)tx->lo, hi_excl = (double)(tx->hi) + 1.0;
-        if (!(tx->flags & LIMBA_TF_RANGE)) {
-            unsigned bits = ti(L, lxs_base(L->S, to))->bits;
-            bool sg = tx->flags & LIMBA_TF_SIGNED;
-            lo = sg ? -ldexp(1.0, (int)bits - 1) : 0.0;
-            hi_excl = ldexp(1.0, sg ? (int)bits - 1 : (int)bits);
+        /* the value is an integer now: it fits when it lies between the
+           least double not below lo and the greatest not above hi */
+        double lo = (double)tx->lo, hi = (double)tx->hi;
+        if ((__int128)lo < tx->lo)
+            lo = nextafter(lo, INFINITY);
+        if ((__int128)hi > tx->hi)
+            hi = nextafter(hi, -INFINITY);
+        if (fi == LIMBA_T_F32) {
+            float flo = (float)lo, fhi = (float)hi;
+            if ((double)flo < lo)
+                flo = nextafterf(flo, INFINITY);
+            if ((double)fhi > hi)
+                fhi = nextafterf(fhi, -INFINITY);
+            lo = flo;
+            hi = fhi;
         }
         limba_id a = cmp(L, true, LIMBA_CC_OGE, v, fconst(L, fi, lo));
-        limba_id b = cmp(L, true, LIMBA_CC_OLT, v, fconst(L, fi, hi_excl));
+        limba_id b = cmp(L, true, LIMBA_CC_OLE, v, fconst(L, fi, hi));
         lxl_check(L, bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b), LXR_CONVERSION);
         return un(L,
                   lxl_signed(L, to) || tx->lo < 0 ? LIMBA_OP_FPTOSI
@@ -722,8 +731,13 @@ static limba_id unary(lxl *L, uint32_t node)
         if (!is_float(L, t) && !lxl_signed(L, t))
             return v; /* a number without a sign is its own abs */
         if (is_float(L, t)) {
-            neg = un(L, LIMBA_OP_FNEG, it, v);
-            lt0 = cmp(L, true, LIMBA_CC_OLT, v, fconst(L, it, 0.0));
+            /* IEEE 754 abs: the sign bit cleared, for -0.0 and NaN too */
+            bool f64 = it == LIMBA_T_F64;
+            limba_id bt = f64 ? LIMBA_T_I64 : LIMBA_T_I32;
+            limba_id b = un(L, LIMBA_OP_BITCAST, bt, v);
+            b = bin(L, LIMBA_OP_AND, bt, b,
+                    lxl_iconst(L, bt, f64 ? INT64_MAX : INT32_MAX));
+            return un(L, LIMBA_OP_BITCAST, it, b);
         } else {
             neg = bin(L, LIMBA_OP_SUBOV, it, lxl_iconst(L, it, 0), v);
             lt0 = cmp(L, false, LIMBA_CC_SLT, v, lxl_iconst(L, it, 0));

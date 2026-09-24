@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Reals: `abs` clears the sign bit as IEEE 754 says (`abs(-0.0)` gave
+  `-0.0`); a conversion from a real to an integer or a range fits by
+  the exact bounds (`R(2.0 ** 53)` failed for `R = Int64 range
+  0..2 ** 53 + 1`, the bound having been rounded). The random programs
+  use `Float64`: literals, `+ - * /`, the minus, `abs`, comparisons with
+  NaN, conversions both ways; a constant `-0.0` is the rational 0.
 - `**` at run time on every integer type: checked on `IntN` and `UIntN`
   (overflow, and no longer a conversion error on `Int8`..`Int32`),
   modular on `BitsN`; the exponent may be any unsigned value
