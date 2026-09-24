@@ -113,12 +113,13 @@ enum {
     O_GE,
     O_NEG,
     O_ABS,
-    O_NOT
+    O_NOT,
+    O_POW
 };
 
 static const char *const otext[] = {
-    "+",   "-", "*",  "div", "mod", "rem", "and", "or", "xor", "shl",
-    "shr", "=", "<>", "<",   "<=",  ">",   ">=",  "-",  "abs", "not",
+    "+", "-",  "*", "div", "mod", "rem", "and", "or",  "xor", "shl", "shr",
+    "=", "<>", "<", "<=",  ">",   ">=",  "-",   "abs", "not", "**",
 };
 
 /* E_IN: a in type fn, or a in b..c when fn is 0; E_LOW, E_HIGH, E_LEN:
@@ -140,7 +141,7 @@ enum {
 
 typedef struct {
     uint8_t k, op;
-    bool cst; /* a literal: the front end knows its value */
+    bool cst; /* a constant: the front end knows its value, which is lit */
     uint32_t t;
     v128 lit;
     uint32_t var, fn, a, b, c, args, nargs;
@@ -159,7 +160,8 @@ enum {
     S_CALL,
     S_EXIT,
     S_CONT,
-    S_RETURN
+    S_RETURN,
+    S_CONST
 };
 
 typedef struct {
@@ -185,12 +187,15 @@ typedef struct {
     v128 lo, hi;
 } xlab;
 
-enum { V_GLOBAL, V_LOCAL, V_IN, V_VAR, V_LOOP, V_COUNT };
-static const char vprefix[] = {'g', 'v', 'a', 'a', 'i', 'w'};
+/* V_CONST: a constant without a type (t is Int64, for printing only);
+   V_TCONST: a constant of type t */
+enum { V_GLOBAL, V_LOCAL, V_IN, V_VAR, V_LOOP, V_COUNT, V_CONST, V_TCONST };
+static const char vprefix[] = {'g', 'v', 'a', 'a', 'i', 'w', 'k', 'k'};
 
 typedef struct {
     uint32_t t;
     uint8_t kind;
+    v128 val; /* of a constant */
 } xv;
 
 typedef struct {
@@ -226,6 +231,8 @@ typedef struct {
     int budget;  /* statements left */
     int nesting; /* blocks around the statement being made */
     uint32_t main_blk, main_n;
+    uint32_t *gc; /* the statements of the global constants */
+    uint32_t ngc, capgc;
 } G;
 
 /* ---- randomness ---- */
@@ -379,7 +386,7 @@ static uint32_t new_s(G *g, unsigned k)
 static uint32_t new_v(G *g, uint32_t t, unsigned kind)
 {
     LIMBA_GROW(g->v, g->nv, g->capv);
-    g->v[g->nv] = (xv){t, (uint8_t)kind};
+    g->v[g->nv] = (xv){t, (uint8_t)kind, 0};
     return g->nv++;
 }
 
@@ -408,10 +415,19 @@ static uint32_t lit(G *g, uint32_t t, v128 v)
     return i;
 }
 
+static bool is_const(const G *g, uint32_t v)
+{
+    return g->v[v].kind == V_CONST || g->v[v].kind == V_TCONST;
+}
+
 static uint32_t var_ref(G *g, uint32_t v)
 {
     uint32_t i = new_e(g, E_VAR, g->v[v].t);
     g->e[i].var = v;
+    if (is_const(g, v)) {
+        g->e[i].cst = true;
+        g->e[i].lit = g->v[v].val;
+    }
     return i;
 }
 
@@ -432,7 +448,7 @@ static bool in_function(const G *g)
 static bool writable(const G *g, uint32_t v)
 {
     unsigned k = g->v[v].kind;
-    if (k == V_IN || k == V_LOOP || k == V_COUNT)
+    if (k == V_IN || k == V_LOOP || k == V_COUNT || is_const(g, v))
         return false;
     return !(k == V_GLOBAL && in_function(g));
 }
@@ -445,7 +461,7 @@ static int pick_var(G *g, uint32_t t, bool write, bool exact)
     for (uint32_t i = 0; i < g->nscope; i++) {
         uint32_t v = g->scope[i];
         uint32_t vt = g->v[v].t;
-        if (is_array(g, vt))
+        if (is_array(g, vt) || is_const(g, v))
             continue;
         if (exact         ? vt != t
             : t == NTYPES ? base(g, vt) == T_BOOL
@@ -496,11 +512,10 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var);
 static uint32_t value_for(G *g, uint32_t t, int d)
 {
     uint32_t e = expr(g, base(g, t), d, false);
-    if (g->e[e].cst && base(g, t) != T_BOOL) {
-        if (g->e[e].k != E_LIT)
-            e = lit(g, t, 0); /* low(a) of a static array: a constant */
-        g->e[e].lit = rand_in(g, lo_of(g, t), hi_of(g, t));
-    }
+    /* a constant must fit where it goes, or the front end refuses it */
+    if (g->e[e].cst && base(g, t) != T_BOOL &&
+        (g->e[e].lit < lo_of(g, t) || g->e[e].lit > hi_of(g, t)))
+        e = lit(g, t, rand_in(g, lo_of(g, t), hi_of(g, t)));
     return e;
 }
 
@@ -514,9 +529,16 @@ static int depth(G *g)
    array of the program, values for an open parameter */
 static uint32_t bound(G *g, unsigned k, uint32_t v)
 {
-    uint32_t i = new_e(g, k, index_base(g, g->v[v].t));
+    uint32_t at = g->v[v].t;
+    uint32_t i = new_e(g, k, index_base(g, at));
     g->e[i].var = v;
-    g->e[i].cst = g->ty[g->v[v].t].k == K_ARRAY;
+    if (g->ty[at].k == K_ARRAY) {
+        const xt *x = &g->ty[at];
+        g->e[i].cst = true;
+        g->e[i].lit = k == E_LOW    ? x->lo
+                      : k == E_HIGH ? x->hi
+                                    : x->hi - x->lo + 1;
+    }
     return i;
 }
 
@@ -614,10 +636,158 @@ static unsigned within(G *g, unsigned t)
     return c[below(g, n)];
 }
 
+/* ---- constants computed exactly ---- */
+
+#define CONST_LIMIT ((v128)1 << 100)
+
+static bool small(v128 v)
+{
+    return v <= CONST_LIMIT && v >= -CONST_LIMIT;
+}
+
+/* a * b within the limit, into *out */
+static bool mul_small(v128 a, v128 b, v128 *out)
+{
+    v128 ma = a < 0 ? -a : a, mb = b < 0 ? -b : b;
+    if (ma && mb > CONST_LIMIT / ma)
+        return false;
+    *out = a * b;
+    return true;
+}
+
+static uint32_t cst_node(G *g, uint32_t i, v128 v)
+{
+    g->e[i].cst = true;
+    g->e[i].lit = v;
+    return i;
+}
+
+/* an exact constant expression without a type (§ 4.4): literals, the
+   constants without a type in scope, + - * div mod rem **, abs and the
+   minus; the front end computes it with no limit, here every value stays
+   within 2^100, and its value is in lit */
+static uint32_t cexpr(G *g, int d)
+{
+    if (d <= 0 || chance(g, 30)) {
+        uint32_t n = 0, c = 0;
+        for (uint32_t i = 0; i < g->nscope; i++) {
+            uint32_t v = g->scope[i];
+            if (g->v[v].kind == V_CONST && small(g->v[v].val) &&
+                below(g, ++n) == 0)
+                c = v;
+        }
+        if (n && chance(g, 50))
+            return var_ref(g, c);
+        v128 v = chance(g, 20) ? (v128)(rnd(g) >> 24) : (v128)below(g, 41) - 20;
+        return lit(g, T_I64, chance(g, 10) ? -v : v);
+    }
+    unsigned op = below(g, 9);
+    uint32_t a = cexpr(g, d - 1);
+    v128 x = g->e[a].lit, v;
+    if (op >= 7) {
+        uint32_t i = new_e(g, E_UN, T_I64);
+        g->e[i].op = op == 7 ? O_NEG : O_ABS;
+        g->e[i].a = a;
+        return cst_node(g, i, op == 7 || x < 0 ? -x : x);
+    }
+    if (op == 6) {
+        unsigned n = below(g, 6);
+        v = 1;
+        for (unsigned k = 0; k < n; k++)
+            if (!mul_small(v, x, &v))
+                return a;
+        uint32_t e = lit(g, T_I64, n);
+        return cst_node(g, binop(g, O_POW, T_I64, a, e), v);
+    }
+    uint32_t b = cexpr(g, d - 1);
+    v128 y = g->e[b].lit;
+    switch (op) {
+    case 0:
+        v = x + y;
+        break;
+    case 1:
+        v = x - y;
+        break;
+    case 2:
+        if (!mul_small(x, y, &v))
+            return a;
+        break;
+    default:
+        if (y == 0)
+            return a; /* the front end refuses a constant division by 0 */
+        v = op == 3 ? x / y : x % y;
+        if (op == 4 && v != 0 && (v < 0) != (y < 0))
+            v += y; /* mod has the sign of the divisor */
+    }
+    if (!small(v))
+        return a;
+    static const unsigned ops[] = {O_ADD, O_SUB, O_MUL, O_DIV, O_MOD, O_REM};
+    return cst_node(g, binop(g, ops[op], T_I64, a, b), v);
+}
+
+/* a constant expression that fits type t: (e) mod 97 when e does not */
+static uint32_t cexpr_in(G *g, uint32_t t, int d)
+{
+    uint32_t e = cexpr(g, d);
+    v128 v = g->e[e].lit;
+    if (v >= lo_of(g, t) && v <= hi_of(g, t))
+        return e;
+    v128 m = v % 97;
+    if (m < 0)
+        m += 97;
+    if (m >= lo_of(g, t) && m <= hi_of(g, t))
+        return cst_node(g, binop(g, O_MOD, T_I64, e, lit(g, T_I64, 97)), m);
+    return lit(g, t, rand_in(g, lo_of(g, t), hi_of(g, t)));
+}
+
+/* const k = e; or const k: T = e; its statement */
+static uint32_t constant(G *g)
+{
+    uint32_t s = new_s(g, S_CONST);
+    uint32_t t = T_I64, e;
+    unsigned kind = V_CONST;
+    if (chance(g, 40)) {
+        t = var_type(g);
+        if (base(g, t) == T_BOOL)
+            t = int_type(g);
+        kind = V_TCONST;
+        e = cexpr_in(g, t, depth(g));
+    } else {
+        e = cexpr(g, depth(g));
+    }
+    uint32_t v = new_v(g, t, kind);
+    g->v[v].val = g->e[e].lit;
+    g->st[s].var = v;
+    g->st[s].e = e;
+    show(g, v);
+    return s;
+}
+
+/* a constant of base t: one declared, or an expression of constants */
+static uint32_t const_leaf(G *g, unsigned t)
+{
+    uint32_t n = 0, c = 0;
+    for (uint32_t i = 0; i < g->nscope; i++) {
+        uint32_t v = g->scope[i];
+        const xv *x = &g->v[v];
+        bool ok =
+            x->kind == V_TCONST
+                ? base(g, x->t) == t
+                : x->kind == V_CONST && x->val >= tmin(t) && x->val <= tmax(t);
+        if (ok && below(g, ++n) == 0)
+            c = v;
+    }
+    if (n && chance(g, 50))
+        return var_ref(g, c);
+    return cexpr_in(g, t, 1 + (int)below(g, 3));
+}
+
 /* a variable, an element, a literal, or a variable of another type made
    into t */
 static uint32_t leaf(G *g, unsigned t, bool need_var, int d)
 {
+    if (!need_var && t != T_BOOL && chance(g, 12))
+        return const_leaf(g, t);
     int v = pick_var(g, t, false, false);
     int a = d > 0 && chance(g, 25) ? pick_array(g, t, false) : -1;
     if (a >= 0)
@@ -727,7 +897,7 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
         /* most divisors are literals, so that fewer programs stop early */
         uint32_t b = divide && chance(g, 70) ? lit(g, t, rand_value(g, t))
                                              : expr(g, t, d - 1, g->e[a].cst);
-        if (divide && g->e[b].cst && g->e[b].lit == 0)
+        if (divide && g->e[b].k == E_LIT && g->e[b].lit == 0)
             g->e[b].lit = 1; /* the front end may reject a literal 0 */
         return binop(g, op, t, a, b);
     }
@@ -836,6 +1006,10 @@ static uint32_t stmt(G *g, uint32_t *out)
     bool deep = g->nesting < 4 && g->budget > 4;
     if (!pure && chance(g, 10))
         c = 84; /* a call of a procedure, more often */
+    if (chance(g, 4)) {
+        out[0] = constant(g);
+        return 1;
+    }
     if (c < 14) {
         out[0] = declare(g, var_type(g));
         return 1;
@@ -1367,6 +1541,20 @@ static void pexpr(G *g, text *o, uint32_t i)
 
 static void pblock(G *g, text *o, uint32_t b, uint32_t n, int ind);
 
+/* k = e; or k: T = e; */
+static void pconst(G *g, text *o, uint32_t si)
+{
+    uint32_t v = g->st[si].var;
+    put_name(o, g, v);
+    if (g->v[v].kind == V_TCONST) {
+        put(o, ": ");
+        put_type(o, g, g->v[v].t);
+    }
+    put(o, " = ");
+    pexpr(g, o, g->st[si].e);
+    put(o, ";\n");
+}
+
 static void indent(text *o, int ind)
 {
     for (int i = 0; i < ind; i++)
@@ -1519,6 +1707,10 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         }
         put(o, ";\n");
         break;
+    case S_CONST:
+        put(o, "const ");
+        pconst(g, o, si);
+        break;
     }
 }
 
@@ -1531,6 +1723,13 @@ static void pblock(G *g, text *o, uint32_t b, uint32_t n, int ind)
 static void program(G *g, text *o, uint32_t nglob)
 {
     put(o, "program Random;\n");
+    if (g->ngc) {
+        put(o, "\nconst\n");
+        for (uint32_t k = 0; k < g->ngc; k++) {
+            put(o, "  ");
+            pconst(g, o, g->gc[k]);
+        }
+    }
     if (g->nty > NTYPES) {
         put(o, "\ntype\n");
         for (uint32_t t = NTYPES; t < g->nty; t++) {
@@ -1807,6 +2006,8 @@ static v128 ev(X *x, uint32_t i)
         x->toolong = x->trap = true;
         return 0;
     }
+    if (e->cst)
+        return e->lit; /* computed by the front end, exactly */
     unsigned t = base(g, e->t);
     switch (e->k) {
     case E_LIT:
@@ -2017,6 +2218,8 @@ static int run_stmt(X *x, uint32_t si)
                 store_ok(x, x->rt, x->ret, s->line, s->col);
         }
         return X_RET;
+    case S_CONST:
+        return X_NEXT; /* computed by the front end */
     }
     return X_NEXT;
 }
@@ -2044,6 +2247,7 @@ static void g_free(G *g)
     free(g->v);
     free(g->r);
     free(g->scope);
+    free(g->gc);
 }
 
 static bool attempt(uint64_t seed, limba_lxgen *p)
@@ -2089,6 +2293,13 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         show(&g, v);
     }
     nglob += narrays;
+    /* the global constants, after the variables: those take the first
+       numbers */
+    for (uint32_t k = 0, n = below(&g, 5); k < n; k++) {
+        uint32_t c = constant(&g);
+        LIMBA_GROW(g.gc, g.ngc, g.capgc);
+        g.gc[g.ngc++] = c;
+    }
     g.budget = 30 + (int)below(&g, 60);
     for (uint32_t k = 0, nr = below(&g, 5); k < nr && g.budget > 10; k++)
         routine(&g);

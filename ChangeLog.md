@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The random programs declare constants, global and inside blocks, with
+  or without a type, and use constant expressions whose values pass 64
+  bits (`**`, `div`, `mod`, `rem` on negative values), checked only when
+  they take a type; the generator computes them exactly too. No fault
+  found: a deliberate error in the folding of `mod` fails 516 seeds out
+  of 1000, and a fixed case now covers it.
 - Open arrays as Ada has them: `array[I range <>] of T`, for parameters
   (written there or named with `type`), takes the bounds of its
   argument; `low`, `high` and `length` are those bounds, in the base

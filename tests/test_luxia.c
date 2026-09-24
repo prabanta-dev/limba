@@ -778,6 +778,14 @@ static const run_case run_cases[] = {
      "18446744073709551610..18446744073709551611; var x: Int8 := 1; begin "
      "writeln(R(x)); end p.",
      "", "trap 103"},
+    /* constants are computed exactly, past 64 bits, and checked when they
+       take a type */
+    {"program p; const k1 = 2 ** 70 div 2 ** 60; k2 = (-7) mod 3; k3 = "
+     "(-7) rem 3; k4 = abs (-(2 ** 90)) div (2 ** 89); k5: Int16 = k1 * 3; "
+     "k6 = 18446744073709551616 * 4; var x: Int8 := 1; begin const k7 = k6 "
+     "mod 97; writeln(k1, \" \", k2, \" \", k3, \" \", k4, \" \", k5, \" \", x "
+     "+ k7, \" \", (k6 * k6) mod 100 + x); end p.",
+     "1024 2 -1 2 3072 51 97\n", "ok"},
     /* the target of an assignment before its value */
     {"program p;\nvar a: array[Int32 range 1..3] of Int32; z: Int32 := "
      "0;\nbegin\n  a[1 div z] := 7 div z;\nend p.",
