@@ -1,0 +1,61 @@
+// The Computer Language Benchmarks Game
+// https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+//
+// mandelbrot in Luxia 0, single thread, ported from the Python version: a
+// portable bitmap (P4) written byte by byte, eight pixels to a byte.
+program Mandelbrot;
+
+begin
+  // the size comes from the command line, 200 without one
+  var n: Int32 := 200;
+  if argcount() > 0 then
+    if not val(arg(1), n) then
+      halt(1);
+    end;
+  end;
+
+  // the bits past the right edge are cleared in the last byte of a row as
+  // the reference does, "result[-1] &= 0xff << (8 - n % 8)": when n is a
+  // multiple of 8 the whole byte goes
+  var last: Bits8 := 0;
+  if n mod 8 <> 0 then
+    last := Bits8(0xff) shl (8 - n mod 8);
+  end;
+
+  write("P4", LF, n, " ", n, LF);
+  var bytesPerRow := (n + 7) div 8;
+  var c1 := 2.0 / Float64(n);
+  for var y := 0 to n - 1 do
+    var cIm := Float64(y) * c1 - 1.0;
+    for var bx := 0 to bytesPerRow - 1 do
+      var pixel: Bits8 := 0;
+      var bit: Bits8 := 128;
+      var cRe := Float64(bx * 8) * c1 - 1.5;
+      for var k: Int32 := 0 to 7 do
+        var zr := cRe;
+        var zi := cIm;
+        var inside := true;
+        for var g: Int32 := 1 to 7 do
+          for var h: Int32 := 1 to 7 do
+            var t := zr * zr - zi * zi + cRe;
+            zi := 2.0 * zr * zi + cIm;
+            zr := t;
+          end;
+          if zr * zr + zi * zi >= 4.0 then
+            inside := false;
+            exit;
+          end;
+        end;
+        if inside then
+          pixel := pixel or bit;
+        end;
+        bit := bit shr 1;
+        cRe := cRe + c1;
+      end;
+      if bx = bytesPerRow - 1 then
+        pixel := pixel and last;
+      end;
+      writebyte(pixel);
+    end;
+  end;
+end Mandelbrot.

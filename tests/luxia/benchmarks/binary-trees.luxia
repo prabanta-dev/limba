@@ -1,0 +1,86 @@
+// The Computer Language Benchmarks Game
+// https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+//
+// binary-trees in Luxia 0, single thread: every tree is built with new,
+// walked and given back with dispose.
+program BinaryTrees;
+
+type
+  Tree = ^Node;
+  Node = record
+    left, right: Tree;
+  end;
+
+const MinDepth = 4;
+
+function MakeTree(depth: Int32): Tree;
+begin
+  var t := new(Node);
+  if depth > 0 then
+    t.left := MakeTree(depth - 1);
+    t.right := MakeTree(depth - 1);
+  else
+    t.left := nil;
+    t.right := nil;
+  end;
+  return t;
+end MakeTree;
+
+function Check(t: Tree): Int64;
+begin
+  if t.left = nil then
+    return 1;
+  end;
+  return 1 + Check(t.left) + Check(t.right);
+end Check;
+
+procedure FreeTree(t: Tree);
+begin
+  if t.left <> nil then
+    FreeTree(t.left);
+    FreeTree(t.right);
+  end;
+  dispose(t);
+end FreeTree;
+
+begin
+  // the depth comes from the command line, 10 without one
+  var n: Int32 := 10;
+  if argcount() > 0 then
+    if not val(arg(1), n) then
+      halt(1);
+    end;
+  end;
+
+  var maxDepth := n;
+  if maxDepth < MinDepth + 2 then
+    maxDepth := MinDepth + 2;
+  end;
+  var stretchDepth := maxDepth + 1;
+
+  var stretch := MakeTree(stretchDepth);
+  writeln("stretch tree of depth ", stretchDepth, TAB, " check: ",
+          Check(stretch));
+  FreeTree(stretch);
+
+  var longLived := MakeTree(maxDepth);
+  var depth: Int32 := MinDepth;
+  while depth <= maxDepth do
+    var iterations: Int64 := 1;
+    for var e := 1 to maxDepth + MinDepth - depth do
+      iterations := iterations * 2;
+    end;
+    var total: Int64 := 0;
+    for var i := 1 to iterations do
+      var t := MakeTree(depth);
+      total := total + Check(t);
+      FreeTree(t);
+    end;
+    writeln(iterations, TAB, " trees of depth ", depth, TAB, " check: ",
+            total);
+    depth := depth + 2;
+  end;
+  writeln("long lived tree of depth ", maxDepth, TAB, " check: ",
+          Check(longLived));
+  FreeTree(longLived);
+end BinaryTrees.

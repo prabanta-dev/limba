@@ -1,0 +1,73 @@
+// The Computer Language Benchmarks Game
+// https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+//
+// spectral-norm in Luxia 0, single thread, ported from the Python version
+// (Sebastien
+// Loisel, Isaac Gouy, Josh Goldfoot, Simon Descarpentries, Vadim Zelenin,
+// Jason Stitt, Matt Vollrath, Adam Beckmeyer).
+program SpectralNorm;
+
+// A(i,j) = (i+j)(i+j+1)/2 + i + 1: the infinite matrix, evaluated rather
+// than stored
+function EvalA(i, j: Int64): Float64;
+begin
+  var ij := i + j;
+  return Float64(ij * (ij + 1) div 2 + i + 1);
+end EvalA;
+
+// b = A a
+procedure MultiplyAv(a: array of Float64; var b: array of Float64);
+begin
+  for var i := low(b) to high(b) do
+    var s: Float64 := 0.0;
+    for var j := low(a) to high(a) do
+      s := s + a[j] / EvalA(i, j);
+    end;
+    b[i] := s;
+  end;
+end MultiplyAv;
+
+// b = A' a
+procedure MultiplyAtv(a: array of Float64; var b: array of Float64);
+begin
+  for var i := low(b) to high(b) do
+    var s: Float64 := 0.0;
+    for var j := low(a) to high(a) do
+      s := s + a[j] / EvalA(j, i);
+    end;
+    b[i] := s;
+  end;
+end MultiplyAtv;
+
+// b = A'A a
+procedure MultiplyAtAv(a: array of Float64; var b, t: array of Float64);
+begin
+  MultiplyAv(a, t);
+  MultiplyAtv(t, b);
+end MultiplyAtAv;
+
+begin
+  // the size comes from the command line, 100 without one
+  var n: Int32 := 100;
+  if argcount() > 0 then
+    if not val(arg(1), n) then
+      halt(1);
+    end;
+  end;
+
+  var u, v, t: array[Int32 range 0..n - 1] of Float64;
+  for var i := 0 to n - 1 do
+    u[i] := 1.0;
+  end;
+  for var iter: Int32 := 1 to 10 do
+    MultiplyAtAv(u, v, t);
+    MultiplyAtAv(v, u, t);
+  end;
+
+  var vBv, vv: Float64 := 0.0;
+  for var i := 0 to n - 1 do
+    vBv := vBv + u[i] * v[i];
+    vv := vv + v[i] * v[i];
+  end;
+  writeln(sqrt(vBv / vv):0:9);
+end SpectralNorm.

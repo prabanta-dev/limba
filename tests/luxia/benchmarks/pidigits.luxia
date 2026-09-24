@@ -1,0 +1,217 @@
+// The Computer Language Benchmarks Game
+// https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+//
+// pidigits in Luxia 0: the spigot algorithm of the reference programs (Gibbons, "Unbounded
+// spigot algorithms for the digits of pi"), on natural numbers written by
+// hand as arrays of limbs in base 10^9. The accumulator alone may turn
+// negative, so it keeps its sign apart.
+program PiDigits;
+
+const
+  Limbs = 24576;
+  Base = 1_000_000_000;
+
+type
+  Big = record
+    n: Int32;   // limbs in use, the least significant first
+    d: array[Int32 range 0..Limbs - 1] of Int64;
+  end;
+
+var
+  acc, den, num, tmp, tmp2, tmp3, probe: Big;
+  accNegative: Boolean := false;
+
+procedure SetSmall(var a: Big; v: Int64);
+begin
+  a.n := 0;
+  var rest := v;
+  repeat
+    a.d[a.n] := rest mod Base;
+    rest := rest div Base;
+    a.n := a.n + 1;
+  until rest = 0;
+end SetSmall;
+
+procedure MulSmall(var a: Big; k: Int64);
+begin
+  var carry: Int64 := 0;
+  for var i := 0 to a.n - 1 do
+    var p := a.d[i] * k + carry;
+    a.d[i] := p mod Base;
+    carry := p div Base;
+  end;
+  while carry > 0 do
+    a.d[a.n] := carry mod Base;
+    carry := carry div Base;
+    a.n := a.n + 1;
+  end;
+  while a.n > 1 and a.d[a.n - 1] = 0 do
+    a.n := a.n - 1;
+  end;
+end MulSmall;
+
+// dst = a + b
+procedure Add(var dst: Big; a, b: Big);
+begin
+  var m := a.n;
+  if b.n > m then
+    m := b.n;
+  end;
+  var carry: Int64 := 0;
+  for var i := 0 to m - 1 do
+    var s := carry;
+    if i < a.n then
+      s := s + a.d[i];
+    end;
+    if i < b.n then
+      s := s + b.d[i];
+    end;
+    dst.d[i] := s mod Base;
+    carry := s div Base;
+  end;
+  dst.n := m;
+  while carry > 0 do
+    dst.d[dst.n] := carry mod Base;
+    carry := carry div Base;
+    dst.n := dst.n + 1;
+  end;
+end Add;
+
+// dst = a - b, with a >= b
+procedure Sub(var dst: Big; a, b: Big);
+begin
+  var borrow: Int64 := 0;
+  for var i := 0 to a.n - 1 do
+    var v := a.d[i] - borrow;
+    if i < b.n then
+      v := v - b.d[i];
+    end;
+    if v < 0 then
+      v := v + Base;
+      borrow := 1;
+    else
+      borrow := 0;
+    end;
+    dst.d[i] := v;
+  end;
+  dst.n := a.n;
+  while dst.n > 1 and dst.d[dst.n - 1] = 0 do
+    dst.n := dst.n - 1;
+  end;
+end Sub;
+
+function Compare(a, b: Big): Int32;
+begin
+  if a.n <> b.n then
+    if a.n < b.n then
+      return -1;
+    end;
+    return 1;
+  end;
+  for var i := a.n - 1 downto 0 do
+    if a.d[i] <> b.d[i] then
+      if a.d[i] < b.d[i] then
+        return -1;
+      end;
+      return 1;
+    end;
+  end;
+  return 0;
+end Compare;
+
+procedure Assign(var dst: Big; a: Big);
+begin
+  for var i := 0 to a.n - 1 do
+    dst.d[i] := a.d[i];
+  end;
+  dst.n := a.n;
+end Assign;
+
+// acc = acc + t, or acc - t when negative is true
+procedure Accumulate(t: Big; negative: Boolean);
+begin
+  if accNegative = negative then
+    Add(tmp3, acc, t);
+  elsif Compare(acc, t) >= 0 then
+    Sub(tmp3, acc, t);
+  else
+    Sub(tmp3, t, acc);
+    accNegative := not accNegative;
+  end;
+  Assign(acc, tmp3);
+  if acc.n = 1 and acc.d[0] = 0 then
+    accNegative := false;
+  end;
+end Accumulate;
+
+// the digit q, 0..9, with q b <= a < (q + 1) b
+function DivDigit(a, b: Big): Int64;
+begin
+  for var q: Int64 := 9 downto 0 do
+    Assign(probe, b);
+    MulSmall(probe, q);
+    if Compare(probe, a) <= 0 then
+      return q;
+    end;
+  end;
+  return 0;
+end DivDigit;
+
+// floor((num nth + acc) / den)
+function ExtractDigit(nth: Int64): Int64;
+begin
+  Assign(tmp, num);
+  MulSmall(tmp, nth);
+  Add(tmp2, tmp, acc);
+  return DivDigit(tmp2, den);
+end ExtractDigit;
+
+begin
+  // the number of digits comes from the command line, 27 without one
+  var n: Int32 := 27;
+  if argcount() > 0 then
+    if not val(arg(1), n) then
+      halt(1);
+    end;
+  end;
+
+  SetSmall(acc, 0);
+  SetSmall(den, 1);
+  SetSmall(num, 1);
+  var i: Int32 := 0;
+  var k: Int64 := 0;
+  while i < n do
+    k := k + 1;
+    var k2 := 2 * k + 1;
+    Assign(tmp, num);
+    MulSmall(tmp, 2);
+    Accumulate(tmp, false);
+    MulSmall(acc, k2);
+    MulSmall(den, k2);
+    MulSmall(num, k);
+    if den.n >= Limbs - 4 then
+      writeln("pidigits: too many digits");
+      halt(1);
+    end;
+    continue when accNegative;
+    continue when Compare(num, acc) > 0;
+    var d := ExtractDigit(3);
+    continue when d <> ExtractDigit(4);
+    write(d);
+    i := i + 1;
+    if i mod 10 = 0 then
+      writeln(TAB, ":", i);
+    end;
+    Assign(tmp, den);
+    MulSmall(tmp, d);
+    Accumulate(tmp, true);
+    MulSmall(acc, 10);
+    MulSmall(num, 10);
+  end;
+  if i mod 10 <> 0 then
+    for var j := 1 to 10 - i mod 10 do
+      write(" ");
+    end;
+    writeln(TAB, ":", i);
+  end;
+end PiDigits.

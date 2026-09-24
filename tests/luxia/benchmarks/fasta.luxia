@@ -1,0 +1,134 @@
+// The Computer Language Benchmarks Game
+// https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+//
+// fasta in Luxia 0: a repeated sequence, then two random ones from the
+// linear congruential generator of the reference programs, 60 characters
+// to a line.
+program Fasta;
+
+const
+  LineLength = 60;
+  Im = 139968;
+  Ia = 3877;
+  Ic = 29573;
+
+type
+  Codes = array[Int32 range 1..15] of Char;
+  Odds = array[Int32 range 1..15] of Float64;
+
+var
+  last: Int64 := 42;
+  iubChars, sapiensChars: Codes;
+  iubOdds, sapiensOdds: Odds;
+
+function NextRandom(): Float64;
+begin
+  last := (last * Ia + Ic) mod Im;
+  return Float64(last) / Float64(Im);
+end NextRandom;
+
+procedure RepeatFasta(id, desc, s: String; n: Int64);
+begin
+  writeln(">", id, " ", desc);
+  var sn := length(s);
+  var s2 := s & s;
+  var p: Int64 := 1;
+  var i: Int64 := LineLength;
+  while i <= n do
+    writeln(copy(s2, p, LineLength));
+    p := p + LineLength;
+    if p > sn then
+      p := p - sn;
+    end;
+    i := i + LineLength;
+  end;
+  var tail := n mod LineLength;
+  if tail > 0 then
+    writeln(copy(s2, p, tail));
+  end;
+end RepeatFasta;
+
+// the odds are cumulative: the first code whose odds exceed the random
+// number is the one written
+procedure RandomFasta(id, desc: String; chars: Codes; odds: Odds;
+                      count: Int32; n: Int64);
+begin
+  writeln(">", id, " ", desc);
+  var produced: Int64 := 0;
+  while produced < n do
+    var thisLine: Int64 := LineLength;
+    if n - produced < LineLength then
+      thisLine := n - produced;
+    end;
+    for var k: Int64 := 1 to thisLine do
+      var r := NextRandom();
+      var idx := count;
+      for var j := 1 to count do
+        if r < odds[j] then
+          idx := j;
+          exit;
+        end;
+      end;
+      write(chars[idx]);
+    end;
+    writeln();
+    produced := produced + thisLine;
+  end;
+end RandomFasta;
+
+// one code and its weight; the odds add up as the table fills
+procedure Code(var chars: Codes; var odds: Odds; i: Int32; c: Char;
+               weight: Float64);
+begin
+  chars[i] := c;
+  if i = 1 then
+    odds[i] := weight;
+  else
+    odds[i] := odds[i - 1] + weight;
+  end;
+end Code;
+
+begin
+  // the size comes from the command line, 1000 without one
+  var n: Int32 := 1000;
+  if argcount() > 0 then
+    if not val(arg(1), n) then
+      halt(1);
+    end;
+  end;
+
+  var alu := "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGG" &
+             "GAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGA" &
+             "CCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAAT" &
+             "ACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCA" &
+             "GCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGG" &
+             "AGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCC" &
+             "AGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
+
+  Code(iubChars, iubOdds, 1, 'a', 0.27);
+  Code(iubChars, iubOdds, 2, 'c', 0.12);
+  Code(iubChars, iubOdds, 3, 'g', 0.12);
+  Code(iubChars, iubOdds, 4, 't', 0.27);
+  Code(iubChars, iubOdds, 5, 'B', 0.02);
+  Code(iubChars, iubOdds, 6, 'D', 0.02);
+  Code(iubChars, iubOdds, 7, 'H', 0.02);
+  Code(iubChars, iubOdds, 8, 'K', 0.02);
+  Code(iubChars, iubOdds, 9, 'M', 0.02);
+  Code(iubChars, iubOdds, 10, 'N', 0.02);
+  Code(iubChars, iubOdds, 11, 'R', 0.02);
+  Code(iubChars, iubOdds, 12, 'S', 0.02);
+  Code(iubChars, iubOdds, 13, 'V', 0.02);
+  Code(iubChars, iubOdds, 14, 'W', 0.02);
+  Code(iubChars, iubOdds, 15, 'Y', 0.02);
+
+  Code(sapiensChars, sapiensOdds, 1, 'a', 0.3029549426680);
+  Code(sapiensChars, sapiensOdds, 2, 'c', 0.1979883004921);
+  Code(sapiensChars, sapiensOdds, 3, 'g', 0.1975473066391);
+  Code(sapiensChars, sapiensOdds, 4, 't', 0.3015094502008);
+
+  RepeatFasta("ONE", "Homo sapiens alu", alu, Int64(n) * 2);
+  RandomFasta("TWO", "IUB ambiguity codes", iubChars, iubOdds, 15,
+              Int64(n) * 3);
+  RandomFasta("THREE", "Homo sapiens frequency", sapiensChars,
+              sapiensOdds, 4, Int64(n) * 5);
+end Fasta.

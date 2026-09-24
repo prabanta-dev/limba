@@ -708,11 +708,18 @@ static const run_case run_cases[] = {
      "", "errors L0052@1:21"},
 };
 
-/* run main; what it printed (malloc'd) and how it ended */
-static char *run_module(limba_module *m, char *end, size_t size)
+/* run main on the input in (NULL: none); what it printed (malloc'd, *len
+   bytes) and how it ended */
+static char *run_module(limba_module *m, const char *in, size_t inlen,
+                        char *end, size_t size, size_t *len)
 {
+    limba_eval_limits lim = {0, 0, 0, NULL, NULL};
+    if (in && inlen)
+        lim.in = fmemopen((void *)in, inlen, "r");
     limba_eval_result r;
-    limba_eval(m, "main", NULL, &r);
+    limba_eval(m, "main", &lim, &r);
+    if (lim.in)
+        fclose(lim.in);
     snprintf(end, size, "ok");
     if (r.status == LIMBA_EVAL_TRAP)
         snprintf(end, size, "trap %lld", (long long)r.code);
@@ -726,16 +733,21 @@ static char *run_module(limba_module *m, char *end, size_t size)
                  m->pos[r.pos - 1].col);
     }
     char *out = r.out;
+    *len = out ? r.outlen : 0;
     r.out = NULL;
     limba_eval_result_free(&r);
     return out;
 }
 
 /* compile a Luxia source to a verified module, run it, then optimise it
-   and run it again: both runs must agree (the OPTDIFF net) */
-static char *compile_run(const char *src, char *end, size_t size,
-                         limba_report *keep)
+   and run it again: both runs must agree (the OPTDIFF net); the output
+   may hold any byte, so its length goes to *len when len is not NULL;
+   both runs read the input in (NULL: none) */
+static char *compile_run(const char *src, const char *in, size_t inlen,
+                         char *end, size_t size, limba_report *keep,
+                         size_t *len)
 {
+    size_t n1 = 0, n2 = 0;
     limba_source s;
     limba_source_init(&s);
     uint32_t f = limba_source_add(&s, "t.luxia", src, strlen(src));
@@ -767,13 +779,13 @@ static char *compile_run(const char *src, char *end, size_t size,
         if (limba_verify(m, &d) != 0) {
             snprintf(end, size, "invalid IR: %.200s", d.msg);
         } else {
-            out = run_module(m, end, size);
+            out = run_module(m, in, inlen, end, size, &n1);
             char end2[256];
             if (limba_optimize(m, NULL, &d) != 0) {
                 snprintf(end, size, "optimiser: %.200s", d.msg);
             } else {
-                char *out2 = run_module(m, end2, sizeof(end2));
-                if (strcmp(out ? out : "", out2 ? out2 : "") ||
+                char *out2 = run_module(m, in, inlen, end2, sizeof(end2), &n2);
+                if (n1 != n2 || (n1 && memcmp(out, out2, n1)) ||
                     strcmp(end, end2)) {
                     char first[128];
                     snprintf(first, sizeof(first), "%s", end);
@@ -792,6 +804,8 @@ static char *compile_run(const char *src, char *end, size_t size,
     limba_lx_free(&lx);
     limba_report_free(&rep);
     limba_source_free(&s);
+    if (len)
+        *len = n1;
     return out;
 }
 
@@ -802,7 +816,8 @@ static int test_run(void)
         const run_case *c = &run_cases[i];
         char end[256];
         limba_report dummy;
-        char *out = compile_run(c->src, end, sizeof(end), &dummy);
+        char *out =
+            compile_run(c->src, NULL, 0, end, sizeof(end), &dummy, NULL);
         const char *o = out ? out : "";
         /* the place of a trap is compared only when the case gives it */
         char *at = strstr(end, " at ");
@@ -820,7 +835,26 @@ static int test_run(void)
     return failures;
 }
 
-/* every program of tests/luxia/benchmarks is valid Luxia 0 */
+/* the whole of a file, malloc'd and NUL-terminated; NULL if it cannot be
+   opened */
+static char *slurp(const char *path, size_t *len)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return NULL;
+    char *text = NULL;
+    FILE *m = open_memstream(&text, len);
+    int c;
+    while ((c = fgetc(f)) != EOF)
+        fputc(c, m);
+    fclose(m);
+    fclose(f);
+    return text;
+}
+
+/* every program of tests/luxia/benchmarks is valid Luxia 0 and prints
+   the .out of the same name in expected/, reading the .in there as its
+   input, if any */
 static int test_programs(unsigned *count)
 {
     static const char dir[] = "tests/luxia/benchmarks";
@@ -838,46 +872,45 @@ static int test_programs(unsigned *count)
             continue;
         char path[512];
         snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
-        FILE *f = fopen(path, "rb");
-        if (!f) {
+        size_t len;
+        char *text = slurp(path, &len);
+        if (!text) {
             failures++;
             continue;
         }
-        char *text = NULL;
-        size_t len = 0;
-        FILE *m = open_memstream(&text, &len);
-        int c;
-        while ((c = fgetc(f)) != EOF)
-            fputc(c, m);
-        fclose(m);
-        fclose(f);
         char *errors;
         check_string(text, &errors);
         if (errors[0]) {
             fprintf(stderr, "test_luxia: %s: %s\n", path, errors);
             failures++;
         }
-        snprintf(path + strlen(path) - 6, 7, ".out");
-        FILE *want = fopen(path, "rb");
-        if (want && !errors[0]) {
-            char *exp = NULL;
-            size_t elen = 0;
-            FILE *em = open_memstream(&exp, &elen);
-            while ((c = fgetc(want)) != EOF)
-                fputc(c, em);
-            fclose(em);
+        size_t elen, inlen = 0;
+        snprintf(path, sizeof(path), "%s/expected/%.*s.out", dir, (int)(n - 6),
+                 e->d_name);
+        char *exp = slurp(path, &elen);
+        snprintf(path + strlen(path) - 4, 5, ".in");
+        char *in = slurp(path, &inlen);
+        if (!exp) {
+            fprintf(stderr, "test_luxia: %s: no expected output\n", e->d_name);
+            failures++;
+        }
+        if (exp && !errors[0]) {
             char end[256];
-            char *out = compile_run(text, end, sizeof(end), NULL);
-            if (strcmp(end, "ok") || strcmp(out ? out : "", exp)) {
-                fprintf(stderr, "test_luxia: %s: ended %s, printed\n%s\n", path,
-                        end, out ? out : "");
+            size_t olen;
+            char *out =
+                compile_run(text, in, inlen, end, sizeof(end), NULL, &olen);
+            if (strcmp(end, "ok") || olen != elen ||
+                (olen && memcmp(out, exp, olen))) {
+                fprintf(stderr,
+                        "test_luxia: %s: ended %s, printed %zu bytes (%zu "
+                        "expected)\n%s\n",
+                        e->d_name, end, olen, elen, out ? out : "");
                 failures++;
             }
             free(out);
-            free(exp);
         }
-        if (want)
-            fclose(want);
+        free(exp);
+        free(in);
         (*count)++;
         free(errors);
         free(text);

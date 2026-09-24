@@ -1,0 +1,77 @@
+// The Computer Language Benchmarks Game
+// https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+//
+// reverse-complement in Luxia 0: reads the output of fasta and writes every sequence
+// reversed and complemented, 60 characters to a line. The lines of a
+// sequence are kept in a list, the last one first, so walking the list
+// already reads them backwards.
+program ReverseComplement;
+
+const LineLength = 60;
+
+type
+  Lines = ^Piece;
+  Piece = record
+    text: String;
+    next: Lines;
+  end;
+  Table = array[Byte] of Byte;
+
+var
+  complement: Table;
+  sequence: Lines := nil;
+
+procedure BuildComplement();
+begin
+  var from := "ABCDGHKMNRSTVWYabcdghkmnrstvwyUu";
+  var into := "TVGHCDMKNYSABWRTVGHCDMKNYSABWRAA";
+  for var b := low(complement) to high(complement) do
+    complement[b] := b;
+  end;
+  for var i := 1 to length(from) do
+    complement[from[i]] := into[i];
+  end;
+end BuildComplement;
+
+// writes the sequence read so far and forgets it
+procedure Emit();
+begin
+  var column: Int32 := 0;
+  while sequence <> nil do
+    var s := sequence.text;
+    for var i := length(s) downto 1 do
+      writebyte(complement[s[i]]);
+      column := column + 1;
+      if column = LineLength then
+        writebyte(10);
+        column := 0;
+      end;
+    end;
+    var done := sequence;
+    sequence := sequence.next;
+    dispose(done);
+  end;
+  if column > 0 then
+    writebyte(10);
+  end;
+end Emit;
+
+begin
+  BuildComplement();
+  var line: String;
+  while readline(line) do
+    if length(line) = 0 then
+      continue;
+    end;
+    if line[1] = 62 then       // '>': a new sequence begins
+      Emit();
+      writeln(line);
+    elsif line[1] <> 59 then   // ';' is a comment
+      var p := new(Piece);
+      p.text := line;
+      p.next := sequence;
+      sequence := p;
+    end;
+  end;
+  Emit();
+end ReverseComplement.
