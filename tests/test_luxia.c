@@ -839,6 +839,14 @@ static const run_case run_cases[] = {
     {"program w; var a: Int64 := 1; e: Int32 := -1; begin writeln(a ** 0); "
      "writeln(a ** e); end w.",
      "1\n", "trap 101"},
+    /* succ and pred are checked, before the step (pred of the first gave
+       255) */
+    {"program e; type Color = (Red, Green, Blue); var c: Color := Red; "
+     "begin writeln(ord(succ(c))); writeln(ord(pred(c))); end e.",
+     "1\n", "trap 101"},
+    {"program e; var a: UInt64 := 18446744073709551615; b: Int8 := -128; "
+     "begin writeln(pred(a), \" \", succ(b)); writeln(succ(a)); end e.",
+     "18446744073709551614 -127\n", "trap 101"},
     /* the target of an assignment before its value */
     {"program p;\nvar a: array[Int32 range 1..3] of Int32; z: Int32 := "
      "0;\nbegin\n  a[1 div z] := 7 div z;\nend p.",

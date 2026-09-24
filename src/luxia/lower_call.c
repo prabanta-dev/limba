@@ -326,16 +326,20 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
     case LXB_PRED: {
         limba_ltype base = lxs_base(S, t0);
         const limba_typeinfo *x = ti(L, base);
-        limba_id w = lxl_to_i64(L, lxl_value(L, a0), t0);
-        w = bin(L, id == LXB_SUCC ? LIMBA_OP_ADD : LIMBA_OP_SUB, LIMBA_T_I64, w,
-                lxl_iconst(L, LIMBA_T_I64, 1));
+        limba_id v = lxl_to_i64(L, lxl_value(L, a0), t0);
+        /* the value before the step: pred of the first and succ of the
+           last are errors (the step itself could wrap) */
         bool sg = lxl_signed(L, base);
-        limba_id c = id == LXB_SUCC
-                         ? icmp(L, sg ? LIMBA_CC_SLE : LIMBA_CC_ULE, w,
-                                lxl_iconst(L, LIMBA_T_I64, (int64_t)x->hi))
-                         : icmp(L, sg ? LIMBA_CC_SGE : LIMBA_CC_UGE, w,
-                                lxl_iconst(L, LIMBA_T_I64, (int64_t)x->lo));
+        limba_id c =
+            id == LXB_SUCC
+                ? icmp(L, sg ? LIMBA_CC_SLT : LIMBA_CC_ULT, v,
+                       lxl_iconst(L, LIMBA_T_I64, (int64_t)(uint64_t)x->hi))
+                : icmp(L, sg ? LIMBA_CC_SGT : LIMBA_CC_UGT, v,
+                       lxl_iconst(L, LIMBA_T_I64, (int64_t)x->lo));
+        lxl_at(L, node);
         lxl_check(L, c, LXR_RANGE);
+        limba_id w = bin(L, id == LXB_SUCC ? LIMBA_OP_ADD : LIMBA_OP_SUB,
+                         LIMBA_T_I64, v, lxl_iconst(L, LIMBA_T_I64, 1));
         limba_id it = lxl_type(L, base);
         *result = it == LIMBA_T_I64 ? w : un(L, LIMBA_OP_TRUNC, it, w);
         return;

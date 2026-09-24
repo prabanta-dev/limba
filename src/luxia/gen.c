@@ -116,7 +116,8 @@ static v128 tmax(unsigned t)
 
 /* K_RECORD: fields index..index+elem-1 of the table of fields; K_PTR:
    a pointer to record elem */
-enum { K_BASE, K_RANGE, K_ARRAY, K_OPEN, K_RECORD, K_PTR };
+/* K_ENUM: elem values 0..elem-1; its base is the type itself */
+enum { K_BASE, K_RANGE, K_ARRAY, K_OPEN, K_RECORD, K_PTR, K_ENUM };
 
 typedef struct {
     uint8_t k, base;      /* base: the scalar type of a range or of itself */
@@ -170,7 +171,10 @@ enum {
     E_HIGH,
     E_LEN,
     E_FIELD, /* field b of variable var, a record or a pointer to one */
-    E_NIL
+    E_NIL,
+    E_SUCC, /* succ, pred and ord of a */
+    E_PRED,
+    E_ORD
 };
 
 typedef struct {
@@ -386,7 +390,13 @@ static v128 hi_of(const G *g, uint32_t t)
 
 static bool is_scalar(const G *g, uint32_t t)
 {
-    return g->ty[t].k == K_BASE || g->ty[t].k == K_RANGE;
+    return g->ty[t].k == K_BASE || g->ty[t].k == K_RANGE ||
+           g->ty[t].k == K_ENUM;
+}
+
+static bool is_enum(const G *g, uint32_t t)
+{
+    return t >= NTYPES && g->ty[t].k == K_ENUM;
 }
 
 static bool is_record(const G *g, uint32_t t)
@@ -1039,12 +1049,48 @@ static uint32_t const_leaf(G *g, unsigned t)
     return cexpr_in(g, t, 1 + (int)below(g, 3));
 }
 
+/* ---- enumerations ---- */
+
+/* an enumeration of the program; 0 if none */
+static uint32_t pick_enum(G *g)
+{
+    uint32_t n = 0, chosen = 0;
+    for (uint32_t t = NTYPES; t < g->nty; t++)
+        if (g->ty[t].k == K_ENUM && below(g, ++n) == 0)
+            chosen = t;
+    return chosen;
+}
+
+/* a value of enumeration et: a literal, a variable, succ or pred */
+static uint32_t enum_expr(G *g, uint32_t et, int d, bool need_var)
+{
+    int v = pick_var(g, et, false, true);
+    if (!need_var && (v < 0 || chance(g, 30)))
+        return lit(g, et, below(g, (uint32_t)g->ty[et].elem));
+    if (v < 0) /* every enumeration has global variables: not here */
+        return lit(g, et, 0);
+    if (d > 0 && chance(g, 30)) {
+        uint32_t a = enum_expr(g, et, d - 1, true);
+        uint32_t i = new_e(g, chance(g, 50) ? E_SUCC : E_PRED, et);
+        g->e[i].a = a;
+        return i;
+    }
+    return var_ref(g, (uint32_t)v);
+}
+
 /* a variable, an element, a literal, or a variable of another type made
    into t */
 static uint32_t leaf(G *g, unsigned t, bool need_var, int d)
 {
     if (!need_var && is_int_base(t) && chance(g, 12))
         return const_leaf(g, t);
+    uint32_t et = t == T_U32 && chance(g, 15) ? pick_enum(g) : 0;
+    if (et) {
+        uint32_t a = enum_expr(g, et, d - 1, true);
+        uint32_t i = new_e(g, E_ORD, T_U32);
+        g->e[i].a = a;
+        return i;
+    }
     if (chance(g, 15)) {
         uint32_t f;
         int v = pick_field(g, t, false, &f);
@@ -1117,6 +1163,8 @@ static uint32_t membership(G *g, int d)
 
 static uint32_t expr(G *g, unsigned t, int d, bool need_var)
 {
+    if (is_enum(g, t))
+        return enum_expr(g, t, d, need_var);
     if (d <= 0 || chance(g, 20))
         return leaf(g, t, need_var, d);
     unsigned f = fam(t);
@@ -1153,6 +1201,12 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
                                                      : nil_of(g, pt);
             return binop(g, chance(g, 50) ? O_EQ : O_NE, T_BOOL,
                          var_ref(g, (uint32_t)p), other);
+        }
+        uint32_t et = chance(g, 15) ? pick_enum(g) : 0;
+        if (et && choice < 4) {
+            uint32_t a = enum_expr(g, et, d - 1, false);
+            uint32_t b = enum_expr(g, et, d - 1, g->e[a].cst);
+            return binop(g, O_EQ + below(g, 6), T_BOOL, a, b);
         }
         if (choice < 4) {
             unsigned u = any_type(g);
@@ -1311,6 +1365,16 @@ static uint32_t stmt(G *g, uint32_t *out)
         out[0] = constant(g);
         return 1;
     }
+    uint32_t et = chance(g, 5) ? pick_enum(g) : 0;
+    int ev_ = et ? pick_var(g, et, true, true) : -1;
+    if (ev_ >= 0) {
+        uint32_t e = enum_expr(g, et, depth(g), false);
+        uint32_t s = new_s(g, S_ASSIGN);
+        g->st[s].var = (uint32_t)ev_;
+        g->st[s].e = e;
+        out[0] = s;
+        return 1;
+    }
     if (!pure && chance(g, 6)) {
         uint32_t k = heap_stmt(g, out);
         if (k)
@@ -1426,7 +1490,20 @@ static uint32_t stmt(G *g, uint32_t *out)
         uint32_t lo, hi;
         int x = pick_var(g, b, false, false);
         int arr = chance(g, 35) ? pick_indexed(g, b) : -1;
-        if (arr >= 0) {
+        uint32_t et = chance(g, 15) ? pick_enum(g) : 0;
+        if (et) {
+            /* over the values of an enumeration */
+            uint32_t n = g->ty[et].elem;
+            v128 a = below(g, n), z = below(g, n);
+            if (down ? a < z : a > z) {
+                v128 w = a;
+                a = z;
+                z = w;
+            }
+            t = et;
+            lo = lit(g, et, a);
+            hi = lit(g, et, z);
+        } else if (arr >= 0) {
             /* over an array: t is the base of its index */
             t = b;
             lo = bound(g, down ? E_HIGH : E_LOW, (uint32_t)arr);
@@ -1460,17 +1537,30 @@ static uint32_t stmt(G *g, uint32_t *out)
     if (c < 78 && deep) {
         unsigned b = int_type(g);
         uint32_t s = new_s(g, S_CASE);
-        uint32_t sel = expr(g, b, depth(g), true);
-        uint32_t st = selector_type(g, sel);
+        uint32_t et = chance(g, 30) ? pick_enum(g) : 0;
+        uint32_t sel =
+            et ? enum_expr(g, et, depth(g), true) : expr(g, b, depth(g), true);
+        uint32_t st = et ? et : selector_type(g, sel);
         g->st[s].e = sel;
         uint32_t na = 1 + below(g, 3);
+        bool all = et && chance(g, 50); /* every value, and no else */
+        if (all)
+            na = g->ty[et].elem < 3 ? g->ty[et].elem : 3;
         xarm arms[3];
         xlab labs[12];
         uint32_t nl = 0;
         for (uint32_t i = 0; i < na; i++) {
             arms[i].lab = nl;
             arms[i].nlab = 0;
-            for (uint32_t k = 0, want = 1 + below(g, 2); k < want; k++) {
+            if (all) {
+                /* the values split among the arms, in order */
+                uint32_t n = g->ty[et].elem;
+                v128 lo = (v128)(i * n / na), hi = (v128)((i + 1) * n / na) - 1;
+                labs[nl++] = (xlab){lo, hi};
+                arms[i].nlab = 1;
+            }
+            for (uint32_t k = 0, want = all ? 0 : 1 + below(g, 2); k < want;
+                 k++) {
                 v128 lo = rand_in(g, lo_of(g, st), hi_of(g, st));
                 v128 hi = chance(g, 30) ? clamp_in(lo_of(g, st), hi_of(g, st),
                                                    lo + below(g, 6))
@@ -1506,7 +1596,7 @@ static uint32_t stmt(G *g, uint32_t *out)
         g->nscope = mark;
         g->st[s].alt = bl;
         g->st[s].nalt = n;
-        g->st[s].has_alt = true;
+        g->st[s].has_alt = !all;
         out[0] = s;
         return 1;
     }
@@ -1638,7 +1728,8 @@ static void routine(G *g)
         /* sometimes an open array, made from an array of the program */
         uint32_t n = 0, from = 0;
         for (uint32_t u = NTYPES; u < g->nty; u++)
-            if (g->ty[u].k == K_ARRAY && below(g, ++n) == 0)
+            if (g->ty[u].k == K_ARRAY && !is_enum(g, g->ty[u].index) &&
+                below(g, ++n) == 0)
                 from = u;
         if (n && chance(g, 30))
             t = new_type(g, (xt){K_OPEN, g->ty[from].base, index_base(g, from),
@@ -1769,7 +1860,7 @@ static void put_type(text *o, const G *g, uint32_t t)
     if (t < NTYPES)
         put(o, tname[t]);
     else
-        putf(o, "%c%u", "RRAOTP"[g->ty[t].k], t);
+        putf(o, "%c%u", "RRAOTPE"[g->ty[t].k], t);
 }
 
 static void put_value(text *o, unsigned t, v128 v)
@@ -1801,12 +1892,21 @@ static void here(xe *x, const text *o)
     x->col = o->col;
 }
 
+/* a literal of type t: the name of a value of an enumeration */
+static void put_lit(text *o, const G *g, uint32_t t, v128 v)
+{
+    if (is_enum(g, t))
+        putf(o, "q%ux%u", t, (unsigned)v);
+    else
+        put_value(o, base(g, t), v);
+}
+
 static void pexpr(G *g, text *o, uint32_t i)
 {
     xe *x = &g->e[i];
     switch (x->k) {
     case E_LIT:
-        put_value(o, base(g, x->t), x->lit);
+        put_lit(o, g, x->t, x->lit);
         break;
     case E_VAR:
         put_name(o, g, x->var);
@@ -1863,6 +1963,14 @@ static void pexpr(G *g, text *o, uint32_t i)
         break;
     case E_NIL:
         put(o, "nil");
+        break;
+    case E_SUCC:
+    case E_PRED:
+    case E_ORD:
+        here(x, o); /* succ and pred are checked at their name */
+        put(o, x->k == E_SUCC ? "succ(" : x->k == E_PRED ? "pred(" : "ord(");
+        pexpr(g, o, g->e[i].a);
+        put(o, ")");
         break;
     case E_LOW:
     case E_HIGH:
@@ -2005,7 +2113,7 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         put(o, "end;\n");
         break;
     case S_CASE: {
-        unsigned t = base(g, g->e[s.e].t);
+        uint32_t t = g->e[s.e].t;
         put(o, "case ");
         pexpr(g, o, s.e);
         put(o, " of\n");
@@ -2017,18 +2125,20 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
                 const xlab *l = &g->lab[a->lab + j];
                 if (j)
                     put(o, ", ");
-                put_value(o, t, l->lo);
+                put_lit(o, g, t, l->lo);
                 if (l->hi != l->lo) {
                     put(o, "..");
-                    put_value(o, t, l->hi);
+                    put_lit(o, g, t, l->hi);
                 }
             }
             put(o, ":\n");
             pblock(g, o, a->blk, a->nblk, ind + 2);
         }
-        indent(o, ind + 1);
-        put(o, "else\n");
-        pblock(g, o, s.alt, s.nalt, ind + 2);
+        if (s.has_alt) {
+            indent(o, ind + 1);
+            put(o, "else\n");
+            pblock(g, o, s.alt, s.nalt, ind + 2);
+        }
         indent(o, ind);
         put(o, "end;\n");
         break;
@@ -2119,6 +2229,11 @@ static void program(G *g, text *o, uint32_t nglob)
             } else if (x->k == K_PTR) {
                 put(o, "^");
                 put_type(o, g, x->elem);
+            } else if (x->k == K_ENUM) {
+                put(o, "(");
+                for (uint32_t k = 0; k < x->elem; k++)
+                    putf(o, "%sq%ux%u", k ? ", " : "", t, k);
+                put(o, ")");
             } else {
                 put(o, "array[");
                 put_type(o, g, x->index);
@@ -2522,6 +2637,17 @@ static v128 ev(X *x, uint32_t i)
     }
     case E_NIL:
         return 0;
+    case E_SUCC:
+    case E_PRED: {
+        v128 v = ev(x, e->a);
+        if (x->trap)
+            return 0;
+        if (e->k == E_SUCC ? v >= g->ty[e->t].hi : v <= g->ty[e->t].lo)
+            return fail(x, i, 101);
+        return e->k == E_SUCC ? v + 1 : v - 1;
+    }
+    case E_ORD:
+        return ev(x, e->a);
     case E_LOW:
         return x->alo[e->var];
     case E_HIGH:
@@ -2785,9 +2911,19 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
        own */
     for (uint32_t k = 0, n = below(&g, 4); k < n; k++)
         new_range(&g, false);
-    uint32_t narrays = 0, arrays[12];
+    uint32_t narrays = 0, arrays[16];
+    /* enumerations of 2 to 5 values, two global variables of each */
     for (uint32_t k = 0, n = below(&g, 3); k < n; k++) {
-        uint32_t ix = new_range(&g, true);
+        uint32_t et = g.nty;
+        uint32_t nv = 2 + below(&g, 4);
+        new_type(&g, (xt){K_ENUM, (uint8_t)et, 0, nv, 0, (v128)nv - 1});
+        arrays[narrays++] = et;
+        arrays[narrays++] = et;
+    }
+    for (uint32_t k = 0, n = below(&g, 3); k < n; k++) {
+        uint32_t en = pick_enum(&g);
+        /* an index: a short range, or an enumeration */
+        uint32_t ix = en && chance(&g, 30) ? en : new_range(&g, true);
         uint32_t el = var_type(&g);
         arrays[narrays++] =
             new_type(&g, (xt){K_ARRAY, (uint8_t)base(&g, el), ix, el,
@@ -2905,6 +3041,12 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
             }
             if (k)
                 items[k++] = new_e(&g, E_STR, 0);
+            if (is_enum(&g, t)) {
+                uint32_t a = var_ref(&g, v);
+                items[k] = new_e(&g, E_ORD, T_U32);
+                g.e[items[k++]].a = a;
+                continue;
+            }
             items[k++] = is_ptr(&g, t) ? binop(&g, O_EQ, T_BOOL, var_ref(&g, v),
                                                nil_of(&g, t))
                                        : var_ref(&g, v);

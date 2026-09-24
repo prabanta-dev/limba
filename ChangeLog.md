@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `succ` and `pred` are checked on the value before the step: `pred` of
+  the first value of an enumeration gave 255. The random programs use
+  enumerations: literals, `succ`, `pred`, `ord`, comparisons, `case`
+  with every value and no `else`, arrays indexed by them, `for` over
+  their values.
 - A negative exponent of `**` at run time is a range error, as Ada's
   `Constraint_Error` (the exponent is a `Natural`); the random programs
   now use exponents of any integer type.
