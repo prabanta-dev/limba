@@ -1,0 +1,18 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+/*
+ * errors.def - the codes of the Luxia diagnoses, printed as L0001 and so
+ * on. A code never changes meaning and is never reused: new ones go at the
+ * end.
+ *
+ *   LX_ERROR(code, name)
+ */
+LX_ERROR(1, BAD_UTF8)          /* bytes that are not UTF-8 */
+LX_ERROR(2, BAD_CHAR)          /* a character that starts no token */
+LX_ERROR(3, OPEN_STRING)       /* a string not closed on its line */
+LX_ERROR(4, OPEN_COMMENT)      /* a (* comment never closed */
+LX_ERROR(5, BAD_CHAR_LITERAL)  /* '' or a character literal not closed */
+LX_ERROR(6, KEYWORD_CASE)      /* a keyword not in lowercase */
+LX_ERROR(7, BAD_NUMBER)        /* a malformed number */
+LX_ERROR(8, REAL_RANGE)        /* a real number past Float64 */
+LX_ERROR(9, CONTROL_IN_LITERAL) /* a control character in a literal */

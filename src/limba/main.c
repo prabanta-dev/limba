@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * main.c - the limba program. For now it reads and writes the IR: the text
- * form (.lit) and the binary form (.lir), verifying it on the way. The
- * Luxia front end will make it read sources.
+ * main.c - the limba program. It reads and writes the IR: the text form
+ * (.lit) and the binary form (.lir), verifying it on the way; and it reads
+ * Luxia sources (.luxia), for now as far as their tokens.
  */
 #include "limba/ir.h"
 #include "limba/opt.h"
+#include "luxia.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -15,13 +16,16 @@
 
 static void usage(FILE *out)
 {
-    fputs("Usage: limba [options] <input.lit | input.lir>\n"
+    fputs("Usage: limba [options] <input.lit | input.lir | input.luxia>\n"
           "\n"
           "Reads the IR in its text (.lit) or binary (.lir) form, verifies\n"
-          "it and writes it in the other form.\n"
+          "it and writes it in the other form. Reads a Luxia source\n"
+          "(.luxia) and reports its errors; the front end stops at the\n"
+          "tokens for now.\n"
           "\n"
           "Options\n"
           "  --emit=lir|lit  the form to write; by default the other one\n"
+          "  --emit=tokens   the tokens of a Luxia source, one per line\n"
           "  -o FILE         where to write; by default a .lir goes next to\n"
           "                  the input, a .lit to the standard output\n"
           "  --check         verify only, write nothing\n"
@@ -97,8 +101,9 @@ int main(int argc, char **argv)
             opt.skip = a + 7;
         } else if (!strncmp(a, "--emit=", 7)) {
             emit = a + 7;
-            if (strcmp(emit, "lir") && strcmp(emit, "lit")) {
-                fprintf(stderr, "limba: --emit takes lir or lit\n");
+            if (strcmp(emit, "lir") && strcmp(emit, "lit") &&
+                strcmp(emit, "tokens")) {
+                fprintf(stderr, "limba: --emit takes lir, lit or tokens\n");
                 return 2;
             }
         } else if (!strcmp(a, "-o") && i + 1 < argc) {
@@ -117,9 +122,16 @@ int main(int argc, char **argv)
         usage(stderr);
         return 2;
     }
+    if (ends_with(in, ".luxia"))
+        return limba_luxia_main(in, emit, outpath, check);
     bool binary_in = ends_with(in, ".lir");
     if (!binary_in && !ends_with(in, ".lit")) {
-        fprintf(stderr, "limba: %s: a .lit or .lir file is expected\n", in);
+        fprintf(stderr, "limba: %s: a .lit, .lir or .luxia file is expected\n",
+                in);
+        return 2;
+    }
+    if (emit && !strcmp(emit, "tokens")) {
+        fprintf(stderr, "limba: --emit=tokens is for a .luxia source\n");
         return 2;
     }
     if (!emit)

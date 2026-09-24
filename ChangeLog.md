@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The Luxia lexer (`src/luxia/`): names folded to lowercase, keywords in
+  lowercase only, literals converted on the spot (strings and characters
+  as in Ada, no escapes), stable error codes `L0001`-`L0009`;
+  `limba --emit=tokens file.luxia`. The first shared front-end pieces
+  (`src/front/`): source files with 32-bit positions, and diagnoses
+  printed with their line of source. `test_luxia` (30 lexer cases) and a
+  fuzzing target.
 - Limba is now the front end of Luxia only.
 - `fround` (ties to even) and `fround.away` (ties away from zero) in the
   IR. NaN results of arithmetic have no fixed sign or payload, as in IEEE
