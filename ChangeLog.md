@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A negative exponent of `**` at run time is a range error, as Ada's
+  `Constraint_Error` (the exponent is a `Natural`); the random programs
+  now use exponents of any integer type.
 - Reals: `abs` clears the sign bit as IEEE 754 says (`abs(-0.0)` gave
   `-0.0`); a conversion from a real to an integer or a range fits by
   the exact bounds (`R(2.0 ** 53)` failed for `R = Int64 range

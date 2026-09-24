@@ -375,11 +375,11 @@ static limba_id power(lxl *L, uint32_t node, limba_ltype t, limba_id a,
     (void)node;
     bool sg = lxl_signed(L, t), mod = is_modular(L, t);
     uint32_t args[2] = {lxl_to_i64(L, a, t), lxl_to_i64(L, e, et)};
-    if (lxl_signed(L, et)) /* the runtime reads the exponent unsigned */
+    if (lxl_signed(L, et)) /* a Natural, as in Ada (§ 4.3) */
         lxl_check(
             L,
             cmp(L, false, LIMBA_CC_SGE, args[1], lxl_iconst(L, LIMBA_T_I64, 0)),
-            LXR_OVERFLOW);
+            LXR_RANGE);
     limba_id r = lxl_rt(L,
                         sg    ? LIMBA_RT_INT_POW
                         : mod ? LIMBA_RT_BITS_POW

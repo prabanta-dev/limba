@@ -1174,11 +1174,11 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
         return i;
     }
     if (choice < 6 && chance(g, 10)) {
-        /* a power: the exponent a literal or a number without a sign
-           (a negative one is not decided yet) */
+        /* a power: the exponent a literal, or any integer, maybe
+           negative (a range error) */
         uint32_t a = expr(g, t, d - 1, true);
         uint32_t n = chance(g, 60) ? lit(g, T_I32, below(g, 8))
-                                   : expr(g, T_U8 + below(g, 4), d - 1, true);
+                                   : expr(g, int_type(g), d - 1, true);
         return binop(g, O_POW, t, a, n);
     }
     if (choice < 6) {
@@ -2300,7 +2300,7 @@ static bool element_cell(X *x, uint32_t v, v128 index, uint32_t *cell)
 static v128 power(X *x, uint32_t i, unsigned t, v128 l, v128 n)
 {
     if (n < 0)
-        return fail(x, i, 6); /* not decided yet: as the front end does */
+        return fail(x, i, 101); /* the exponent is a Natural (§ 4.3) */
     if (fam(t) == 'B') {
         u128 mask = ((u128)1 << tbits(t)) - 1, acc = 1, b = (u128)l & mask;
         for (u128 e = (u128)n; e; e >>= 1) {

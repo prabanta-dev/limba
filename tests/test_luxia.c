@@ -835,6 +835,10 @@ static const run_case run_cases[] = {
      "9007199254740992.0; b: Float64 := 9007199254740994.0; begin "
      "writeln(R(a)); writeln(R(b)); end f.",
      "9007199254740992\n", "trap 103"},
+    /* a negative exponent is a range error, the exponent a Natural */
+    {"program w; var a: Int64 := 1; e: Int32 := -1; begin writeln(a ** 0); "
+     "writeln(a ** e); end w.",
+     "1\n", "trap 101"},
     /* the target of an assignment before its value */
     {"program p;\nvar a: array[Int32 range 1..3] of Int32; z: Int32 := "
      "0;\nbegin\n  a[1 div z] := 7 div z;\nend p.",
