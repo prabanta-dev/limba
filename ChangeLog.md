@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The other eight single-thread benchmarks of the Benchmarks Game in
+  Luxia (`tests/luxia/benchmarks/`): binary-trees, fannkuch-redux, fasta,
+  k-nucleotide, mandelbrot, pidigits, reverse-complement, spectral-norm.
+  All nine print the expected output, before and after optimisation.
+  `test_luxia` compares the output byte by byte (mandelbrot writes a
+  bitmap) and gives a program the `.in` file beside it as standard input.
+- README: the state of the project and a roadmap.
 - Positions of the source in the IR (version 2 of the binary form): a
   table of (file, line, column) in the module and one index per
   instruction, kept through `edit.c` and every pass, written as
