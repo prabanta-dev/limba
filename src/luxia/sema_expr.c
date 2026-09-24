@@ -699,9 +699,10 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         limba_ltype it = lxs_base(S, ti->index);
         if (!(ti->flags & LIMBA_TF_DYNAMIC)) {
             const limba_typeinfo *ix = lxs_ty(S, ti->index);
-            __int128 v = id == LXB_LOW    ? ix->lo
-                         : id == LXB_HIGH ? ix->hi
-                                          : ix->hi - ix->lo + 1;
+            __int128 v = id == LXB_LOW     ? ix->lo
+                         : id == LXB_HIGH  ? ix->hi
+                         : ix->hi < ix->lo ? 0
+                                           : ix->hi - ix->lo + 1;
             uint32_t val = lxs_value_int(S, v);
             if (id == LXB_LENGTH && !lxs_fit(S, node, &val, it))
                 return set(S, node, it);
@@ -818,8 +819,17 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
             arg_of(S, arg_at(S, node, 0), scope, S->ty_int[2]);
         return set(S, node, S->ts.string);
     case LXB_HALT:
-        if (arity(S, node, 1, nm, scope))
-            arg_of(S, arg_at(S, node, 0), scope, S->ty_int[2]);
+        if (arity(S, node, 1, nm, scope)) {
+            uint32_t a = arg_at(S, node, 0);
+            arg_of(S, a, scope, S->ty_int[2]);
+            /* 1 is the status of the errors at run time (§ 9) */
+            __int128 k;
+            if (S->val[a] && lxs_value_to_int(S, S->val[a], &k) &&
+                (k == 1 || k < 0 || k > 255))
+                lxs_error(S, LXE_HALT_CODE, a,
+                          "an exit status is 0 or 2..255: 1 is kept for the "
+                          "errors at run time");
+        }
         return set(S, node, S->ts.void_);
     }
     return set(S, node, 0);

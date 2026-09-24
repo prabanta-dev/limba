@@ -61,3 +61,4 @@ LX_ERROR(51, DYNAMIC_PLACE)     /* computed bounds outside a variable */
 LX_ERROR(52, MISSING_RETURN)    /* a path out of a function without return */
 LX_ERROR(53, UNASSIGNED)        /* a variable read before any assignment */
 LX_ERROR(54, UNSUPPORTED)       /* valid, not yet translated to the IR */
+LX_ERROR(55, HALT_CODE)         /* halt with 1 or outside 0..255 */

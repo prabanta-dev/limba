@@ -19,16 +19,15 @@
 #include "limba/ir.h"
 #include "sema.h"
 
-/* the codes of the errors at run time (the IR traps with 6 on the
-   overflow of add.ov, sub.ov and mul.ov) */
+/* the codes of the errors at run time (include/limba/traps.def) */
 enum {
-    LXR_OVERFLOW = 6,
-    LXR_DIVZERO = 11,
-    LXR_INDEX = 100,
-    LXR_RANGE = 101,
-    LXR_NIL = 102,
-    LXR_CONVERSION = 103,
-    LXR_SHIFT = 104,
+    LXR_OVERFLOW = LIMBA_TRAP_OVERFLOW,
+    LXR_DIVZERO = LIMBA_TRAP_DIVZERO,
+    LXR_INDEX = LIMBA_TRAP_INDEX,
+    LXR_RANGE = LIMBA_TRAP_RANGE,
+    LXR_NIL = LIMBA_TRAP_NIL,
+    LXR_CONVERSION = LIMBA_TRAP_CONVERSION,
+    LXR_SHIFT = LIMBA_TRAP_SHIFT,
 };
 
 /* the module of a checked program; NULL if errors were reported */

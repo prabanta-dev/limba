@@ -1,0 +1,22 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+/*
+ * traps.def - the codes of the checks that stop a program at run time,
+ * read by Limba and by Meri. A program never sees them: it stops with
+ * exit status 1 and a message that says which check failed and where.
+ *
+ *   LIMBA_TRAP(name, code, text)
+ *
+ * name  the enumerator is LIMBA_TRAP_<name>
+ * code  the value of check, and of the trap of add.ov, sdiv... in the IR
+ * text  what the message says
+ */
+
+LIMBA_TRAP(OVERFLOW, 6, "overflow")
+LIMBA_TRAP(NOMEM, 7, "out of memory")
+LIMBA_TRAP(DIVZERO, 11, "division by zero")
+LIMBA_TRAP(INDEX, 100, "index out of range")
+LIMBA_TRAP(RANGE, 101, "value out of range")
+LIMBA_TRAP(NIL, 102, "nil dereferenced")
+LIMBA_TRAP(CONVERSION, 103, "conversion out of range")
+LIMBA_TRAP(SHIFT, 104, "shift count out of range")

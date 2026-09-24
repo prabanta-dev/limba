@@ -576,10 +576,7 @@ static limba_ltype named(limba_lxs *S, uint32_t node, uint32_t scope,
     __int128 l, h;
     if (!lxs_value_to_int(S, lo, &l) || !lxs_value_to_int(S, hi, &h))
         return 0;
-    if (l > h) {
-        lxs_error(S, LXE_BAD_RANGE, node, "the range is empty: low > high");
-        return 0;
-    }
+    /* low > high is an empty range, as in Ada (§ 4.5) */
     const limba_typeinfo *ti = lxs_ty(S, t);
     if (l < ti->lo || h > ti->hi) {
         char tb[128];

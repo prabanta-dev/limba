@@ -46,6 +46,18 @@ static limba_id icmp(lxl *L, unsigned cc, limba_id a, limba_id b)
     return lxl_emit(L, LIMBA_OP_ICMP, LIMBA_T_I1, cc, 0, 0, o, 2);
 }
 
+/* the length of a computed array: 0 when its range is empty */
+static limba_id dyn_length(lxl *L, limba_id lo, limba_id hi, limba_ltype it)
+{
+    limba_id l = lxl_to_i64(L, lo, it), h = lxl_to_i64(L, hi, it);
+    limba_id n = bin(L, LIMBA_OP_ADD, LIMBA_T_I64,
+                     bin(L, LIMBA_OP_SUB, LIMBA_T_I64, h, l),
+                     lxl_iconst(L, LIMBA_T_I64, 1));
+    limba_id zero = lxl_iconst(L, LIMBA_T_I64, 0);
+    uint32_t sel[3] = {icmp(L, LIMBA_CC_SLT, n, zero), zero, n};
+    return lxl_emit(L, LIMBA_OP_SELECT, LIMBA_T_I64, 0, 0, 0, sel, 3);
+}
+
 /* an array argument for an open parameter: address and length */
 static void open_arg(lxl *L, uint32_t a, limba_id *p, limba_id *len)
 {
@@ -58,15 +70,12 @@ static void open_arg(lxl *L, uint32_t a, limba_id *p, limba_id *len)
         return;
     const limba_typeinfo *at = ti(L, t);
     if (at->flags & LIMBA_TF_DYNAMIC) {
-        limba_id l = lxl_to_i64(L, lo, at->index),
-                 h = lxl_to_i64(L, hi, at->index);
-        *len = bin(L, LIMBA_OP_ADD, LIMBA_T_I64,
-                   bin(L, LIMBA_OP_SUB, LIMBA_T_I64, h, l),
-                   lxl_iconst(L, LIMBA_T_I64, 1));
+        *len = dyn_length(L, lo, hi, at->index);
         return;
     }
     const limba_typeinfo *ix = ti(L, at->index);
-    *len = lxl_iconst(L, LIMBA_T_I64, (int64_t)(ix->hi - ix->lo + 1));
+    *len = lxl_iconst(L, LIMBA_T_I64,
+                      ix->hi < ix->lo ? 0 : (int64_t)(ix->hi - ix->lo + 1));
 }
 
 static void routine(lxl *L, uint32_t node, limba_sym s, limba_id *result)
@@ -241,11 +250,7 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         } else if (id == LXB_HIGH) {
             *result = hi;
         } else {
-            limba_id l = lxl_to_i64(L, lo, x->index),
-                     h = lxl_to_i64(L, hi, x->index);
-            limba_id n = bin(L, LIMBA_OP_ADD, LIMBA_T_I64,
-                             bin(L, LIMBA_OP_SUB, LIMBA_T_I64, h, l),
-                             lxl_iconst(L, LIMBA_T_I64, 1));
+            limba_id n = dyn_length(L, lo, hi, x->index);
             *result = lxl_conv(L, n, S->ty_int[3], rt);
         }
         return;
@@ -371,8 +376,17 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         v = lxl_value(L, a0);
         *result = lxl_rt(L, LIMBA_RT_ARG, LIMBA_T_STR, &v, 1);
         return;
-    case LXB_HALT:
+    case LXB_HALT: {
         v = lxl_value(L, a0);
+        /* 0 or 2..255: 1 is the status of the errors at run time */
+        limba_id zero = lxl_iconst(L, LIMBA_T_I32, 0);
+        limba_id past =
+            bin(L, LIMBA_OP_SUB, LIMBA_T_I32, v, lxl_iconst(L, LIMBA_T_I32, 2));
+        limba_id ok =
+            bin(L, LIMBA_OP_OR, LIMBA_T_I1, icmp(L, LIMBA_CC_EQ, v, zero),
+                icmp(L, LIMBA_CC_ULE, past, lxl_iconst(L, LIMBA_T_I32, 253)));
+        lxl_at(L, node);
+        lxl_check(L, ok, LXR_RANGE);
         lxl_rt(L, LIMBA_RT_HALT, LIMBA_T_VOID, &v, 1);
         limba_ssa_unreachable(L->ssa, L->cur);
         {
@@ -381,6 +395,7 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
             L->cur = after;
         }
         return;
+    }
     }
 }
 

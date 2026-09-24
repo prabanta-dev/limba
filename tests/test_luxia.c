@@ -525,6 +525,9 @@ static const sema_case sema_cases[] = {
     {"program p; procedure q(); begin return 1; end; begin end.", "L0046@1:33"},
     {"program p; function f(): Int32; begin return; end; begin end.",
      "L0046@1:39"},
+    /* 1 is the exit status of the errors at run time */
+    {"program p; begin halt(1); end.", "L0055@1:23"},
+    {"program p; begin halt(256); end.", "L0055@1:23"},
 };
 
 static void check_string(const char *src, char **errors)
@@ -692,7 +695,7 @@ static const run_case run_cases[] = {
      "6765\n", "ok"},
     {"program p; var b: Int64 := 3; begin writeln(b ** 4, \" \", 2.0 ** 10); "
      "end.",
-     "81 1024\n", "ok"},
+     "81 1024.0\n", "ok"},
     {"program p; begin writeln(\"a\"); halt(3); writeln(\"b\"); end.", "a\n",
      "halt 3"},
     /* a range is checked at the assignment, the argument, the return,
@@ -720,6 +723,20 @@ static const run_case run_cases[] = {
     {"program p; type R = Int32 range -1..-1; var b: Bits16 := 5; begin "
      "writeln(R(b)); end p.",
      "", "trap 103"},
+    /* empty ranges, as in Ada: no element, every index outside */
+    {"program p; type E = Int32 range 1..0; A = array[E] of Int32; var f: A; "
+     "begin writeln(length(f), \" \", low(f), \" \", high(f)); end p.",
+     "0 1 0\n", "ok"},
+    {"program p; var n: Int32 := 0; begin var d: array[Int32 range 1..n] of "
+     "Int32; writeln(length(d)); for var i := low(d) to high(d) do "
+     "writeln(i); end; writeln(d[1]); end p.",
+     "0\n", "trap 100"},
+    {"program p; type Z = Int8 range 5..1; var y: Int8 := 3; begin var z: Z "
+     ":= y; end p.",
+     "", "trap 101"},
+    /* halt with a computed 1 is an error at run time, status 1 */
+    {"program p; var n: Int32 := 1; begin halt(n); end p.", "", "trap 101"},
+    {"program p; var n: Int32 := 0; begin halt(n); end p.", "", "halt 0"},
     /* the target of an assignment before its value */
     {"program p;\nvar a: array[Int32 range 1..3] of Int32; z: Int32 := "
      "0;\nbegin\n  a[1 div z] := 7 div z;\nend p.",

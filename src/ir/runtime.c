@@ -29,6 +29,18 @@ uint64_t limba_rt_fingerprint(void)
     return h;
 }
 
+const char *limba_trap_text(int64_t code)
+{
+    switch (code) {
+#define LIMBA_TRAP(name, c, text)                                              \
+    case c:                                                                    \
+        return text;
+#include "limba/traps.def"
+#undef LIMBA_TRAP
+    }
+    return NULL;
+}
+
 limba_id limba_rt_find(const char *name, size_t len)
 {
     for (unsigned i = 0; i < LIMBA_RT_COUNT; i++)

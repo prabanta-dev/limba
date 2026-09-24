@@ -91,7 +91,7 @@ begin
   var n: Int32 := 7;
   if argcount() > 0 then
     if not val(arg(1), n) then
-      halt(1);
+      halt(2);
     end;
   end;
 

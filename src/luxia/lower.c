@@ -88,8 +88,9 @@ limba_id lxl_type(lxl *L, limba_ltype t)
     case LIMBA_LTK_ARRAY: {
         limba_id e = lxl_type(L, x->elem);
         const limba_typeinfo *ix = ti(L, x->index);
-        uint64_t n =
-            (x->flags & LIMBA_TF_DYNAMIC) ? 0 : (uint64_t)(ix->hi - ix->lo + 1);
+        uint64_t n = (x->flags & LIMBA_TF_DYNAMIC) || ix->hi < ix->lo
+                         ? 0
+                         : (uint64_t)(ix->hi - ix->lo + 1);
         r = limba_type_array(L->m, e, n > UINT32_MAX ? 0 : (uint32_t)n);
         break;
     }
@@ -224,11 +225,12 @@ static void dynamic(lxl *L, limba_sym s, uint32_t tnode)
     limba_id d = lxl_emit(L, LIMBA_OP_SUB, LIMBA_T_I64, 0, 0, 0, o2, 2);
     uint32_t o3[2] = {d, lxl_iconst(L, LIMBA_T_I64, 1)};
     limba_id n = lxl_emit(L, LIMBA_OP_ADD, LIMBA_T_I64, 0, 0, 0, o3, 2);
-    /* an empty range is an error of the program */
-    uint32_t c[2] = {n, lxl_iconst(L, LIMBA_T_I64, 1)};
-    lxl_check(L,
-              lxl_emit(L, LIMBA_OP_ICMP, LIMBA_T_I1, LIMBA_CC_SGE, 0, 0, c, 2),
-              LXR_RANGE);
+    /* an empty range holds no element (§ 4.5) */
+    uint32_t c[2] = {n, lxl_iconst(L, LIMBA_T_I64, 0)};
+    uint32_t sel[3] = {
+        lxl_emit(L, LIMBA_OP_ICMP, LIMBA_T_I1, LIMBA_CC_SLT, 0, 0, c, 2), c[1],
+        n};
+    n = lxl_emit(L, LIMBA_OP_SELECT, LIMBA_T_I64, 0, 0, 0, sel, 3);
     uint32_t o4[2] = {
         n, lxl_iconst(L, LIMBA_T_I64, (int64_t)ti(L, x->elem)->size)};
     limba_id bytes = lxl_emit(L, LIMBA_OP_MULOV, LIMBA_T_I64, 0, 0, 0, o4, 2);

@@ -150,6 +150,16 @@ uint64_t limba_rt_fingerprint(void);
 /* the id of a name of the text form, LIMBA_NONE if unknown */
 limba_id limba_rt_find(const char *name, size_t len);
 
+/* the checks that stop a program at run time (traps.def) */
+enum limba_trap {
+#define LIMBA_TRAP(name, code, text) LIMBA_TRAP_##name = code,
+#include "limba/traps.def"
+#undef LIMBA_TRAP
+};
+
+/* what failed, for the message; NULL for a code no check has */
+const char *limba_trap_text(int64_t code);
+
 /* ---- types ---- */
 
 enum limba_type_kind {

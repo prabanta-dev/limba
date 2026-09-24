@@ -77,6 +77,8 @@ int main(int argc, char **argv)
     fprintf(stderr, "lir_run: %s", status_text[r.status]);
     if (r.status == LIMBA_EVAL_TRAP || r.status == LIMBA_EVAL_HALT)
         fprintf(stderr, " %" PRId64, r.code);
+    if (r.status == LIMBA_EVAL_TRAP && limba_trap_text(r.code))
+        fprintf(stderr, " (%s)", limba_trap_text(r.code));
     if (r.pos && r.pos <= m->npos) {
         const limba_pos *p = &m->pos[r.pos - 1];
         size_t n;

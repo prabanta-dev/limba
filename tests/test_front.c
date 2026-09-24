@@ -6,6 +6,7 @@
  * The rounding of rationals to double and float is also checked against
  * strtod and strtof, which glibc rounds correctly, on random literals.
  */
+#include "common/fmt_f64.h"
 #include "common/strtab.h"
 #include "front/bigint.h"
 #include "front/symtab.h"
@@ -378,6 +379,59 @@ static void test_symtab(void)
     limba_symtab_free(&st);
 }
 
+/* the shortest form of a real: known cases as Python's repr writes them,
+   then random bits that must read back to themselves */
+static void test_fmt_f64(unsigned count)
+{
+    static const struct {
+        double v;
+        const char *s;
+    } cases[] = {
+        {0.0, "0.0"},
+        {-0.0, "-0.0"},
+        {0.1, "0.1"},
+        {100.0, "100.0"},
+        {1e16, "1e+16"},
+        {1e15, "1000000000000000.0"},
+        {1.5e-5, "1.5e-05"},
+        {1e-4, "0.0001"},
+        {5e-324, "5e-324"},
+        {1.7976931348623157e308, "1.7976931348623157e+308"},
+        {2.0 / 3.0, "0.6666666666666666"},
+        {0.1 + 0.2, "0.30000000000000004"},
+        {-123.456, "-123.456"},
+        {INFINITY, "inf"},
+        {-INFINITY, "-inf"},
+        {-NAN, "nan"},
+    };
+    char buf[LIMBA_FMT_F64_MAX];
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        limba_fmt_f64(buf, cases[i].v);
+        if (strcmp(buf, cases[i].s)) {
+            fprintf(stderr, "test_front: real %s printed %s\n", cases[i].s,
+                    buf);
+            failures++;
+        }
+    }
+    uint64_t s = 7;
+    for (unsigned i = 0; i < count; i++) {
+        uint64_t z = (s += 0x9e3779b97f4a7c15ull);
+        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+        z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+        z ^= z >> 31;
+        double v;
+        memcpy(&v, &z, sizeof(v));
+        if (isnan(v))
+            continue;
+        limba_fmt_f64(buf, v);
+        double back = strtod(buf, NULL);
+        if (memcmp(&back, &v, sizeof(v))) {
+            fprintf(stderr, "test_front: %s does not read back\n", buf);
+            failures++;
+        }
+    }
+}
+
 int main(void)
 {
     test_integers();
@@ -385,8 +439,10 @@ int main(void)
     test_rounding(20000);
     test_types();
     test_symtab();
+    test_fmt_f64(20000);
     printf("test_front: integers, rationals, 20000 random roundings to "
-           "double and float, types, scopes, %d failures\n",
+           "double and float, types, scopes, 20000 shortest reals, %d "
+           "failures\n",
            failures);
     return failures ? 1 : 0;
 }

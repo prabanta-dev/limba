@@ -14,6 +14,7 @@
  */
 #include "eval.h"
 
+#include "common/fmt_f64.h"
 #include "common/leb128.h"
 #include "common/xalloc.h"
 #include "ir/internal.h"
@@ -24,8 +25,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-enum { TRAP_OVERFLOW = 6, TRAP_DIVZERO = 11, TRAP_NOMEM = 7 };
 
 /* a string of the program: length, bytes, a NUL for str_ptr */
 typedef struct {
@@ -135,9 +134,8 @@ static void out_i64(E *e, int64_t v)
 
 static void out_f64(E *e, double v)
 {
-    char buf[40];
-    int n = snprintf(buf, sizeof(buf), "%.17g", v);
-    limba_w_bytes(&e->out, buf, (size_t)n);
+    char buf[LIMBA_FMT_F64_MAX];
+    limba_w_bytes(&e->out, buf, limba_fmt_f64(buf, v));
 }
 
 static void store(void *p, limba_id t, uint64_t v);
@@ -289,13 +287,13 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_INT_POW: {
         int64_t base = (int64_t)a[0], ex = (int64_t)a[1], acc = 1;
         if (ex < 0)
-            return trap(e, TRAP_OVERFLOW);
+            return trap(e, LIMBA_TRAP_OVERFLOW);
         while (ex) {
             if ((ex & 1) && __builtin_mul_overflow(acc, base, &acc))
-                return trap(e, TRAP_OVERFLOW);
+                return trap(e, LIMBA_TRAP_OVERFLOW);
             ex >>= 1;
             if (ex && __builtin_mul_overflow(base, base, &base))
-                return trap(e, TRAP_OVERFLOW);
+                return trap(e, LIMBA_TRAP_OVERFLOW);
         }
         *r = (uint64_t)acc;
         return true;
@@ -353,8 +351,8 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         return true;
     }
     case LIMBA_RT_STR_FROM_F64: {
-        int n = snprintf(buf, sizeof(buf), "%.17g", dv(a[0]));
-        *r = sv(str_make(e, buf, (size_t)n));
+        char f[LIMBA_FMT_F64_MAX];
+        *r = sv(str_make(e, f, limba_fmt_f64(f, dv(a[0]))));
         return true;
     }
     case LIMBA_RT_STR_MID: { /* (s, start from 0, length), clamped */
@@ -374,7 +372,7 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         return true;
     case LIMBA_RT_MEM_ALLOC: {
         if ((int64_t)a[0] < 0 || a[0] > (1u << 30))
-            return trap(e, TRAP_NOMEM);
+            return trap(e, LIMBA_TRAP_NOMEM);
         *r = (uint64_t)(uintptr_t)keep(e, limba_xcalloc(a[0] ? a[0] : 1, 1));
         return true;
     }
@@ -519,13 +517,13 @@ static bool int_bin(E *e, unsigned op, limba_id t, uint64_t a, uint64_t b,
     case LIMBA_OP_UDIV:
     case LIMBA_OP_UREM:
         if (!ub)
-            return trap(e, TRAP_DIVZERO);
+            return trap(e, LIMBA_TRAP_DIVZERO);
         *r = op == LIMBA_OP_UDIV ? ua / ub : ua % ub;
         break;
     case LIMBA_OP_SDIV:
     case LIMBA_OP_SREM:
         if (!sb || (sa == smin && sb == -1))
-            return trap(e, TRAP_DIVZERO);
+            return trap(e, LIMBA_TRAP_DIVZERO);
         *r = (uint64_t)(op == LIMBA_OP_SDIV ? sa / sb : sa % sb);
         break;
     case LIMBA_OP_ADDOV:
@@ -535,7 +533,7 @@ static bool int_bin(E *e, unsigned op, limba_id t, uint64_t a, uint64_t b,
             : op == LIMBA_OP_SUBOV ? (__int128)sa - sb
                                    : (__int128)sa * sb;
         if (w < smin || w > -(__int128)smin - 1)
-            return trap(e, TRAP_OVERFLOW);
+            return trap(e, LIMBA_TRAP_OVERFLOW);
         *r = (uint64_t)(int64_t)w;
         break;
     default:

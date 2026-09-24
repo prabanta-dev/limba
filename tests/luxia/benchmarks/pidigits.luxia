@@ -171,7 +171,7 @@ begin
   var n: Int32 := 27;
   if argcount() > 0 then
     if not val(arg(1), n) then
-      halt(1);
+      halt(2);
     end;
   end;
 
@@ -191,7 +191,7 @@ begin
     MulSmall(num, k);
     if den.n >= Limbs - 4 then
       writeln("pidigits: too many digits");
-      halt(1);
+      halt(2);
     end;
     continue when accNegative;
     continue when Compare(num, acc) > 0;

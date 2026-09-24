@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Run-time errors as Ada has them: a program stops with exit status 1
+  and a message that says which check failed and where; the codes of the
+  checks are a table shared with Meri (`include/limba/traps.def`), and
+  `lir_run` prints their text. `halt` takes 0 or 2..255: `halt(1)` is
+  refused (L0055), a computed 1 is a range error. The benchmarks halt
+  with 2 on a bad argument.
+- Empty ranges as in Ada: `lo..hi` with `lo > hi` is legal, constant or
+  computed; an array over it has length 0 and every index outside.
+- A real without a format is printed in the shortest form that reads
+  back exactly, as Python's `repr` (`src/common/fmt_f64.c`): `0.1`,
+  `100.0`, `1e+16`, `-0.0`, `inf`, `nan`; checked against Python on
+  200 000 values and in `test_front`.
 - The random Luxia programs gain ranges (in variables, parameters,
   results, `for` loops and conversions), `in` and arrays indexed by a
   range. They found four faults, fixed with a case each in `test_luxia`:
