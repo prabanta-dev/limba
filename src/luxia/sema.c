@@ -87,7 +87,7 @@ static const char *type_name(const void *ctx, uint32_t sym, size_t *len)
     return lxs_spell(ctx, sym, len);
 }
 
-const char *lxs_tname(const limba_lxs *S, limba_type t, char *buf)
+const char *lxs_tname(const limba_lxs *S, limba_ltype t, char *buf)
 {
     return limba_types_show(&S->ts, t, type_name, S, buf, 128);
 }
@@ -114,7 +114,7 @@ static limba_sym universe_sym(limba_lxs *S, const char *spelling, unsigned kind)
     return s;
 }
 
-static void universe_type(limba_lxs *S, const char *spelling, limba_type t)
+static void universe_type(limba_lxs *S, const char *spelling, limba_ltype t)
 {
     limba_sym s = universe_sym(S, spelling, LIMBA_SYM_TYPE);
     S->st.sym[s].type = t;
@@ -343,9 +343,9 @@ static void resolve_const(limba_lxs *S, limba_sym s)
     limba_symbol *y = &S->st.sym[s];
     uint32_t scope = y->scope, d = y->node;
     limba_lx_node *x = lxs_node(S, d);
-    limba_type t = x->b ? lxs_type(S, x->b, scope, 0) : 0;
+    limba_ltype t = x->b ? lxs_type(S, x->b, scope, 0) : 0;
     uint32_t errors = S->rep->errors;
-    limba_type vt = lxs_expr(S, x->c, scope, t);
+    limba_ltype vt = lxs_expr(S, x->c, scope, t);
     if (!S->val[x->c]) {
         if (vt && S->rep->errors == errors)
             lxs_error(S, LXE_NOT_CONSTANT, x->c,
@@ -368,9 +368,9 @@ static void resolve_const(limba_lxs *S, limba_sym s)
 static void resolve_var(limba_lxs *S, uint32_t d, uint32_t scope, bool top)
 {
     limba_lx_node *x = lxs_node(S, d);
-    limba_type t = x->b ? lxs_type(S, x->b, scope, top ? 0 : LXT_VAR) : 0;
+    limba_ltype t = x->b ? lxs_type(S, x->b, scope, top ? 0 : LXT_VAR) : 0;
     if (x->c) {
-        limba_type vt = lxs_expr(S, x->c, scope, t);
+        limba_ltype vt = lxs_expr(S, x->c, scope, t);
         if (t) {
             lxs_assign_to(S, x->c, t, "the variable");
         } else if (vt == S->ts.uint || vt == S->ts.ureal || vt == S->ts.nil) {
@@ -391,14 +391,14 @@ static void resolve_var(limba_lxs *S, uint32_t d, uint32_t scope, bool top)
     }
 }
 
-static limba_type type_node(limba_lxs *S, uint32_t node, uint32_t scope,
-                            unsigned where, limba_sym self);
+static limba_ltype type_node(limba_lxs *S, uint32_t node, uint32_t scope,
+                             unsigned where, limba_sym self);
 
 static void resolve_typedecl(limba_lxs *S, limba_sym s)
 {
     limba_symbol *y = &S->st.sym[s];
     limba_lx_node *x = lxs_node(S, y->node);
-    limba_type t = type_node(S, x->b, y->scope, 0, s);
+    limba_ltype t = type_node(S, x->b, y->scope, 0, s);
     y = &S->st.sym[s];
     y->type = t;
     limba_types_set_name(&S->ts, t, s);
@@ -420,7 +420,7 @@ static void resolve_routine(limba_lxs *S, limba_sym s)
         unsigned mode = px->op == LX_KW_VAR   ? LXS_VAR
                         : px->op == LX_KW_OUT ? LXS_OUT
                                               : LXS_IN;
-        limba_type pt = lxs_type(S, px->b, outer, LXT_PARAM);
+        limba_ltype pt = lxs_type(S, px->b, outer, LXT_PARAM);
         uint32_t names = px->a;
         for (uint32_t k = 0; k < lxs_node(S, names)->b; k++) {
             uint32_t nn = limba_lx_list_at(S->t, names, k);
@@ -434,7 +434,7 @@ static void resolve_routine(limba_lxs *S, limba_sym s)
         }
     }
     x = lxs_node(S, d);
-    limba_type result = S->ts.void_;
+    limba_ltype result = S->ts.void_;
     if (x->c) {
         result = lxs_type(S, x->c, outer, 0);
     }
@@ -502,14 +502,14 @@ void lxs_resolve_all(limba_lxs *S, uint32_t list)
 
 /* ---- types ---- */
 
-limba_type lxs_base(const limba_lxs *S, limba_type t)
+limba_ltype lxs_base(const limba_lxs *S, limba_ltype t)
 {
     while (S->ts.t[t].flags & LIMBA_TF_RANGE)
         t = S->ts.t[t].base;
     return t;
 }
 
-bool lxs_compatible(const limba_lxs *S, limba_type a, limba_type b)
+bool lxs_compatible(const limba_lxs *S, limba_ltype a, limba_ltype b)
 {
     if (a == 0 || b == 0)
         return true; /* an error already reported */
@@ -521,7 +521,7 @@ bool lxs_compatible(const limba_lxs *S, limba_type a, limba_type b)
 
 /* a bound of a range: a constant of the base; 0 if not constant */
 static uint32_t bound(limba_lxs *S, uint32_t node, uint32_t scope,
-                      limba_type base, bool *ok)
+                      limba_ltype base, bool *ok)
 {
     lxs_expr(S, node, scope, base);
     if (!S->val[node]) {
@@ -533,8 +533,8 @@ static uint32_t bound(limba_lxs *S, uint32_t node, uint32_t scope,
 }
 
 /* Name range lo..hi: a range type, or 0 for computed bounds (dyn set) */
-static limba_type named(limba_lxs *S, uint32_t node, uint32_t scope,
-                        bool allow_dynamic, bool *dynamic)
+static limba_ltype named(limba_lxs *S, uint32_t node, uint32_t scope,
+                         bool allow_dynamic, bool *dynamic)
 {
     limba_lx_node *x = lxs_node(S, node);
     limba_sym s = lxs_lookup(S, scope, node);
@@ -548,7 +548,7 @@ static limba_type named(limba_lxs *S, uint32_t node, uint32_t scope,
         return 0;
     }
     lxs_force(S, s);
-    limba_type t = S->st.sym[s].type;
+    limba_ltype t = S->st.sym[s].type;
     if (!x->b || !t)
         return t;
     if (!limba_types_is_discrete(&S->ts, t)) {
@@ -560,7 +560,7 @@ static limba_type named(limba_lxs *S, uint32_t node, uint32_t scope,
         return 0;
     }
     bool ok = true;
-    limba_type base = lxs_base(S, t);
+    limba_ltype base = lxs_base(S, t);
     uint32_t lo = bound(S, x->b, scope, base, &ok);
     uint32_t hi = bound(S, x->c, scope, base, &ok);
     if (!ok) {
@@ -590,23 +590,23 @@ static limba_type named(limba_lxs *S, uint32_t node, uint32_t scope,
     return limba_types_range(&S->ts, t, l, h);
 }
 
-static limba_type type_node(limba_lxs *S, uint32_t node, uint32_t scope,
-                            unsigned where, limba_sym self)
+static limba_ltype type_node(limba_lxs *S, uint32_t node, uint32_t scope,
+                             unsigned where, limba_sym self)
 {
     limba_lx_node *x = lxs_node(S, node);
     bool dyn = false;
     char tb[128];
     switch (x->kind) {
     case LXN_TNAME: {
-        limba_type t = named(S, node, scope, false, &dyn);
+        limba_ltype t = named(S, node, scope, false, &dyn);
         return t;
     }
     case LXN_TNEW: {
-        limba_type b = type_node(S, x->a, scope, 0, 0);
+        limba_ltype b = type_node(S, x->a, scope, 0, 0);
         if (!b)
             return 0;
         unsigned k = lxs_ty(S, b)->kind;
-        if (k == LIMBA_TK_OPEN || k == LIMBA_TK_ROUTINE) {
+        if (k == LIMBA_LTK_OPEN || k == LIMBA_LTK_ROUTINE) {
             lxs_error(S, LXE_TYPE_MISMATCH, node,
                       "new makes a type from a named or scalar type");
             return 0;
@@ -615,7 +615,7 @@ static limba_type type_node(limba_lxs *S, uint32_t node, uint32_t scope,
     }
     case LXN_TENUM: {
         uint32_t list = x->a, count = lxs_node(S, list)->b;
-        limba_type e = limba_types_enum(&S->ts, count);
+        limba_ltype e = limba_types_enum(&S->ts, count);
         for (uint32_t k = 0; k < count; k++) {
             uint32_t nn = limba_lx_list_at(S->t, list, k);
             limba_sym vs = S->sym[nn];
@@ -632,12 +632,12 @@ static limba_type type_node(limba_lxs *S, uint32_t node, uint32_t scope,
     }
     case LXN_TARRAY: {
         uint32_t in = x->a;
-        limba_type index;
+        limba_ltype index;
         if (lxs_node(S, in)->kind == LXN_TNAME)
             index = named(S, in, scope, (where & LXT_VAR) != 0, &dyn);
         else
             index = type_node(S, in, scope, 0, 0);
-        limba_type elem = type_node(S, lxs_node(S, node)->b, scope, 0, 0);
+        limba_ltype elem = type_node(S, lxs_node(S, node)->b, scope, 0, 0);
         if (!index || !elem)
             return 0;
         if (!limba_types_is_discrete(&S->ts, index)) {
@@ -647,7 +647,7 @@ static limba_type type_node(limba_lxs *S, uint32_t node, uint32_t scope,
             return 0;
         }
         const limba_typeinfo *et = lxs_ty(S, elem);
-        if (et->kind == LIMBA_TK_OPEN ||
+        if (et->kind == LIMBA_LTK_OPEN ||
             (et->flags & (LIMBA_TF_DYNAMIC | LIMBA_TF_INCOMPLETE))) {
             lxs_error(S, LXE_TYPE_MISMATCH, lxs_node(S, node)->b,
                       "the elements of an array have a size known in "
@@ -655,7 +655,7 @@ static limba_type type_node(limba_lxs *S, uint32_t node, uint32_t scope,
             return 0;
         }
         bool ok;
-        limba_type a = limba_types_array(&S->ts, index, elem, dyn, &ok);
+        limba_ltype a = limba_types_array(&S->ts, index, elem, dyn, &ok);
         if (!ok)
             lxs_error(S, LXE_CONST_RANGE, node,
                       "the array is larger than the memory can address");
@@ -668,11 +668,11 @@ static limba_type type_node(limba_lxs *S, uint32_t node, uint32_t scope,
                       "only");
             return 0;
         }
-        limba_type elem = type_node(S, x->a, scope, 0, 0);
+        limba_ltype elem = type_node(S, x->a, scope, 0, 0);
         return elem ? limba_types_open(&S->ts, elem) : 0;
     }
     case LXN_TRECORD: {
-        limba_type r = limba_types_record_begin(&S->ts);
+        limba_ltype r = limba_types_record_begin(&S->ts);
         if (self)
             S->st.sym[self].type = r;
         uint32_t list = x->a;
@@ -681,7 +681,7 @@ static limba_type type_node(limba_lxs *S, uint32_t node, uint32_t scope,
             uint32_t f = limba_lx_list_at(S->t, list, i);
             limba_lx_node *fx = lxs_node(S, f);
             uint32_t names = fx->a;
-            limba_type ft = type_node(S, fx->b, scope, 0, 0);
+            limba_ltype ft = type_node(S, fx->b, scope, 0, 0);
             if (ft && (lxs_ty(S, ft)->flags & LIMBA_TF_INCOMPLETE)) {
                 lxs_error(S, LXE_SELF_REFERENCE, fx->b,
                           "a record cannot contain itself: use a pointer");
@@ -710,10 +710,10 @@ static limba_type type_node(limba_lxs *S, uint32_t node, uint32_t scope,
         return r;
     }
     case LXN_TPTR: {
-        limba_type p = limba_types_pointer(&S->ts, 0);
+        limba_ltype p = limba_types_pointer(&S->ts, 0);
         if (self)
             S->st.sym[self].type = p;
-        limba_type target = type_node(S, x->a, scope, 0, 0);
+        limba_ltype target = type_node(S, x->a, scope, 0, 0);
         limba_types_set_target(&S->ts, p, target);
         return p;
     }
@@ -721,7 +721,8 @@ static limba_type type_node(limba_lxs *S, uint32_t node, uint32_t scope,
     return 0;
 }
 
-limba_type lxs_type(limba_lxs *S, uint32_t node, uint32_t scope, unsigned where)
+limba_ltype lxs_type(limba_lxs *S, uint32_t node, uint32_t scope,
+                     unsigned where)
 {
     return type_node(S, node, scope, where, 0);
 }

@@ -126,9 +126,9 @@ uint32_t lxs_literal(limba_lxs *S, uint32_t node)
     return id;
 }
 
-static bool is_float(const limba_lxs *S, limba_type t)
+static bool is_float(const limba_lxs *S, limba_ltype t)
 {
-    return t && (lxs_ty(S, t)->kind == LIMBA_TK_FLOAT || t == S->ts.ureal);
+    return t && (lxs_ty(S, t)->kind == LIMBA_LTK_FLOAT || t == S->ts.ureal);
 }
 
 /* a - b * floor(a / b) or a - b * trunc(a / b), integers */
@@ -166,7 +166,7 @@ static bool bits_of(const limba_lxs *S, uint32_t v, uint64_t *out)
 }
 
 uint32_t lxs_fold_unary(limba_lxs *S, uint32_t node, unsigned op, uint32_t a,
-                        limba_type type)
+                        limba_ltype type)
 {
     if (!a || S->v[a].kind != LXV_NUM)
         return 0;
@@ -209,7 +209,7 @@ uint32_t lxs_fold_unary(limba_lxs *S, uint32_t node, unsigned op, uint32_t a,
 }
 
 uint32_t lxs_fold_binary(limba_lxs *S, uint32_t node, unsigned op, uint32_t a,
-                         uint32_t b, limba_type type)
+                         uint32_t b, limba_ltype type)
 {
     if (!a || !b)
         return 0;
@@ -370,13 +370,13 @@ uint32_t lxs_fold_binary(limba_lxs *S, uint32_t node, unsigned op, uint32_t a,
     return out;
 }
 
-bool lxs_fit(limba_lxs *S, uint32_t node, uint32_t *v, limba_type type)
+bool lxs_fit(limba_lxs *S, uint32_t node, uint32_t *v, limba_ltype type)
 {
     if (!*v || !type || type == S->ts.uint || type == S->ts.ureal)
         return true;
     const limba_typeinfo *t = lxs_ty(S, type);
     char tb[128], vb[64];
-    if (t->kind == LIMBA_TK_FLOAT) {
+    if (t->kind == LIMBA_LTK_FLOAT) {
         double d;
         float f;
         bool ok = t->bits == 32 ? limba_rat_to_f32(&S->v[*v].num, &f)

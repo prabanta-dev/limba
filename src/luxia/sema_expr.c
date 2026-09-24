@@ -11,47 +11,47 @@
 #include <stdio.h>
 #include <string.h>
 
-static limba_type set(limba_lxs *S, uint32_t node, limba_type t)
+static limba_ltype set(limba_lxs *S, uint32_t node, limba_ltype t)
 {
     S->type[node] = t;
     return t;
 }
 
-static bool untyped(const limba_lxs *S, limba_type t)
+static bool untyped(const limba_lxs *S, limba_ltype t)
 {
     return t == S->ts.uint || t == S->ts.ureal;
 }
 
-static unsigned kind(const limba_lxs *S, limba_type t)
+static unsigned kind(const limba_lxs *S, limba_ltype t)
 {
     return lxs_ty(S, t)->kind;
 }
 
-static bool is_int(const limba_lxs *S, limba_type t)
+static bool is_int(const limba_lxs *S, limba_ltype t)
 {
-    return t == S->ts.uint || kind(S, t) == LIMBA_TK_INT;
+    return t == S->ts.uint || kind(S, t) == LIMBA_LTK_INT;
 }
 
-static bool is_numeric(const limba_lxs *S, limba_type t)
+static bool is_numeric(const limba_lxs *S, limba_ltype t)
 {
-    return untyped(S, t) || kind(S, t) == LIMBA_TK_INT ||
-           kind(S, t) == LIMBA_TK_FLOAT;
+    return untyped(S, t) || kind(S, t) == LIMBA_LTK_INT ||
+           kind(S, t) == LIMBA_LTK_FLOAT;
 }
 
-static bool is_float(const limba_lxs *S, limba_type t)
+static bool is_float(const limba_lxs *S, limba_ltype t)
 {
-    return t == S->ts.ureal || kind(S, t) == LIMBA_TK_FLOAT;
+    return t == S->ts.ureal || kind(S, t) == LIMBA_LTK_FLOAT;
 }
 
-static bool is_modular(const limba_lxs *S, limba_type t)
+static bool is_modular(const limba_lxs *S, limba_ltype t)
 {
-    return kind(S, t) == LIMBA_TK_INT &&
+    return kind(S, t) == LIMBA_LTK_INT &&
            (lxs_ty(S, t)->flags & LIMBA_TF_MODULAR);
 }
 
-static bool is_bool(const limba_lxs *S, limba_type t)
+static bool is_bool(const limba_lxs *S, limba_ltype t)
 {
-    return kind(S, t) == LIMBA_TK_BOOL;
+    return kind(S, t) == LIMBA_LTK_BOOL;
 }
 
 /* significant bits of an integer: 5 has 3, 40 has 3 too */
@@ -71,14 +71,14 @@ static uint32_t sig_bits(const limba_big *b)
 }
 
 /* a constant without a type takes target */
-static bool convert_const(limba_lxs *S, uint32_t node, limba_type target)
+static bool convert_const(limba_lxs *S, uint32_t node, limba_ltype target)
 {
-    limba_type t = S->type[node];
+    limba_ltype t = S->type[node];
     unsigned tk = kind(S, target);
     char tb[128];
-    if (tk == LIMBA_TK_ERROR)
+    if (tk == LIMBA_LTK_ERROR)
         return true;
-    if (t == S->ts.uint && tk == LIMBA_TK_FLOAT) {
+    if (t == S->ts.uint && tk == LIMBA_LTK_FLOAT) {
         uint32_t v = S->val[node];
         if (v && sig_bits(&S->v[v].num.num) >
                      (lxs_ty(S, target)->bits == 32 ? 24u : 53u)) {
@@ -88,8 +88,8 @@ static bool convert_const(limba_lxs *S, uint32_t node, limba_type target)
                       lxs_tname(S, target, tb));
             return false;
         }
-    } else if (!(t == S->ts.uint && tk == LIMBA_TK_INT) &&
-               !(t == S->ts.ureal && tk == LIMBA_TK_FLOAT)) {
+    } else if (!(t == S->ts.uint && tk == LIMBA_LTK_INT) &&
+               !(t == S->ts.ureal && tk == LIMBA_LTK_FLOAT)) {
         lxs_error(S, LXE_TYPE_MISMATCH, node, "%s where %s is expected",
                   t == S->ts.uint ? "an integer constant" : "a real constant",
                   lxs_tname(S, target, tb));
@@ -100,17 +100,17 @@ static bool convert_const(limba_lxs *S, uint32_t node, limba_type target)
     return lxs_fit(S, node, &S->val[node], target);
 }
 
-bool lxs_assign_to(limba_lxs *S, uint32_t node, limba_type target,
+bool lxs_assign_to(limba_lxs *S, uint32_t node, limba_ltype target,
                    const char *what)
 {
-    limba_type t = S->type[node];
+    limba_ltype t = S->type[node];
     if (!t || !target)
         return true;
     if (untyped(S, t))
         return convert_const(S, node, target);
     char ta[128], tb[128];
     if (t == S->ts.nil) {
-        if (kind(S, target) == LIMBA_TK_POINTER) {
+        if (kind(S, target) == LIMBA_LTK_POINTER) {
             set(S, node, target);
             return true;
         }
@@ -131,7 +131,7 @@ bool lxs_assign_to(limba_lxs *S, uint32_t node, limba_type target,
 
 /* make the operands of a binary operator agree; false if they cannot */
 static bool unify(limba_lxs *S, uint32_t node, uint32_t l, uint32_t r,
-                  limba_type *lt, limba_type *rt)
+                  limba_ltype *lt, limba_ltype *rt)
 {
     if (!*lt || !*rt)
         return false;
@@ -155,12 +155,12 @@ static bool unify(limba_lxs *S, uint32_t node, uint32_t l, uint32_t r,
         *rt = *lt;
         return true;
     }
-    if (*lt == S->ts.nil && kind(S, *rt) == LIMBA_TK_POINTER) {
+    if (*lt == S->ts.nil && kind(S, *rt) == LIMBA_LTK_POINTER) {
         set(S, l, *rt);
         *lt = *rt;
         return true;
     }
-    if (*rt == S->ts.nil && kind(S, *lt) == LIMBA_TK_POINTER) {
+    if (*rt == S->ts.nil && kind(S, *lt) == LIMBA_LTK_POINTER) {
         set(S, r, *lt);
         *rt = *lt;
         return true;
@@ -176,8 +176,8 @@ static bool unify(limba_lxs *S, uint32_t node, uint32_t l, uint32_t r,
     return true;
 }
 
-static limba_type op_error(limba_lxs *S, uint32_t node, limba_type t,
-                           const char *what)
+static limba_ltype op_error(limba_lxs *S, uint32_t node, limba_ltype t,
+                            const char *what)
 {
     char tb[128];
     lxs_error(S, LXE_OPERATOR_TYPE, node, "'%s' %s, not on %s",
@@ -187,19 +187,19 @@ static limba_type op_error(limba_lxs *S, uint32_t node, limba_type t,
 }
 
 /* the type an operation on t yields: the base of a range */
-static limba_type result_of(limba_lxs *S, limba_type t)
+static limba_ltype result_of(limba_lxs *S, limba_ltype t)
 {
     return untyped(S, t) ? t : lxs_base(S, t);
 }
 
-static limba_type binary(limba_lxs *S, uint32_t node, uint32_t scope)
+static limba_ltype binary(limba_lxs *S, uint32_t node, uint32_t scope)
 {
     limba_lx_node *x = lxs_node(S, node);
     unsigned op = x->op;
     uint32_t l = x->a, r = x->b;
-    limba_type lt = lxs_expr(S, l, scope, 0);
-    limba_type rt = lxs_expr(S, r, scope, 0);
-    limba_type res;
+    limba_ltype lt = lxs_expr(S, l, scope, 0);
+    limba_ltype rt = lxs_expr(S, r, scope, 0);
+    limba_ltype res;
     switch (op) {
     case LX_POWER:
         if (!lt || !rt)
@@ -233,9 +233,9 @@ static limba_type binary(limba_lxs *S, uint32_t node, uint32_t scope)
         /* strings and characters, in any mix */
         if (!lt || !rt)
             return set(S, node, 0);
-        if (kind(S, lt) != LIMBA_TK_STRING && kind(S, lt) != LIMBA_TK_CHAR)
+        if (kind(S, lt) != LIMBA_LTK_STRING && kind(S, lt) != LIMBA_LTK_CHAR)
             return op_error(S, node, lt, "joins strings and characters");
-        if (kind(S, rt) != LIMBA_TK_STRING && kind(S, rt) != LIMBA_TK_CHAR)
+        if (kind(S, rt) != LIMBA_LTK_STRING && kind(S, rt) != LIMBA_LTK_CHAR)
             return op_error(S, node, rt, "joins strings and characters");
         res = S->ts.string;
         break;
@@ -263,10 +263,11 @@ static limba_type binary(limba_lxs *S, uint32_t node, uint32_t scope)
         case LX_GT:
         case LX_GE: {
             unsigned k = kind(S, lt);
-            bool ordered = is_numeric(S, lt) || k == LIMBA_TK_CHAR ||
-                           k == LIMBA_TK_ENUM || k == LIMBA_TK_BOOL ||
-                           k == LIMBA_TK_STRING;
-            bool equal = ordered || k == LIMBA_TK_POINTER || k == LIMBA_TK_NIL;
+            bool ordered = is_numeric(S, lt) || k == LIMBA_LTK_CHAR ||
+                           k == LIMBA_LTK_ENUM || k == LIMBA_LTK_BOOL ||
+                           k == LIMBA_LTK_STRING;
+            bool equal =
+                ordered || k == LIMBA_LTK_POINTER || k == LIMBA_LTK_NIL;
             if (!(op == LX_EQ || op == LX_NE ? equal : ordered))
                 return op_error(S, node, lt, "compares scalars and strings");
             res = S->ts.bool_;
@@ -300,19 +301,19 @@ static limba_type binary(limba_lxs *S, uint32_t node, uint32_t scope)
     return res;
 }
 
-static limba_type unary(limba_lxs *S, uint32_t node, uint32_t scope)
+static limba_ltype unary(limba_lxs *S, uint32_t node, uint32_t scope)
 {
     limba_lx_node *x = lxs_node(S, node);
     unsigned op = x->op;
     uint32_t e = x->a;
-    limba_type t = lxs_expr(S, e, scope, 0);
+    limba_ltype t = lxs_expr(S, e, scope, 0);
     if (!t)
         return set(S, node, 0);
     switch (op) {
     case LX_MINUS:
         if (!is_numeric(S, t))
             return op_error(S, node, t, "negates numbers");
-        if (kind(S, t) == LIMBA_TK_INT &&
+        if (kind(S, t) == LIMBA_LTK_INT &&
             !(lxs_ty(S, t)->flags & (LIMBA_TF_SIGNED | LIMBA_TF_MODULAR)))
             return op_error(S, node, t,
                             "negates signed numbers and Bits values");
@@ -335,7 +336,7 @@ static limba_type unary(limba_lxs *S, uint32_t node, uint32_t scope)
             return op_error(S, node, t, "takes Boolean or Bits values");
         break;
     }
-    limba_type res = result_of(S, t);
+    limba_ltype res = result_of(S, t);
     set(S, node, res);
     if (S->val[e])
         S->val[node] =
@@ -343,7 +344,7 @@ static limba_type unary(limba_lxs *S, uint32_t node, uint32_t scope)
     return res;
 }
 
-static limba_type reference(limba_lxs *S, uint32_t node, uint32_t scope)
+static limba_ltype reference(limba_lxs *S, uint32_t node, uint32_t scope)
 {
     limba_sym s = lxs_lookup(S, scope, node);
     if (!s)
@@ -375,23 +376,23 @@ static limba_type reference(limba_lxs *S, uint32_t node, uint32_t scope)
 }
 
 /* the record or array behind a pointer, which . and [] reach alone */
-static limba_type through_pointer(limba_lxs *S, limba_type t)
+static limba_ltype through_pointer(limba_lxs *S, limba_ltype t)
 {
-    if (t && kind(S, t) == LIMBA_TK_POINTER)
+    if (t && kind(S, t) == LIMBA_LTK_POINTER)
         return lxs_ty(S, t)->elem;
     return t;
 }
 
-static limba_type select(limba_lxs *S, uint32_t node, uint32_t scope)
+static limba_ltype select(limba_lxs *S, uint32_t node, uint32_t scope)
 {
     limba_lx_node *x = lxs_node(S, node);
     uint32_t base = x->a, fname = x->b;
-    limba_type t = through_pointer(S, lxs_expr(S, base, scope, 0));
+    limba_ltype t = through_pointer(S, lxs_expr(S, base, scope, 0));
     if (!t)
         return set(S, node, 0);
     const limba_typeinfo *ti = lxs_ty(S, t);
     char tb[128];
-    if (ti->kind != LIMBA_TK_RECORD) {
+    if (ti->kind != LIMBA_LTK_RECORD) {
         lxs_error(S, LXE_NO_FIELD, node, "%s has no fields",
                   lxs_tname(S, t, tb));
         return set(S, node, 0);
@@ -408,12 +409,12 @@ static limba_type select(limba_lxs *S, uint32_t node, uint32_t scope)
     return set(S, node, 0);
 }
 
-static limba_type index_expr(limba_lxs *S, uint32_t node, uint32_t scope)
+static limba_ltype index_expr(limba_lxs *S, uint32_t node, uint32_t scope)
 {
     limba_lx_node *x = lxs_node(S, node);
     uint32_t base = x->a, idx = x->b;
-    limba_type t = through_pointer(S, lxs_expr(S, base, scope, 0));
-    limba_type index, elem;
+    limba_ltype t = through_pointer(S, lxs_expr(S, base, scope, 0));
+    limba_ltype index, elem;
     if (!t) {
         lxs_expr(S, idx, scope, 0);
         return set(S, node, 0);
@@ -421,15 +422,15 @@ static limba_type index_expr(limba_lxs *S, uint32_t node, uint32_t scope)
     const limba_typeinfo *ti = lxs_ty(S, t);
     char tb[128];
     switch (ti->kind) {
-    case LIMBA_TK_ARRAY:
+    case LIMBA_LTK_ARRAY:
         index = ti->index;
         elem = ti->elem;
         break;
-    case LIMBA_TK_OPEN:
+    case LIMBA_LTK_OPEN:
         index = S->ty_int[3];
         elem = ti->elem;
         break;
-    case LIMBA_TK_STRING:
+    case LIMBA_LTK_STRING:
         index = S->ty_int[3];
         elem = S->ty_bits[0];
         break;
@@ -470,8 +471,8 @@ static void round_away(limba_rat *out, const limba_rat *x)
 }
 
 /* T(x) */
-static limba_type conversion(limba_lxs *S, uint32_t node, uint32_t scope,
-                             limba_type target)
+static limba_ltype conversion(limba_lxs *S, uint32_t node, uint32_t scope,
+                              limba_ltype target)
 {
     limba_lx_node *x = lxs_node(S, node);
     uint32_t args = x->b;
@@ -483,7 +484,7 @@ static limba_type conversion(limba_lxs *S, uint32_t node, uint32_t scope,
         return set(S, node, target);
     }
     uint32_t a = limba_lx_list_at(S->t, args, 0);
-    limba_type t = lxs_expr(S, a, scope, 0);
+    limba_ltype t = lxs_expr(S, a, scope, 0);
     set(S, node, target);
     if (!t || !target)
         return target;
@@ -521,13 +522,13 @@ static void check_format(limba_lxs *S, uint32_t list)
     }
 }
 
-static limba_type routine_call(limba_lxs *S, uint32_t node, uint32_t scope,
-                               limba_sym s)
+static limba_ltype routine_call(limba_lxs *S, uint32_t node, uint32_t scope,
+                                limba_sym s)
 {
     limba_lx_node *x = lxs_node(S, node);
     uint32_t args = x->b, nargs = lxs_node(S, args)->b;
     check_format(S, args);
-    limba_type sig = S->st.sym[s].type;
+    limba_ltype sig = S->st.sym[s].type;
     if (!sig) {
         for (uint32_t i = 0; i < nargs; i++)
             lxs_expr(S, limba_lx_list_at(S->t, args, i), scope, 0);
@@ -535,7 +536,7 @@ static limba_type routine_call(limba_lxs *S, uint32_t node, uint32_t scope,
     }
     const limba_typeinfo *ti = lxs_ty(S, sig);
     uint32_t first = ti->first, count = ti->count;
-    limba_type result = ti->elem;
+    limba_ltype result = ti->elem;
     size_t n;
     const char *sp = lxs_spell(S, s, &n);
     if (nargs != count)
@@ -549,10 +550,10 @@ static limba_type routine_call(limba_lxs *S, uint32_t node, uint32_t scope,
         }
         limba_param p = S->ts.param[first + i];
         char ta[128], tb[128];
-        if (kind(S, p.type) == LIMBA_TK_OPEN) {
-            limba_type at = lxs_expr(S, a, scope, 0);
+        if (kind(S, p.type) == LIMBA_LTK_OPEN) {
+            limba_ltype at = lxs_expr(S, a, scope, 0);
             unsigned ak = at ? kind(S, at) : 0;
-            if (at && !((ak == LIMBA_TK_ARRAY || ak == LIMBA_TK_OPEN) &&
+            if (at && !((ak == LIMBA_LTK_ARRAY || ak == LIMBA_LTK_OPEN) &&
                         lxs_compatible(S, lxs_ty(S, at)->elem,
                                        lxs_ty(S, p.type)->elem)))
                 lxs_error(S, LXE_TYPE_MISMATCH, a,
@@ -563,7 +564,7 @@ static limba_type routine_call(limba_lxs *S, uint32_t node, uint32_t scope,
             lxs_assign_to(S, a, p.type, "the parameter");
             continue;
         } else {
-            limba_type at = lxs_expr(S, a, scope, 0);
+            limba_ltype at = lxs_expr(S, a, scope, 0);
             if (at && !untyped(S, at) && !lxs_compatible(S, at, p.type))
                 lxs_error(S, LXE_TYPE_MISMATCH, a,
                           "this is %s, the parameter is %s",
@@ -596,10 +597,10 @@ static bool arity(limba_lxs *S, uint32_t node, uint32_t want, const char *name,
 }
 
 /* a value of type want (a constant without a type is given it) */
-static limba_type arg_of(limba_lxs *S, uint32_t a, uint32_t scope,
-                         limba_type want)
+static limba_ltype arg_of(limba_lxs *S, uint32_t a, uint32_t scope,
+                          limba_ltype want)
 {
-    limba_type t = lxs_expr(S, a, scope, want);
+    limba_ltype t = lxs_expr(S, a, scope, want);
     if (t && want)
         lxs_assign_to(S, a, want, "the argument");
     return want ? want : t;
@@ -609,7 +610,7 @@ static limba_type arg_of(limba_lxs *S, uint32_t a, uint32_t scope,
    Int64 or a Float64 */
 static void printable(limba_lxs *S, uint32_t a, uint32_t scope)
 {
-    limba_type t = lxs_expr(S, a, scope, 0);
+    limba_ltype t = lxs_expr(S, a, scope, 0);
     if (!t)
         return;
     if (untyped(S, t)) {
@@ -617,8 +618,8 @@ static void printable(limba_lxs *S, uint32_t a, uint32_t scope)
         return;
     }
     unsigned k = kind(S, t);
-    if (k != LIMBA_TK_INT && k != LIMBA_TK_FLOAT && k != LIMBA_TK_BOOL &&
-        k != LIMBA_TK_CHAR && k != LIMBA_TK_STRING) {
+    if (k != LIMBA_LTK_INT && k != LIMBA_LTK_FLOAT && k != LIMBA_LTK_BOOL &&
+        k != LIMBA_LTK_CHAR && k != LIMBA_LTK_STRING) {
         char tb[128];
         lxs_error(S, LXE_TYPE_MISMATCH, a,
                   "write prints numbers, Booleans, characters and strings, "
@@ -627,8 +628,8 @@ static void printable(limba_lxs *S, uint32_t a, uint32_t scope)
     }
 }
 
-static limba_type builtin(limba_lxs *S, uint32_t node, uint32_t scope,
-                          limba_sym s, limba_type expected)
+static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
+                           limba_sym s, limba_ltype expected)
 {
     unsigned id = S->st.sym[s].value;
     uint32_t args = lxs_node(S, node)->b, n = lxs_node(S, args)->b;
@@ -667,8 +668,8 @@ static limba_type builtin(limba_lxs *S, uint32_t node, uint32_t scope,
     case LXB_READLINE:
         if (arity(S, node, 1, nm, scope)) {
             uint32_t a = arg_at(S, node, 0);
-            limba_type t = lxs_expr(S, a, scope, 0);
-            if (t && kind(S, t) != LIMBA_TK_STRING)
+            limba_ltype t = lxs_expr(S, a, scope, 0);
+            if (t && kind(S, t) != LIMBA_LTK_STRING)
                 lxs_error(S, LXE_TYPE_MISMATCH, a,
                           "readline reads into a String variable");
             lxs_writable(S, a, true);
@@ -680,20 +681,20 @@ static limba_type builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         if (!arity(S, node, 1, nm, scope))
             return set(S, node, 0);
         uint32_t a = arg_at(S, node, 0);
-        limba_type t = lxs_expr(S, a, scope, 0);
+        limba_ltype t = lxs_expr(S, a, scope, 0);
         if (!t)
             return set(S, node, 0);
         const limba_typeinfo *ti = lxs_ty(S, t);
-        if (ti->kind == LIMBA_TK_STRING || ti->kind == LIMBA_TK_OPEN)
+        if (ti->kind == LIMBA_LTK_STRING || ti->kind == LIMBA_LTK_OPEN)
             return set(S, node, S->ty_int[3]);
-        if (ti->kind != LIMBA_TK_ARRAY) {
+        if (ti->kind != LIMBA_LTK_ARRAY) {
             lxs_error(S, LXE_TYPE_MISMATCH, a,
                       "%s takes an array or a "
                       "string, not %s",
                       nm, lxs_tname(S, t, tb));
             return set(S, node, 0);
         }
-        limba_type it = lxs_base(S, ti->index);
+        limba_ltype it = lxs_base(S, ti->index);
         if (!(ti->flags & LIMBA_TF_DYNAMIC)) {
             const limba_typeinfo *ix = lxs_ty(S, ti->index);
             __int128 v = id == LXB_LOW    ? ix->lo
@@ -717,7 +718,7 @@ static limba_type builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         if (!arity(S, node, 1, nm, scope))
             return set(S, node, S->ts.char_);
         uint32_t a = arg_at(S, node, 0);
-        limba_type t = lxs_expr(S, a, scope, 0);
+        limba_ltype t = lxs_expr(S, a, scope, 0);
         if (t && !is_int(S, t))
             lxs_error(S, LXE_TYPE_MISMATCH, a, "chr takes an integer");
         set(S, node, S->ts.char_);
@@ -732,7 +733,7 @@ static limba_type builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         if (!arity(S, node, 1, nm, scope))
             return set(S, node, 0);
         uint32_t a = arg_at(S, node, 0);
-        limba_type t = lxs_expr(S, a, scope, 0);
+        limba_ltype t = lxs_expr(S, a, scope, 0);
         if (!t)
             return set(S, node, 0);
         if (untyped(S, t) || !limba_types_is_discrete(&S->ts, t)) {
@@ -757,7 +758,7 @@ static limba_type builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         if (arity(S, node, 2, nm, scope)) {
             arg_of(S, arg_at(S, node, 0), scope, S->ts.string);
             uint32_t a = arg_at(S, node, 1);
-            limba_type t = lxs_expr(S, a, scope, 0);
+            limba_ltype t = lxs_expr(S, a, scope, 0);
             if (t && !is_numeric(S, t))
                 lxs_error(S, LXE_TYPE_MISMATCH, a, "val reads a number");
             lxs_writable(S, a, true);
@@ -777,7 +778,7 @@ static limba_type builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         if (!arity(S, node, 1, nm, scope))
             return set(S, node, 0);
         uint32_t a = arg_at(S, node, 0);
-        limba_type t = lxs_expr(S, a, scope, 0);
+        limba_ltype t = lxs_expr(S, a, scope, 0);
         if (!t)
             return set(S, node, 0);
         if (untyped(S, t)) {
@@ -802,8 +803,8 @@ static limba_type builtin(limba_lxs *S, uint32_t node, uint32_t scope,
     case LXB_DISPOSE:
         if (arity(S, node, 1, nm, scope)) {
             uint32_t a = arg_at(S, node, 0);
-            limba_type t = lxs_expr(S, a, scope, 0);
-            if (t && kind(S, t) != LIMBA_TK_POINTER)
+            limba_ltype t = lxs_expr(S, a, scope, 0);
+            if (t && kind(S, t) != LIMBA_LTK_POINTER)
                 lxs_error(S, LXE_NOT_POINTER, a, "dispose frees a pointer");
         }
         return set(S, node, S->ts.void_);
@@ -822,8 +823,8 @@ static limba_type builtin(limba_lxs *S, uint32_t node, uint32_t scope,
     return set(S, node, 0);
 }
 
-static limba_type call(limba_lxs *S, uint32_t node, uint32_t scope,
-                       limba_type expected)
+static limba_ltype call(limba_lxs *S, uint32_t node, uint32_t scope,
+                        limba_ltype expected)
 {
     limba_lx_node *x = lxs_node(S, node);
     uint32_t callee = x->a;
@@ -858,11 +859,11 @@ static limba_type call(limba_lxs *S, uint32_t node, uint32_t scope,
     return set(S, node, 0);
 }
 
-static limba_type membership(limba_lxs *S, uint32_t node, uint32_t scope)
+static limba_ltype membership(limba_lxs *S, uint32_t node, uint32_t scope)
 {
     limba_lx_node *x = lxs_node(S, node);
     uint32_t v = x->a, lo = x->b, hi = x->c;
-    limba_type t = lxs_expr(S, v, scope, 0);
+    limba_ltype t = lxs_expr(S, v, scope, 0);
     set(S, node, S->ts.bool_);
     /* x in T: the range of a type */
     limba_lx_node *lx_ = lxs_node(S, lo);
@@ -871,7 +872,7 @@ static limba_type membership(limba_lxs *S, uint32_t node, uint32_t scope)
         if (s && S->st.sym[s].kind == LIMBA_SYM_TYPE) {
             lxs_lookup(S, scope, lo); /* the spelling */
             lxs_force(S, s);
-            limba_type rt = S->st.sym[s].type;
+            limba_ltype rt = S->st.sym[s].type;
             if (t && untyped(S, t))
                 convert_const(S, v, lxs_base(S, rt));
             else if (t && !lxs_compatible(S, t, rt)) {
@@ -888,9 +889,9 @@ static limba_type membership(limba_lxs *S, uint32_t node, uint32_t scope)
         lxs_expr(S, lo, scope, 0);
         return S->ts.bool_;
     }
-    limba_type lt = lxs_expr(S, lo, scope, 0);
-    limba_type ht = lxs_expr(S, hi, scope, 0);
-    limba_type tt = t;
+    limba_ltype lt = lxs_expr(S, lo, scope, 0);
+    limba_ltype ht = lxs_expr(S, hi, scope, 0);
+    limba_ltype tt = t;
     unify(S, node, v, lo, &tt, &lt);
     tt = S->type[v];
     unify(S, node, v, hi, &tt, &ht);
@@ -900,8 +901,8 @@ static limba_type membership(limba_lxs *S, uint32_t node, uint32_t scope)
     return set(S, node, S->ts.bool_);
 }
 
-limba_type lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
-                    limba_type expected)
+limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
+                     limba_ltype expected)
 {
     limba_lx_node *x = lxs_node(S, node);
     switch (x->kind) {
@@ -939,8 +940,8 @@ limba_type lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
     case LXN_INDEX:
         return index_expr(S, node, scope);
     case LXN_DEREF: {
-        limba_type t = lxs_expr(S, x->a, scope, 0);
-        if (t && kind(S, t) != LIMBA_TK_POINTER) {
+        limba_ltype t = lxs_expr(S, x->a, scope, 0);
+        if (t && kind(S, t) != LIMBA_LTK_POINTER) {
             char tb[128];
             lxs_error(S, LXE_NOT_POINTER, node, "%s is not a pointer",
                       lxs_tname(S, t, tb));
@@ -949,7 +950,7 @@ limba_type lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
         return set(S, node, t ? lxs_ty(S, t)->elem : 0);
     }
     case LXN_CALL: {
-        limba_type t = call(S, node, scope, expected);
+        limba_ltype t = call(S, node, scope, expected);
         if (t == S->ts.void_) {
             lxs_error(S, LXE_NO_RESULT, node,
                       "a procedure gives no value: call it as a statement");
@@ -958,7 +959,7 @@ limba_type lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
         return t;
     }
     case LXN_NEW: {
-        limba_type t = lxs_type(S, x->a, scope, 0);
+        limba_ltype t = lxs_type(S, x->a, scope, 0);
         return set(S, node, t ? limba_types_pointer(&S->ts, t) : 0);
     }
     case LXN_FMT:
@@ -971,9 +972,9 @@ limba_type lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
     return set(S, node, 0);
 }
 
-limba_type lxs_call_stmt(limba_lxs *S, uint32_t node, uint32_t scope)
+limba_ltype lxs_call_stmt(limba_lxs *S, uint32_t node, uint32_t scope)
 {
-    limba_type t = call(S, node, scope, 0);
+    limba_ltype t = call(S, node, scope, 0);
     if (t && t != S->ts.void_)
         lxs_error(S, LXE_RESULT_IGNORED, node,
                   "the result of a function cannot be ignored: use it");
@@ -1004,10 +1005,10 @@ bool lxs_writable(limba_lxs *S, uint32_t node, bool report)
     }
     case LXN_SEL:
     case LXN_INDEX: {
-        limba_type bt = S->type[x->a];
-        if (bt && kind(S, bt) == LIMBA_TK_POINTER)
+        limba_ltype bt = S->type[x->a];
+        if (bt && kind(S, bt) == LIMBA_LTK_POINTER)
             return true;
-        if (x->kind == LXN_INDEX && bt && kind(S, bt) == LIMBA_TK_STRING) {
+        if (x->kind == LXN_INDEX && bt && kind(S, bt) == LIMBA_LTK_STRING) {
             why = "a String does not change: build a new one";
             break;
         }

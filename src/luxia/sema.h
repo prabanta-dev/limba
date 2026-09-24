@@ -87,18 +87,18 @@ typedef struct {
     limba_types ts;
     limba_symtab st;
     /* per node */
-    limba_type *type;
+    limba_ltype *type;
     limba_sym *sym;
     uint32_t *val;
     /* constants, v[0] unused */
     limba_lxs_value *v;
     uint32_t nv, capv;
     /* the types of the language */
-    limba_type ty_int[4], ty_uint[4], ty_bits[4], ty_f32, ty_f64;
+    limba_ltype ty_int[4], ty_uint[4], ty_bits[4], ty_f32, ty_f64;
     uint32_t universe, program;
     /* the routine being checked: its result (void for a procedure, 0
        for the body of the program) and the loops around the statement */
-    limba_type result;
+    limba_ltype result;
     bool in_routine;
     unsigned loops;
     /* canonical spellings of the names of the language, by symbol */
@@ -120,13 +120,13 @@ void lxs_note(limba_lxs *S, limba_loc loc, uint32_t len, const char *fmt, ...)
     __attribute__((format(printf, 4, 5)));
 const char *lxs_name(const limba_lxs *S, uint32_t id, size_t *len);
 /* the type as messages say it; buf of 128 bytes */
-const char *lxs_tname(const limba_lxs *S, limba_type t, char *buf);
+const char *lxs_tname(const limba_lxs *S, limba_ltype t, char *buf);
 
 static inline limba_lx_node *lxs_node(limba_lxs *S, uint32_t n)
 {
     return &S->t->node[n];
 }
-static inline const limba_typeinfo *lxs_ty(const limba_lxs *S, limba_type t)
+static inline const limba_typeinfo *lxs_ty(const limba_lxs *S, limba_ltype t)
 {
     return &S->ts.t[t];
 }
@@ -138,8 +138,8 @@ void lxs_force(limba_lxs *S, limba_sym s);
    parameter may be an open array */
 #define LXT_VAR 1u
 #define LXT_PARAM 2u
-limba_type lxs_type(limba_lxs *S, uint32_t node, uint32_t scope,
-                    unsigned where);
+limba_ltype lxs_type(limba_lxs *S, uint32_t node, uint32_t scope,
+                     unsigned where);
 /* the spelling of a symbol, as declared */
 const char *lxs_spell(const limba_lxs *S, limba_sym s, size_t *len);
 /* predeclare the names of a declaration list, then resolve them */
@@ -148,8 +148,8 @@ void lxs_resolve_all(limba_lxs *S, uint32_t list);
 limba_sym lxs_declare(limba_lxs *S, uint32_t scope, uint32_t name_node,
                       unsigned kind, uint32_t decl);
 /* the base of a range, and the type operations work in */
-limba_type lxs_base(const limba_lxs *S, limba_type t);
-bool lxs_compatible(const limba_lxs *S, limba_type a, limba_type b);
+limba_ltype lxs_base(const limba_lxs *S, limba_ltype t);
+bool lxs_compatible(const limba_lxs *S, limba_ltype a, limba_ltype b);
 
 /* constants (sema_const.c) */
 uint32_t lxs_value_new(limba_lxs *S, uint8_t kind);
@@ -159,26 +159,26 @@ bool lxs_value_to_int(const limba_lxs *S, uint32_t v, __int128 *out);
 uint32_t lxs_literal(limba_lxs *S, uint32_t node);
 /* fold an operator on constants; 0 and an error if it cannot */
 uint32_t lxs_fold_unary(limba_lxs *S, uint32_t node, unsigned op, uint32_t a,
-                        limba_type type);
+                        limba_ltype type);
 uint32_t lxs_fold_binary(limba_lxs *S, uint32_t node, unsigned op, uint32_t a,
-                         uint32_t b, limba_type type);
+                         uint32_t b, limba_ltype type);
 /* does the value fit type (after wrapping, for a modular type: then the
    value is replaced); errors at node */
-bool lxs_fit(limba_lxs *S, uint32_t node, uint32_t *v, limba_type type);
+bool lxs_fit(limba_lxs *S, uint32_t node, uint32_t *v, limba_ltype type);
 int lxs_value_cmp(const limba_lxs *S, uint32_t a, uint32_t b);
 
 /* expressions (sema_expr.c) */
 /* the type of an expression; expected guides the constants without a
    type (0: none); the node is left with its final type */
-limba_type lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
-                    limba_type expected);
+limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
+                     limba_ltype expected);
 /* the expression must be assignable to target: reports and converts */
-bool lxs_assign_to(limba_lxs *S, uint32_t node, limba_type target,
+bool lxs_assign_to(limba_lxs *S, uint32_t node, limba_ltype target,
                    const char *what);
 /* a variable that may be written (for :=, var and out arguments) */
 bool lxs_writable(limba_lxs *S, uint32_t node, bool report);
 /* a call as a statement: it must be a procedure */
-limba_type lxs_call_stmt(limba_lxs *S, uint32_t node, uint32_t scope);
+limba_ltype lxs_call_stmt(limba_lxs *S, uint32_t node, uint32_t scope);
 
 /* statements (sema_stmt.c) */
 void lxs_stmts(limba_lxs *S, uint32_t list, uint32_t scope);

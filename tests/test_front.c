@@ -287,11 +287,11 @@ static void test_types(void)
     limba_types ts;
     limba_types_init(&ts);
     limba_strtab *names = limba_strtab_new();
-    limba_type i8 = limba_types_int(&ts, 8, LIMBA_TF_SIGNED);
-    limba_type i16 = limba_types_int(&ts, 16, LIMBA_TF_SIGNED);
-    limba_type i64 = limba_types_int(&ts, 64, LIMBA_TF_SIGNED);
-    limba_type u64 = limba_types_int(&ts, 64, 0);
-    limba_type f64 = limba_types_float(&ts, 64);
+    limba_ltype i8 = limba_types_int(&ts, 8, LIMBA_TF_SIGNED);
+    limba_ltype i16 = limba_types_int(&ts, 16, LIMBA_TF_SIGNED);
+    limba_ltype i64 = limba_types_int(&ts, 64, LIMBA_TF_SIGNED);
+    limba_ltype u64 = limba_types_int(&ts, 64, 0);
+    limba_ltype f64 = limba_types_float(&ts, 64);
     limba_types_set_name(&ts, i16, limba_strtab_intern(names, "Int16", 5));
     limba_types_set_name(&ts, f64, limba_strtab_intern(names, "Float64", 7));
     CHECK(ts.t[i8].lo == -128 && ts.t[i8].hi == 127, "Int8 bounds");
@@ -299,9 +299,9 @@ static void test_types(void)
           "UInt64 bounds");
 
     /* identity: a range keeps its root, new makes one */
-    limba_type pct = limba_types_range(&ts, i16, 0, 100);
-    limba_type metri = limba_types_distinct(&ts, f64);
-    limba_type id = limba_types_distinct(&ts, pct);
+    limba_ltype pct = limba_types_range(&ts, i16, 0, 100);
+    limba_ltype metri = limba_types_distinct(&ts, f64);
+    limba_ltype id = limba_types_distinct(&ts, pct);
     CHECK(ts.t[pct].root == ts.t[i16].root, "a range is compatible");
     CHECK(ts.t[metri].root != ts.t[f64].root, "new makes a root");
     CHECK((ts.t[id].flags & LIMBA_TF_RANGE) && ts.t[id].lo == 0 &&
@@ -310,7 +310,7 @@ static void test_types(void)
           "new Int16 range 0..100 is a range of a new Int16");
 
     /* records laid out as C lays them out */
-    limba_type r = limba_types_record_begin(&ts);
+    limba_ltype r = limba_types_record_begin(&ts);
     limba_types_record_field(&ts, r, 0, i8);
     limba_types_record_field(&ts, r, 1, i64);
     limba_types_record_field(&ts, r, 2, i16);
@@ -321,17 +321,17 @@ static void test_types(void)
           "record layout");
 
     bool ok;
-    limba_type idx = limba_types_range(&ts, i16, 1, 10);
-    limba_type arr = limba_types_array(&ts, idx, f64, false, &ok);
+    limba_ltype idx = limba_types_range(&ts, i16, 1, 10);
+    limba_ltype arr = limba_types_array(&ts, idx, f64, false, &ok);
     CHECK(ok && ts.t[arr].size == 80, "array[1..10] of Float64: 80 bytes");
     limba_types_array(&ts, i64, i64, false, &ok);
     CHECK(!ok, "an array indexed by all of Int64 overflows");
     limba_types_array(&ts, i16, arr, true, &ok);
     CHECK(ok, "a dynamic array has no static size");
 
-    limba_type p1 = limba_types_pointer(&ts, r),
-               p2 = limba_types_pointer(&ts, r);
-    limba_type p3 = limba_types_pointer(&ts, i8);
+    limba_ltype p1 = limba_types_pointer(&ts, r),
+                p2 = limba_types_pointer(&ts, r);
+    limba_ltype p3 = limba_types_pointer(&ts, i8);
     CHECK(limba_types_same(&ts, p1, p2) && !limba_types_same(&ts, p1, p3),
           "pointers are equal by structure");
     CHECK(!limba_types_same(&ts, i16, pct), "a range is not the same type");

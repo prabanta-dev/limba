@@ -34,9 +34,9 @@ static void loop_body(limba_lxs *S, uint32_t list, uint32_t scope)
 static void local_var(limba_lxs *S, uint32_t d, uint32_t scope)
 {
     limba_lx_node *x = lxs_node(S, d);
-    limba_type t = x->b ? lxs_type(S, x->b, scope, LXT_VAR) : 0;
+    limba_ltype t = x->b ? lxs_type(S, x->b, scope, LXT_VAR) : 0;
     if (x->c) {
-        limba_type vt = lxs_expr(S, x->c, scope, t);
+        limba_ltype vt = lxs_expr(S, x->c, scope, t);
         if (t) {
             lxs_assign_to(S, x->c, t, "the variable");
         } else if (vt == S->ts.uint || vt == S->ts.ureal || vt == S->ts.nil) {
@@ -59,9 +59,9 @@ static void local_var(limba_lxs *S, uint32_t d, uint32_t scope)
 static void local_const(limba_lxs *S, uint32_t d, uint32_t scope)
 {
     limba_lx_node *x = lxs_node(S, d);
-    limba_type t = x->b ? lxs_type(S, x->b, scope, 0) : 0;
+    limba_ltype t = x->b ? lxs_type(S, x->b, scope, 0) : 0;
     uint32_t errors = S->rep->errors;
-    limba_type vt = lxs_expr(S, x->c, scope, t);
+    limba_ltype vt = lxs_expr(S, x->c, scope, t);
     uint32_t v = S->val[x->c];
     if (!v && vt && S->rep->errors == errors)
         lxs_error(S, LXE_NOT_CONSTANT, x->c,
@@ -94,7 +94,7 @@ static void case_stmt(limba_lxs *S, uint32_t node, uint32_t scope)
 {
     limba_lx_node *x = lxs_node(S, node);
     uint32_t sel = x->a, whens = x->b, other = x->c;
-    limba_type t = lxs_expr(S, sel, scope, 0);
+    limba_ltype t = lxs_expr(S, sel, scope, 0);
     char tb[128];
     if (t && (t == S->ts.uint || !limba_types_is_discrete(&S->ts, t))) {
         lxs_error(S, LXE_TYPE_MISMATCH, sel,
@@ -170,9 +170,9 @@ static void for_stmt(limba_lxs *S, uint32_t node, uint32_t scope)
     limba_lx_node *x = lxs_node(S, node);
     uint32_t name = x->a, tnode = x->b, range = x->c, body = x->d;
     uint32_t from = lxs_node(S, range)->a, to = lxs_node(S, range)->b;
-    limba_type t = tnode ? lxs_type(S, tnode, scope, 0) : 0;
-    limba_type ft = lxs_expr(S, from, scope, t);
-    limba_type tt = lxs_expr(S, to, scope, t);
+    limba_ltype t = tnode ? lxs_type(S, tnode, scope, 0) : 0;
+    limba_ltype ft = lxs_expr(S, from, scope, t);
+    limba_ltype tt = lxs_expr(S, to, scope, t);
     if (!t) {
         bool fu = ft == S->ts.uint || ft == S->ts.ureal;
         bool tu = tt == S->ts.uint || tt == S->ts.ureal;
@@ -213,7 +213,7 @@ static void stmt(limba_lxs *S, uint32_t node, uint32_t scope)
     switch (x->kind) {
     case LXN_ASSIGN: {
         uint32_t target = x->a, value = x->b;
-        limba_type t = lxs_expr(S, target, scope, 0);
+        limba_ltype t = lxs_expr(S, target, scope, 0);
         bool ok = lxs_writable(S, target, true);
         lxs_expr(S, value, scope, t);
         if (ok)
@@ -297,7 +297,7 @@ void lxs_routine_body(limba_lxs *S, limba_sym routine)
 {
     limba_symbol *y = &S->st.sym[routine];
     uint32_t scope = y->value;
-    limba_type sig = y->type;
+    limba_ltype sig = y->type;
     limba_lx_node *x = lxs_node(S, y->node);
     uint32_t body = x->d;
     if (!scope || !body)

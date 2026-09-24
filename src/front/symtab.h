@@ -37,7 +37,7 @@ typedef struct {
     uint32_t scope;
     limba_loc loc; /* where it was declared, its spelling */
     uint32_t len;
-    limba_type type;
+    limba_ltype type;
     uint32_t value; /* the language's: a constant, a builtin id, ... */
     uint32_t node;  /* the declaring node of the tree */
 } limba_symbol;

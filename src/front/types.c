@@ -15,11 +15,11 @@
    IR lowers them, these serve sizeof and the layout of records */
 #define PTR_SIZE 8
 
-static limba_type add(limba_types *ts, unsigned kind, unsigned flags,
-                      uint64_t size, uint32_t align)
+static limba_ltype add(limba_types *ts, unsigned kind, unsigned flags,
+                       uint64_t size, uint32_t align)
 {
     LIMBA_GROW(ts->t, ts->n, ts->cap);
-    limba_type id = ts->n++;
+    limba_ltype id = ts->n++;
     limba_typeinfo *t = &ts->t[id];
     memset(t, 0, sizeof(*t));
     t->kind = (uint8_t)kind;
@@ -34,16 +34,16 @@ static limba_type add(limba_types *ts, unsigned kind, unsigned flags,
 void limba_types_init(limba_types *ts)
 {
     memset(ts, 0, sizeof(*ts));
-    add(ts, LIMBA_TK_ERROR, 0, 0, 1);
-    ts->void_ = add(ts, LIMBA_TK_VOID, 0, 0, 1);
-    ts->uint = add(ts, LIMBA_TK_UINT, 0, 0, 1);
-    ts->ureal = add(ts, LIMBA_TK_UREAL, 0, 0, 1);
-    ts->nil = add(ts, LIMBA_TK_NIL, 0, PTR_SIZE, PTR_SIZE);
-    ts->bool_ = add(ts, LIMBA_TK_BOOL, 0, 1, 1);
+    add(ts, LIMBA_LTK_ERROR, 0, 0, 1);
+    ts->void_ = add(ts, LIMBA_LTK_VOID, 0, 0, 1);
+    ts->uint = add(ts, LIMBA_LTK_UINT, 0, 0, 1);
+    ts->ureal = add(ts, LIMBA_LTK_UREAL, 0, 0, 1);
+    ts->nil = add(ts, LIMBA_LTK_NIL, 0, PTR_SIZE, PTR_SIZE);
+    ts->bool_ = add(ts, LIMBA_LTK_BOOL, 0, 1, 1);
     ts->t[ts->bool_].hi = 1;
-    ts->char_ = add(ts, LIMBA_TK_CHAR, 0, 4, 4);
+    ts->char_ = add(ts, LIMBA_LTK_CHAR, 0, 4, 4);
     ts->t[ts->char_].hi = 0x10ffff;
-    ts->string = add(ts, LIMBA_TK_STRING, 0, PTR_SIZE, PTR_SIZE);
+    ts->string = add(ts, LIMBA_LTK_STRING, 0, PTR_SIZE, PTR_SIZE);
 }
 
 void limba_types_free(limba_types *ts)
@@ -54,9 +54,9 @@ void limba_types_free(limba_types *ts)
     memset(ts, 0, sizeof(*ts));
 }
 
-limba_type limba_types_int(limba_types *ts, unsigned bits, unsigned flags)
+limba_ltype limba_types_int(limba_types *ts, unsigned bits, unsigned flags)
 {
-    limba_type id = add(ts, LIMBA_TK_INT, flags, bits / 8, bits / 8);
+    limba_ltype id = add(ts, LIMBA_LTK_INT, flags, bits / 8, bits / 8);
     limba_typeinfo *t = &ts->t[id];
     t->bits = (uint16_t)bits;
     if (flags & LIMBA_TF_SIGNED) {
@@ -69,28 +69,28 @@ limba_type limba_types_int(limba_types *ts, unsigned bits, unsigned flags)
     return id;
 }
 
-limba_type limba_types_float(limba_types *ts, unsigned bits)
+limba_ltype limba_types_float(limba_types *ts, unsigned bits)
 {
-    limba_type id =
-        add(ts, LIMBA_TK_FLOAT, LIMBA_TF_SIGNED, bits / 8, bits / 8);
+    limba_ltype id =
+        add(ts, LIMBA_LTK_FLOAT, LIMBA_TF_SIGNED, bits / 8, bits / 8);
     ts->t[id].bits = (uint16_t)bits;
     return id;
 }
 
-limba_type limba_types_enum(limba_types *ts, uint32_t count)
+limba_ltype limba_types_enum(limba_types *ts, uint32_t count)
 {
     uint32_t size = count <= 256 ? 1 : count <= 65536 ? 2 : 4;
-    limba_type id = add(ts, LIMBA_TK_ENUM, 0, size, size);
+    limba_ltype id = add(ts, LIMBA_LTK_ENUM, 0, size, size);
     ts->t[id].count = count;
     ts->t[id].lo = 0;
     ts->t[id].hi = (__int128)count - 1;
     return id;
 }
 
-limba_type limba_types_range(limba_types *ts, limba_type base, __int128 lo,
-                             __int128 hi)
+limba_ltype limba_types_range(limba_types *ts, limba_ltype base, __int128 lo,
+                              __int128 hi)
 {
-    limba_type id = add(ts, 0, 0, 0, 1);
+    limba_ltype id = add(ts, 0, 0, 0, 1);
     limba_typeinfo *t = &ts->t[id];
     *t = ts->t[base];
     t->flags |= LIMBA_TF_RANGE;
@@ -101,15 +101,15 @@ limba_type limba_types_range(limba_types *ts, limba_type base, __int128 lo,
     return id;
 }
 
-limba_type limba_types_distinct(limba_types *ts, limba_type base)
+limba_ltype limba_types_distinct(limba_types *ts, limba_ltype base)
 {
     /* new T range a..b: the range of a new copy of T, as in Ada */
     if (ts->t[base].flags & LIMBA_TF_RANGE) {
         __int128 lo = ts->t[base].lo, hi = ts->t[base].hi;
-        limba_type d = limba_types_distinct(ts, ts->t[base].base);
+        limba_ltype d = limba_types_distinct(ts, ts->t[base].base);
         return limba_types_range(ts, d, lo, hi);
     }
-    limba_type id = add(ts, 0, 0, 0, 1);
+    limba_ltype id = add(ts, 0, 0, 0, 1);
     limba_typeinfo *t = &ts->t[id];
     *t = ts->t[base];
     t->root = t->base = id;
@@ -117,8 +117,8 @@ limba_type limba_types_distinct(limba_types *ts, limba_type base)
     return id;
 }
 
-limba_type limba_types_array(limba_types *ts, limba_type index, limba_type elem,
-                             bool dynamic, bool *ok)
+limba_ltype limba_types_array(limba_types *ts, limba_ltype index,
+                              limba_ltype elem, bool dynamic, bool *ok)
 {
     *ok = true;
     uint64_t size = 0;
@@ -132,36 +132,36 @@ limba_type limba_types_array(limba_types *ts, limba_type index, limba_type elem,
             size = 0;
         }
     }
-    limba_type id = add(ts, LIMBA_TK_ARRAY, dynamic ? LIMBA_TF_DYNAMIC : 0,
-                        size, ts->t[elem].align);
+    limba_ltype id = add(ts, LIMBA_LTK_ARRAY, dynamic ? LIMBA_TF_DYNAMIC : 0,
+                         size, ts->t[elem].align);
     ts->t[id].index = index;
     ts->t[id].elem = elem;
     return id;
 }
 
-limba_type limba_types_open(limba_types *ts, limba_type elem)
+limba_ltype limba_types_open(limba_types *ts, limba_ltype elem)
 {
-    limba_type id = add(ts, LIMBA_TK_OPEN, 0, 2 * PTR_SIZE, PTR_SIZE);
+    limba_ltype id = add(ts, LIMBA_LTK_OPEN, 0, 2 * PTR_SIZE, PTR_SIZE);
     ts->t[id].elem = elem;
     return id;
 }
 
-limba_type limba_types_pointer(limba_types *ts, limba_type target)
+limba_ltype limba_types_pointer(limba_types *ts, limba_ltype target)
 {
-    limba_type id = add(ts, LIMBA_TK_POINTER, 0, PTR_SIZE, PTR_SIZE);
+    limba_ltype id = add(ts, LIMBA_LTK_POINTER, 0, PTR_SIZE, PTR_SIZE);
     ts->t[id].elem = target;
     return id;
 }
 
-void limba_types_set_target(limba_types *ts, limba_type p, limba_type target)
+void limba_types_set_target(limba_types *ts, limba_ltype p, limba_ltype target)
 {
     ts->t[p].elem = target;
 }
 
-limba_type limba_types_routine(limba_types *ts, const limba_param *params,
-                               uint32_t n, limba_type result)
+limba_ltype limba_types_routine(limba_types *ts, const limba_param *params,
+                                uint32_t n, limba_ltype result)
 {
-    limba_type id = add(ts, LIMBA_TK_ROUTINE, 0, PTR_SIZE, PTR_SIZE);
+    limba_ltype id = add(ts, LIMBA_LTK_ROUTINE, 0, PTR_SIZE, PTR_SIZE);
     ts->t[id].first = ts->nparam;
     ts->t[id].count = n;
     ts->t[id].elem = result;
@@ -172,22 +172,22 @@ limba_type limba_types_routine(limba_types *ts, const limba_param *params,
     return id;
 }
 
-limba_type limba_types_record_begin(limba_types *ts)
+limba_ltype limba_types_record_begin(limba_types *ts)
 {
-    limba_type id = add(ts, LIMBA_TK_RECORD, LIMBA_TF_INCOMPLETE, 0, 1);
+    limba_ltype id = add(ts, LIMBA_LTK_RECORD, LIMBA_TF_INCOMPLETE, 0, 1);
     ts->t[id].first = ts->nfield;
     return id;
 }
 
-void limba_types_record_field(limba_types *ts, limba_type r, uint32_t name,
-                              limba_type type)
+void limba_types_record_field(limba_types *ts, limba_ltype r, uint32_t name,
+                              limba_ltype type)
 {
     LIMBA_GROW(ts->field, ts->nfield, ts->capfield);
     ts->field[ts->nfield++] = (limba_field){name, type, 0};
     ts->t[r].count++;
 }
 
-bool limba_types_record_end(limba_types *ts, limba_type r)
+bool limba_types_record_end(limba_types *ts, limba_ltype r)
 {
     limba_typeinfo *t = &ts->t[r];
     uint64_t off = 0;
@@ -210,13 +210,13 @@ bool limba_types_record_end(limba_types *ts, limba_type r)
     return ok;
 }
 
-void limba_types_set_name(limba_types *ts, limba_type t, uint32_t name)
+void limba_types_set_name(limba_types *ts, limba_ltype t, uint32_t name)
 {
     if (ts->t[t].name == UINT32_MAX)
         ts->t[t].name = name;
 }
 
-bool limba_types_same(const limba_types *ts, limba_type a, limba_type b)
+bool limba_types_same(const limba_types *ts, limba_ltype a, limba_ltype b)
 {
     if (a == b)
         return true;
@@ -224,10 +224,10 @@ bool limba_types_same(const limba_types *ts, limba_type a, limba_type b)
     if (x->kind != y->kind)
         return false;
     switch (x->kind) {
-    case LIMBA_TK_POINTER:
-    case LIMBA_TK_OPEN:
+    case LIMBA_LTK_POINTER:
+    case LIMBA_LTK_OPEN:
         return limba_types_same(ts, x->elem, y->elem);
-    case LIMBA_TK_ROUTINE:
+    case LIMBA_LTK_ROUTINE:
         if (x->count != y->count || !limba_types_same(ts, x->elem, y->elem))
             return false;
         for (uint32_t i = 0; i < x->count; i++) {
@@ -241,11 +241,11 @@ bool limba_types_same(const limba_types *ts, limba_type a, limba_type b)
     return false;
 }
 
-bool limba_types_is_discrete(const limba_types *ts, limba_type t)
+bool limba_types_is_discrete(const limba_types *ts, limba_ltype t)
 {
     unsigned k = ts->t[t].kind;
-    return k == LIMBA_TK_INT || k == LIMBA_TK_BOOL || k == LIMBA_TK_CHAR ||
-           k == LIMBA_TK_ENUM;
+    return k == LIMBA_LTK_INT || k == LIMBA_LTK_BOOL || k == LIMBA_LTK_CHAR ||
+           k == LIMBA_LTK_ENUM;
 }
 
 /* a 128-bit value in decimal */
@@ -276,7 +276,7 @@ static size_t put(char *buf, size_t size, size_t len, const char *s, size_t n)
     return len;
 }
 
-static size_t show(const limba_types *ts, limba_type id, limba_name_fn name,
+static size_t show(const limba_types *ts, limba_ltype id, limba_name_fn name,
                    const void *ctx, char *buf, size_t size, size_t len,
                    int depth)
 {
@@ -290,32 +290,32 @@ static size_t show(const limba_types *ts, limba_type id, limba_name_fn name,
         return put(buf, size, len, "...", 3);
     char num[48];
     switch (t->kind) {
-    case LIMBA_TK_ERROR:
+    case LIMBA_LTK_ERROR:
         return put(buf, size, len, "?", 1);
-    case LIMBA_TK_VOID:
+    case LIMBA_LTK_VOID:
         return put(buf, size, len, "no value", 8);
-    case LIMBA_TK_UINT:
+    case LIMBA_LTK_UINT:
         return put(buf, size, len, "an integer constant", 19);
-    case LIMBA_TK_UREAL:
+    case LIMBA_LTK_UREAL:
         return put(buf, size, len, "a real constant", 15);
-    case LIMBA_TK_NIL:
+    case LIMBA_LTK_NIL:
         return put(buf, size, len, "nil", 3);
-    case LIMBA_TK_ARRAY:
+    case LIMBA_LTK_ARRAY:
         len = put(buf, size, len, "array[", 6);
         len = show(ts, t->index, name, ctx, buf, size, len, depth + 1);
         len = put(buf, size, len, "] of ", 5);
         return show(ts, t->elem, name, ctx, buf, size, len, depth + 1);
-    case LIMBA_TK_OPEN:
+    case LIMBA_LTK_OPEN:
         len = put(buf, size, len, "array of ", 9);
         return show(ts, t->elem, name, ctx, buf, size, len, depth + 1);
-    case LIMBA_TK_POINTER:
+    case LIMBA_LTK_POINTER:
         len = put(buf, size, len, "^", 1);
         return show(ts, t->elem, name, ctx, buf, size, len, depth + 1);
-    case LIMBA_TK_RECORD:
+    case LIMBA_LTK_RECORD:
         return put(buf, size, len, "a record", 8);
-    case LIMBA_TK_ENUM:
+    case LIMBA_LTK_ENUM:
         return put(buf, size, len, "an enumeration", 14);
-    case LIMBA_TK_ROUTINE:
+    case LIMBA_LTK_ROUTINE:
         return put(buf, size, len, "a routine", 9);
     }
     if (t->flags & LIMBA_TF_RANGE) {
@@ -328,13 +328,13 @@ static size_t show(const limba_types *ts, limba_type id, limba_name_fn name,
         return put(buf, size, len, num, strlen(num));
     }
     snprintf(num, sizeof(num), "%s%u",
-             t->kind == LIMBA_TK_FLOAT ? "a float of " : "an integer of ",
+             t->kind == LIMBA_LTK_FLOAT ? "a float of " : "an integer of ",
              t->bits);
     len = put(buf, size, len, num, strlen(num));
     return put(buf, size, len, " bits", 5);
 }
 
-const char *limba_types_show(const limba_types *ts, limba_type t,
+const char *limba_types_show(const limba_types *ts, limba_ltype t,
                              limba_name_fn name, const void *ctx, char *buf,
                              size_t size)
 {
