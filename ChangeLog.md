@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The shared table of types (`src/front/types.c`): identity through a
+  root (a range stays compatible with its base, `new` makes a type of
+  its own), records laid out as C lays them out, arrays with overflow
+  checks on their size, and types printed for messages. The shared table
+  of scopes and names (`src/front/symtab.c`): lookup never declares,
+  declaring reports the duplicate.
 - Integers and rationals of any size for constant expressions
   (`src/front/bigint.c`), bounded at 16384 bits: constants are exact, as
   in Ada, and are rounded to `Float64` or `Float32` once, to nearest even,
