@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Integers and rationals of any size for constant expressions
+  (`src/front/bigint.c`), bounded at 16384 bits: constants are exact, as
+  in Ada, and are rounded to `Float64` or `Float32` once, to nearest even,
+  subnormals included. `test_front` checks 20 000 random literals against
+  the rounding of `strtod` and `strtof`.
 - The Luxia parser: recursive descent for declarations and statements,
   expressions through a Pratt engine shared by any front end
   (`src/front/pratt.h`), whose table carries the rules of rigour (no
