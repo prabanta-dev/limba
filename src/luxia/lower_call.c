@@ -86,7 +86,9 @@ static void routine(lxl *L, uint32_t node, limba_sym s, limba_id *result)
         } else if (p.mode != LXS_IN || !lxl_scalar(L, p.type)) {
             v[0] = lxl_addr(L, a);
         } else {
-            v[0] = lxl_coerce(L, lxl_value(L, a), S->type[a], p.type);
+            v[0] = lxl_value(L, a);
+            lxl_at(L, node); /* a range is checked at the call */
+            v[0] = lxl_coerce(L, v[0], S->type[a], p.type);
         }
         for (uint32_t j = 0; j < k; j++) {
             LIMBA_GROW(ops, n, cap);

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- The random Luxia programs gain ranges (in variables, parameters,
+  results, `for` loops and conversions), `in` and arrays indexed by a
+  range. They found four faults, fixed with a case each in `test_luxia`:
+  a constant in an operation took the range of the other operand instead
+  of its base type (`x + 100` with `x` in `-5..20` was refused); `in` on
+  constants made IR without a type; a conversion from an unsigned value
+  to a range below zero never failed; a range check after a computed
+  value was reported at the last operator instead of the assignment,
+  argument, `return` or `for`. The target of an assignment is now
+  evaluated before its value, as the specification now says.
 - Random Luxia programs that know what they print (`src/luxia/gen.c`,
   `tools/lx_gen`): well-typed by construction, with integers of every
   family, Boolean, routines with `in` and `var` parameters and the

@@ -3,24 +3,27 @@
 /*
  * gen.c - random Luxia programs and their expected output (see gen.h).
  *
- * The program is a small tree: expressions, statements, blocks, routines.
- * It is grown from the variables in scope, so it is valid by construction:
- * both operands of an operator have one type, a constant never meets
- * another constant (the front end would compute it, and complain when it
- * does not fit), a literal always fits its type, loops count to a small
- * bound. Functions are pure (no output, no global written, no var
- * parameter), so the order in which an expression calls them does not
- * show; routines call only the routines made before them.
+ * The program is a small tree: types, expressions, statements, blocks,
+ * routines. It is grown from the variables in scope, so it is valid by
+ * construction: both operands of an operator have one type, a constant
+ * never meets another constant (the front end would compute it, and
+ * complain when it does not fit), a literal always fits where it goes,
+ * loops count to a small bound. Functions are pure (no output, no global
+ * written, no var parameter), so the order in which an expression calls
+ * them does not show; routines call only the routines made before them.
  *
  * The run follows the rules of the specification: checked arithmetic on
  * IntN and UIntN, modular arithmetic on BitsN, div towards zero, mod with
  * the sign of the divisor, rem with the sign of the dividend, and and or
  * on Boolean that stop early, conversions that must hold the value (the
- * BitsN take the low bits), operands, arguments and the items of writeln
- * from left to right, each item printed before the next is computed, and
- * continue in repeat going to the test. The run-time error codes are not
- * in the specification yet: 6 overflow, 11 division by zero, 103
- * conversion, 104 shift.
+ * BitsN take the low bits), operations on a range done in its base type
+ * and the range checked where a value is stored (assignment, declaration,
+ * argument, return, the bounds of a for), array indices always checked;
+ * operands, arguments and the items of writeln from left to right, each
+ * item printed before the next is computed, the target of an assignment
+ * before its value, continue in repeat going to the test. The run-time
+ * error codes are not in the specification yet: 6 overflow, 11 division
+ * by zero, 100 index, 101 range, 103 conversion, 104 shift.
  */
 #include "gen.h"
 
@@ -34,6 +37,8 @@
 typedef __int128 v128;
 typedef unsigned __int128 u128;
 
+/* the scalar types of the language; ranges and arrays follow them in the
+   table of a program */
 enum {
     T_I8,
     T_I16,
@@ -80,6 +85,14 @@ static v128 tmax(unsigned t)
     return ((v128)1 << tbits(t)) - 1;
 }
 
+enum { K_BASE, K_RANGE, K_ARRAY };
+
+typedef struct {
+    uint8_t k, base; /* base: the scalar type of a range or of itself */
+    uint32_t index, elem;
+    v128 lo, hi; /* of a range; of the index of an array */
+} xt;
+
 enum {
     O_ADD,
     O_SUB,
@@ -108,13 +121,15 @@ static const char *const otext[] = {
     "shr", "=", "<>", "<",   "<=",  ">",   ">=",  "-",  "abs", "not",
 };
 
-enum { E_LIT, E_VAR, E_BIN, E_UN, E_CONV, E_CALL, E_STR };
+/* E_IN: a in type fn, or a in b..c when fn is 0 */
+enum { E_LIT, E_VAR, E_BIN, E_UN, E_CONV, E_CALL, E_STR, E_INDEX, E_IN };
 
 typedef struct {
-    uint8_t k, t, op;
+    uint8_t k, op;
     bool cst; /* a literal: the front end knows its value */
+    uint32_t t;
     v128 lit;
-    uint32_t var, fn, a, b, args, nargs;
+    uint32_t var, fn, a, b, c, args, nargs;
     uint32_t line, col; /* where a run-time error here is reported */
 } xe;
 
@@ -135,13 +150,15 @@ enum {
 
 typedef struct {
     uint8_t k;
-    bool down;
-    uint32_t var, e, e2; /* e, e2: 0 for none (node 0 is never used) */
-    uint32_t blk, nblk;  /* the body */
-    uint32_t alt, nalt;  /* else */
-    bool has_alt;
-    uint32_t arm, narm; /* if and case */
+    bool down, has_alt;
+    uint32_t var, idx, e, e2; /* idx, e, e2: 0 for none (node 0 unused) */
+    uint32_t blk, nblk;       /* the body */
+    uint32_t alt, nalt;       /* else */
+    uint32_t arm, narm;       /* if and case */
     uint32_t fn, args, nargs;
+    uint32_t line, col;   /* the statement */
+    uint32_t nline, ncol; /* the name it declares */
+    uint32_t iline, icol; /* the [ of its target */
 } xs;
 
 typedef struct {
@@ -158,12 +175,13 @@ enum { V_GLOBAL, V_LOCAL, V_IN, V_VAR, V_LOOP, V_COUNT };
 static const char vprefix[] = {'g', 'v', 'a', 'a', 'i', 'w'};
 
 typedef struct {
-    uint8_t t, kind;
+    uint32_t t;
+    uint8_t kind;
 } xv;
 
 typedef struct {
     bool func;
-    uint8_t rt;
+    uint32_t rt;
     uint32_t par[4];
     uint8_t np;
     uint32_t blk, nblk;
@@ -171,6 +189,8 @@ typedef struct {
 
 typedef struct {
     uint64_t s;
+    xt *ty;
+    uint32_t nty, capty;
     xe *e;
     uint32_t ne, cape;
     xs *st;
@@ -224,46 +244,107 @@ static unsigned any_type(G *g)
     return chance(g, 15) ? T_BOOL : int_type(g);
 }
 
-static v128 clamp(unsigned t, v128 v)
+static v128 clamp_in(v128 lo, v128 hi, v128 v)
 {
-    return v < tmin(t) ? tmin(t) : v > tmax(t) ? tmax(t) : v;
+    return v < lo ? lo : v > hi ? hi : v;
 }
 
-/* a value of type t, often one at an edge */
-static v128 rand_value(G *g, unsigned t)
+/* a value of lo..hi, often one at an edge */
+static v128 rand_in(G *g, v128 lo, v128 hi)
 {
-    if (t == T_BOOL)
-        return below(g, 2);
-    v128 lo = tmin(t), hi = tmax(t);
     switch (below(g, 12)) {
     case 0:
         return lo;
     case 1:
         return hi;
     case 2:
-        return clamp(t, lo + 1);
+        return clamp_in(lo, hi, lo + 1);
     case 3:
-        return clamp(t, hi - 1);
+        return clamp_in(lo, hi, hi - 1);
     case 4:
-        return fam(t) == 'S' ? -1 : 2;
+        return clamp_in(lo, hi, lo < 0 ? -1 : 2);
     case 5: {
         u128 range = (u128)(hi - lo) + 1;
         u128 r = ((u128)rnd(g) << 64 | rnd(g)) % range;
         return lo + (v128)r;
     }
     default:
-        return clamp(t, (v128)below(g, 41) - 20);
+        return clamp_in(lo, hi, (v128)below(g, 41) - 20);
     }
+}
+
+static v128 rand_value(G *g, unsigned t)
+{
+    return t == T_BOOL ? below(g, 2) : rand_in(g, tmin(t), tmax(t));
+}
+
+/* ---- types ---- */
+
+static unsigned base(const G *g, uint32_t t)
+{
+    return g->ty[t].base;
+}
+
+static v128 lo_of(const G *g, uint32_t t)
+{
+    return g->ty[t].lo;
+}
+
+static v128 hi_of(const G *g, uint32_t t)
+{
+    return g->ty[t].hi;
+}
+
+static bool is_array(const G *g, uint32_t t)
+{
+    return g->ty[t].k == K_ARRAY;
+}
+
+static uint32_t new_type(G *g, xt x)
+{
+    LIMBA_GROW(g->ty, g->nty, g->capty);
+    g->ty[g->nty] = x;
+    return g->nty++;
+}
+
+/* a range of an integer type (not Bits): short (the index of an array)
+   or any */
+static uint32_t new_range(G *g, bool short_range)
+{
+    unsigned b = below(g, T_B8);
+    v128 lo = rand_value(g, b), hi;
+    if (short_range) {
+        lo = clamp_in(tmin(b), tmax(b) - 5, lo);
+        hi = lo + below(g, 6);
+    } else {
+        hi = rand_value(g, b);
+        if (hi < lo) {
+            v128 x = lo;
+            lo = hi;
+            hi = x;
+        }
+    }
+    return new_type(g, (xt){K_RANGE, (uint8_t)b, 0, 0, lo, hi});
+}
+
+/* the type of a variable: a scalar, sometimes a range of the program */
+static uint32_t var_type(G *g)
+{
+    uint32_t n = 0, chosen = 0;
+    for (uint32_t t = NTYPES; t < g->nty; t++)
+        if (g->ty[t].k == K_RANGE && below(g, ++n) == 0)
+            chosen = t;
+    return n && chance(g, 30) ? chosen : any_type(g);
 }
 
 /* ---- the tree ---- */
 
-static uint32_t new_e(G *g, unsigned k, unsigned t)
+static uint32_t new_e(G *g, unsigned k, uint32_t t)
 {
     LIMBA_GROW(g->e, g->ne, g->cape);
     memset(&g->e[g->ne], 0, sizeof(xe));
     g->e[g->ne].k = (uint8_t)k;
-    g->e[g->ne].t = (uint8_t)t;
+    g->e[g->ne].t = t;
     return g->ne++;
 }
 
@@ -275,10 +356,10 @@ static uint32_t new_s(G *g, unsigned k)
     return g->ns++;
 }
 
-static uint32_t new_v(G *g, unsigned t, unsigned kind)
+static uint32_t new_v(G *g, uint32_t t, unsigned kind)
 {
     LIMBA_GROW(g->v, g->nv, g->capv);
-    g->v[g->nv] = (xv){(uint8_t)t, (uint8_t)kind};
+    g->v[g->nv] = (xv){t, (uint8_t)kind};
     return g->nv++;
 }
 
@@ -299,7 +380,7 @@ static uint32_t keep_list(G *g, const uint32_t *x, uint32_t n)
     return at;
 }
 
-static uint32_t lit(G *g, unsigned t, v128 v)
+static uint32_t lit(G *g, uint32_t t, v128 v)
 {
     uint32_t i = new_e(g, E_LIT, t);
     g->e[i].lit = v;
@@ -314,7 +395,7 @@ static uint32_t var_ref(G *g, uint32_t v)
     return i;
 }
 
-static uint32_t binop(G *g, unsigned op, unsigned t, uint32_t a, uint32_t b)
+static uint32_t binop(G *g, unsigned op, uint32_t t, uint32_t a, uint32_t b)
 {
     uint32_t i = new_e(g, E_BIN, t);
     g->e[i].op = (uint8_t)op;
@@ -336,14 +417,19 @@ static bool writable(const G *g, uint32_t v)
     return !(k == V_GLOBAL && in_function(g));
 }
 
-/* a visible variable of type t (NTYPES: of an integer type); -1 if none */
-static int pick_var(G *g, unsigned t, bool write)
+/* a visible scalar variable whose type has base t (NTYPES: any integer;
+   exact: the type is t itself); -1 if none */
+static int pick_var(G *g, uint32_t t, bool write, bool exact)
 {
     uint32_t n = 0, chosen = 0;
     for (uint32_t i = 0; i < g->nscope; i++) {
         uint32_t v = g->scope[i];
-        unsigned vt = g->v[v].t;
-        if (t == NTYPES ? vt == T_BOOL : vt != t)
+        uint32_t vt = g->v[v].t;
+        if (is_array(g, vt))
+            continue;
+        if (exact         ? vt != t
+            : t == NTYPES ? base(g, vt) == T_BOOL
+                          : base(g, vt) != t)
             continue;
         if (write && !writable(g, v))
             continue;
@@ -353,25 +439,75 @@ static int pick_var(G *g, unsigned t, bool write)
     return n ? (int)chosen : -1;
 }
 
-/* a function made before the current routine, returning t; -1 if none */
+/* a visible array whose elements have base t (NTYPES: any); -1 if none */
+static int pick_array(G *g, uint32_t t, bool write)
+{
+    uint32_t n = 0, chosen = 0;
+    for (uint32_t i = 0; i < g->nscope; i++) {
+        uint32_t v = g->scope[i];
+        uint32_t vt = g->v[v].t;
+        if (!is_array(g, vt))
+            continue;
+        if (t != NTYPES && base(g, g->ty[vt].elem) != t)
+            continue;
+        if (write && !writable(g, v))
+            continue;
+        if (below(g, ++n) == 0)
+            chosen = v;
+    }
+    return n ? (int)chosen : -1;
+}
+
+/* a function made before the current routine, whose result has base t;
+   -1 if none */
 static int pick_func(G *g, unsigned t)
 {
     uint32_t top = g->cur >= 0 ? (uint32_t)g->cur : g->nr, n = 0, chosen = 0;
     for (uint32_t i = 0; i < top; i++)
-        if (g->r[i].func && g->r[i].rt == t && below(g, ++n) == 0)
+        if (g->r[i].func && base(g, g->r[i].rt) == t && below(g, ++n) == 0)
             chosen = i;
     return n ? (int)chosen : -1;
 }
 
 static uint32_t expr(G *g, unsigned t, int d, bool need_var);
 
+/* a value to store where type t is: a literal is made to fit it, any
+   other value is checked when stored */
+static uint32_t value_for(G *g, uint32_t t, int d)
+{
+    uint32_t e = expr(g, base(g, t), d, false);
+    if (g->e[e].cst && base(g, t) != T_BOOL)
+        g->e[e].lit = rand_in(g, lo_of(g, t), hi_of(g, t));
+    return e;
+}
+
+static int depth(G *g)
+{
+    return 1 + (int)below(g, 4);
+}
+
+/* an index of array type at: a literal inside it, or any value */
+static uint32_t index_for(G *g, uint32_t at, int d)
+{
+    return value_for(g, g->ty[at].index, d);
+}
+
+static uint32_t element(G *g, uint32_t v, int d)
+{
+    uint32_t at = g->v[v].t;
+    uint32_t ix = index_for(g, at, d - 1);
+    uint32_t i = new_e(g, E_INDEX, g->ty[at].elem);
+    g->e[i].var = v;
+    g->e[i].a = ix;
+    return i;
+}
+
 static uint32_t call_expr(G *g, uint32_t fn, int d)
 {
     uint32_t a[4];
-    const xr *r = &g->r[fn];
-    uint32_t np = r->np;
+    uint32_t np = g->r[fn].np;
     for (uint32_t k = 0; k < np; k++)
-        a[k] = expr(g, g->v[g->r[fn].par[k]].t, d - 1, false);
+        a[k] = value_for(g, g->v[g->r[fn].par[k]].t, d - 1);
     uint32_t i = new_e(g, E_CALL, g->r[fn].rt);
     g->e[i].fn = fn;
     g->e[i].args = keep_list(g, a, np);
@@ -379,7 +515,7 @@ static uint32_t call_expr(G *g, uint32_t fn, int d)
     return i;
 }
 
-static uint32_t conv(G *g, unsigned t, uint32_t a)
+static uint32_t conv(G *g, uint32_t t, uint32_t a)
 {
     uint32_t i = new_e(g, E_CONV, t);
     g->e[i].a = a;
@@ -396,38 +532,72 @@ static unsigned within(G *g, unsigned t)
     return c[below(g, n)];
 }
 
-/* a variable, a literal, or a variable of another type made into t */
-static uint32_t leaf(G *g, unsigned t, bool need_var)
+/* a variable, an element, a literal, or a variable of another type made
+   into t */
+static uint32_t leaf(G *g, unsigned t, bool need_var, int d)
 {
-    int v = pick_var(g, t, false);
+    int v = pick_var(g, t, false, false);
+    int a = d > 0 && chance(g, 25) ? pick_array(g, t, false) : -1;
+    if (a >= 0)
+        return element(g, (uint32_t)a, d);
     if (v >= 0 && (need_var || chance(g, 65)))
         return var_ref(g, (uint32_t)v);
     if (!need_var)
         return lit(g, t, rand_value(g, t));
-    int w = pick_var(g, NTYPES, false);
+    int w = pick_var(g, NTYPES, false, false);
     if (w < 0) {
         /* none of an integer type: a Boolean compared with a literal */
-        w = pick_var(g, T_BOOL, false);
+        w = pick_var(g, T_BOOL, false, false);
         return binop(g, O_EQ, T_BOOL, var_ref(g, (uint32_t)w),
                      lit(g, T_BOOL, below(g, 2)));
     }
     if (t == T_BOOL) {
-        unsigned u = g->v[w].t;
+        unsigned u = base(g, g->v[w].t);
         return binop(g, O_EQ + below(g, 6), T_BOOL, var_ref(g, (uint32_t)w),
                      lit(g, u, rand_value(g, u)));
     }
     if (chance(g, 70)) {
-        int x = pick_var(g, within(g, t), false);
+        int x = pick_var(g, within(g, t), false, false);
         if (x >= 0)
             w = x;
     }
     return conv(g, t, var_ref(g, (uint32_t)w));
 }
 
+/* x in R, or x in lo..hi */
+static uint32_t membership(G *g, int d)
+{
+    uint32_t n = 0, range = 0;
+    for (uint32_t t = NTYPES; t < g->nty; t++)
+        if (g->ty[t].k == K_RANGE && below(g, ++n) == 0)
+            range = t;
+    unsigned b = n && chance(g, 60) ? base(g, range) : int_type(g);
+    /* the parts first: making them may move the nodes */
+    uint32_t a = expr(g, b, d - 1, true), fn = 0, lo = 0, hi = 0;
+    if (n && base(g, range) == b && chance(g, 60)) {
+        fn = range;
+    } else {
+        v128 l = rand_value(g, b), h = rand_value(g, b);
+        if (h < l && chance(g, 80)) {
+            v128 x = l;
+            l = h;
+            h = x;
+        }
+        lo = chance(g, 70) ? lit(g, b, l) : expr(g, b, d - 1, false);
+        hi = chance(g, 70) ? lit(g, b, h) : expr(g, b, d - 1, false);
+    }
+    uint32_t i = new_e(g, E_IN, T_BOOL);
+    g->e[i].a = a;
+    g->e[i].fn = fn;
+    g->e[i].b = lo;
+    g->e[i].c = hi;
+    return i;
+}
+
 static uint32_t expr(G *g, unsigned t, int d, bool need_var)
 {
     if (d <= 0 || chance(g, 20))
-        return leaf(g, t, need_var);
+        return leaf(g, t, need_var, d);
     unsigned f = fam(t);
     unsigned choice = below(g, 10);
     if (choice == 9) {
@@ -437,12 +607,14 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
         choice = 0;
     }
     if (f == 'L') {
-        if (choice < 5) {
+        if (choice < 4) {
             unsigned u = any_type(g);
             uint32_t a = expr(g, u, d - 1, false);
             uint32_t b = expr(g, u, d - 1, g->e[a].cst);
             return binop(g, O_EQ + below(g, 6), T_BOOL, a, b);
         }
+        if (choice < 5)
+            return membership(g, d);
         if (choice < 8) {
             uint32_t a = expr(g, T_BOOL, d - 1, false);
             uint32_t b = expr(g, T_BOOL, d - 1, g->e[a].cst);
@@ -481,18 +653,19 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
         g->e[i].a = a;
         return i;
     }
+    /* a conversion, sometimes to a range of the same base */
+    uint32_t to = t;
+    for (uint32_t r = NTYPES; r < g->nty; r++)
+        if (g->ty[r].k == K_RANGE && base(g, r) == t && chance(g, 30))
+            to = r;
     return conv(
-        g, t, expr(g, chance(g, 60) ? within(g, t) : int_type(g), d - 1, true));
+        g, to,
+        expr(g, chance(g, 60) ? within(g, t) : int_type(g), d - 1, true));
 }
 
 /* ---- statements ---- */
 
 static uint32_t block(G *g, int n, uint32_t *count);
-
-static int depth(G *g)
-{
-    return 1 + (int)below(g, 4);
-}
 
 /* a counter that bounds a while or a repeat: var w := 0 */
 static uint32_t counter(G *g, uint32_t *decl)
@@ -544,6 +717,27 @@ static bool overlaps(const xlab *l, uint32_t n, v128 lo, v128 hi)
     return false;
 }
 
+static uint32_t declare(G *g, uint32_t t)
+{
+    uint32_t s = new_s(g, S_VAR);
+    uint32_t e = value_for(g, t, depth(g));
+    uint32_t v = new_v(g, t, V_LOCAL);
+    g->st[s].var = v;
+    g->st[s].e = e;
+    show(g, v);
+    return s;
+}
+
+/* the type of the values a selector can take: its range, if a variable
+   or an element of a range type gives it */
+static uint32_t selector_type(const G *g, uint32_t e)
+{
+    unsigned k = g->e[e].k;
+    return k == E_VAR || k == E_INDEX || k == E_CALL || k == E_CONV
+               ? g->e[e].t
+               : base(g, g->e[e].t);
+}
+
 /* one statement, or two when a loop needs its counter declared first;
    they go to out, and the count is returned */
 static uint32_t stmt(G *g, uint32_t *out)
@@ -553,23 +747,28 @@ static uint32_t stmt(G *g, uint32_t *out)
     bool pure = in_function(g);
     bool deep = g->nesting < 4 && g->budget > 4;
     if (c < 14) {
-        unsigned t = any_type(g);
-        uint32_t s = new_s(g, S_VAR);
-        uint32_t e = expr(g, t, depth(g), false);
-        uint32_t v = new_v(g, t, V_LOCAL);
-        g->st[s].var = v;
-        g->st[s].e = e;
-        show(g, v);
-        out[0] = s;
+        out[0] = declare(g, var_type(g));
         return 1;
     }
     if (c < 36) {
-        int v = pick_var(g, any_type(g), true);
+        int a = chance(g, 30) ? pick_array(g, NTYPES, true) : -1;
+        if (a >= 0) {
+            uint32_t at = g->v[a].t;
+            uint32_t s = new_s(g, S_ASSIGN);
+            uint32_t ix = index_for(g, at, depth(g));
+            uint32_t e = value_for(g, g->ty[at].elem, depth(g));
+            g->st[s].var = (uint32_t)a;
+            g->st[s].idx = ix;
+            g->st[s].e = e;
+            out[0] = s;
+            return 1;
+        }
+        int v = pick_var(g, any_type(g), true, false);
         if (v < 0)
-            v = pick_var(g, NTYPES, true);
+            v = pick_var(g, NTYPES, true, false);
         if (v >= 0) {
             uint32_t s = new_s(g, S_ASSIGN);
-            uint32_t e = expr(g, g->v[v].t, depth(g), false);
+            uint32_t e = value_for(g, g->v[v].t, depth(g));
             g->st[s].var = (uint32_t)v;
             g->st[s].e = e;
             out[0] = s;
@@ -633,22 +832,28 @@ static uint32_t stmt(G *g, uint32_t *out)
         return 2;
     }
     if (c < 72 && deep) {
-        unsigned t = int_type(g);
+        /* an integer type, or a range, for the loop variable */
+        uint32_t t = var_type(g);
+        if (base(g, t) == T_BOOL)
+            t = int_type(g);
+        unsigned b = base(g, t);
         uint32_t s = new_s(g, S_FOR);
         bool down = chance(g, 30);
         uint32_t lo, hi;
-        int x = pick_var(g, t, false);
+        int x = pick_var(g, b, false, false);
         if (x >= 0 && chance(g, 50)) {
-            /* from a variable to a few steps away: the bound may overflow */
+            /* from a variable to a few steps away: the bound may overflow
+               or leave the range */
             lo = var_ref(g, (uint32_t)x);
-            hi = binop(g, down ? O_SUB : O_ADD, t, var_ref(g, (uint32_t)x),
-                       lit(g, t, below(g, 4)));
+            hi = binop(g, down ? O_SUB : O_ADD, b, var_ref(g, (uint32_t)x),
+                       lit(g, b, below(g, 4)));
         } else {
-            v128 a = rand_value(g, t);
-            v128 b = clamp(t, down ? a - (v128)below(g, 5) + 1
+            v128 a = rand_in(g, lo_of(g, t), hi_of(g, t));
+            v128 z = clamp_in(lo_of(g, t), hi_of(g, t),
+                              down ? a - (v128)below(g, 5) + 1
                                    : a + (v128)below(g, 5) - 1);
-            lo = lit(g, t, a);
-            hi = lit(g, t, b);
+            lo = lit(g, b, a);
+            hi = lit(g, b, z);
         }
         uint32_t v = new_v(g, t, V_LOOP);
         g->st[s].var = v;
@@ -663,9 +868,11 @@ static uint32_t stmt(G *g, uint32_t *out)
         return 1;
     }
     if (c < 78 && deep) {
-        unsigned t = int_type(g);
+        unsigned b = int_type(g);
         uint32_t s = new_s(g, S_CASE);
-        g->st[s].e = expr(g, t, depth(g), true);
+        uint32_t sel = expr(g, b, depth(g), true);
+        uint32_t st = selector_type(g, sel);
+        g->st[s].e = sel;
         uint32_t na = 1 + below(g, 3);
         xarm arms[3];
         xlab labs[12];
@@ -674,8 +881,10 @@ static uint32_t stmt(G *g, uint32_t *out)
             arms[i].lab = nl;
             arms[i].nlab = 0;
             for (uint32_t k = 0, want = 1 + below(g, 2); k < want; k++) {
-                v128 lo = rand_value(g, t);
-                v128 hi = chance(g, 30) ? clamp(t, lo + below(g, 6)) : lo;
+                v128 lo = rand_in(g, lo_of(g, st), hi_of(g, st));
+                v128 hi = chance(g, 30) ? clamp_in(lo_of(g, st), hi_of(g, st),
+                                                   lo + below(g, 6))
+                                        : lo;
                 if (overlaps(labs, nl, lo, hi))
                     continue;
                 labs[nl++] = (xlab){lo, hi};
@@ -689,7 +898,7 @@ static uint32_t stmt(G *g, uint32_t *out)
             arms[i].blk = block(g, 1 + (int)below(g, 3), &arms[i].nblk);
             g->nscope = mark;
         }
-        uint32_t base = g->nlab;
+        uint32_t first = g->nlab;
         for (uint32_t i = 0; i < nl; i++) {
             LIMBA_GROW(g->lab, g->nlab, g->caplab);
             g->lab[g->nlab++] = labs[i];
@@ -697,15 +906,15 @@ static uint32_t stmt(G *g, uint32_t *out)
         g->st[s].arm = g->narm;
         g->st[s].narm = na;
         for (uint32_t i = 0; i < na; i++) {
-            arms[i].lab += base;
+            arms[i].lab += first;
             LIMBA_GROW(g->arm, g->narm, g->caparm);
             g->arm[g->narm++] = arms[i];
         }
         uint32_t mark = g->nscope;
         uint32_t n;
-        uint32_t b = block(g, (int)below(g, 3), &n);
+        uint32_t bl = block(g, (int)below(g, 3), &n);
         g->nscope = mark;
-        g->st[s].alt = b;
+        g->st[s].alt = bl;
         g->st[s].nalt = n;
         g->st[s].has_alt = true;
         out[0] = s;
@@ -730,13 +939,14 @@ static uint32_t stmt(G *g, uint32_t *out)
             for (uint32_t k = 0; k < g->r[fn].np && ok; k++) {
                 uint32_t p = g->r[fn].par[k];
                 if (g->v[p].kind == V_VAR) {
-                    int v = pick_var(g, g->v[p].t, true);
+                    /* a var parameter takes a variable of its very type */
+                    int v = pick_var(g, g->v[p].t, true, true);
                     if (v < 0)
                         ok = false;
                     else
                         a[k] = var_ref(g, (uint32_t)v);
                 } else {
-                    a[k] = expr(g, g->v[p].t, depth(g), false);
+                    a[k] = value_for(g, g->v[p].t, depth(g));
                 }
             }
             if (ok) {
@@ -751,14 +961,7 @@ static uint32_t stmt(G *g, uint32_t *out)
     }
     if (pure) {
         /* a function has nothing to print: one more variable */
-        unsigned t = any_type(g);
-        uint32_t s = new_s(g, S_VAR);
-        uint32_t e = expr(g, t, depth(g), false);
-        uint32_t v = new_v(g, t, V_LOCAL);
-        g->st[s].var = v;
-        g->st[s].e = e;
-        show(g, v);
-        out[0] = s;
+        out[0] = declare(g, var_type(g));
         return 1;
     }
     uint32_t items[5];
@@ -781,7 +984,7 @@ static uint32_t jump(G *g)
     if (g->cur >= 0 && (!g->loops || chance(g, 50))) {
         uint32_t s = new_s(g, S_RETURN);
         if (g->r[g->cur].func)
-            g->st[s].e = expr(g, g->r[g->cur].rt, depth(g), false);
+            g->st[s].e = value_for(g, g->r[g->cur].rt, depth(g));
         return s;
     }
     return new_s(g, chance(g, 50) ? S_EXIT : S_CONT);
@@ -810,18 +1013,28 @@ static uint32_t block(G *g, int n, uint32_t *count)
     return at;
 }
 
+/* append statement s to the block (b, n) */
+static void append(G *g, uint32_t *b, uint32_t *n, uint32_t s, bool front)
+{
+    uint32_t *x = limba_xmalloc((*n + 1) * sizeof(uint32_t));
+    memcpy(x + front, g->ls + *b, *n * sizeof(uint32_t));
+    x[front ? 0 : *n] = s;
+    *b = keep_list(g, x, *n + 1);
+    (*n)++;
+    free(x);
+}
+
 static void routine(G *g)
 {
     LIMBA_GROW(g->r, g->nr, g->capr);
-    uint32_t id = g->nr;
-    xr *r = &g->r[g->nr++];
-    memset(r, 0, sizeof(*r));
-    r->func = chance(g, 50);
-    r->rt = (uint8_t)any_type(g);
-    r->np = (uint8_t)below(g, 4);
+    uint32_t id = g->nr++;
+    memset(&g->r[id], 0, sizeof(xr));
+    g->r[id].func = chance(g, 50);
+    g->r[id].rt = var_type(g);
+    g->r[id].np = (uint8_t)below(g, 4);
     uint32_t mark = g->nscope;
     for (uint32_t k = 0; k < g->r[id].np; k++) {
-        unsigned t = any_type(g);
+        uint32_t t = var_type(g);
         bool byref = !g->r[id].func && chance(g, 40);
         uint32_t p = new_v(g, t, byref ? V_VAR : V_IN);
         g->r[id].par[k] = p;
@@ -832,13 +1045,8 @@ static void routine(G *g)
     uint32_t b = block(g, 2 + (int)below(g, 5), &n);
     if (g->r[id].func) {
         uint32_t s = new_s(g, S_RETURN);
-        g->st[s].e = expr(g, g->r[id].rt, depth(g), false);
-        uint32_t *x = limba_xmalloc((n + 1) * sizeof(uint32_t));
-        memcpy(x, g->ls + b, n * sizeof(uint32_t));
-        x[n] = s;
-        b = keep_list(g, x, n + 1);
-        n++;
-        free(x);
+        g->st[s].e = value_for(g, g->r[id].rt, depth(g));
+        append(g, &b, &n, s, false);
     }
     g->r[id].blk = b;
     g->r[id].nblk = n;
@@ -900,6 +1108,14 @@ static void put_rname(text *o, const G *g, uint32_t r)
     putf(o, "%c%u", g->r[r].func ? 'f' : 'p', r);
 }
 
+static void put_type(text *o, const G *g, uint32_t t)
+{
+    if (t < NTYPES)
+        put(o, tname[t]);
+    else
+        putf(o, "%c%u", is_array(g, t) ? 'A' : 'R', t);
+}
+
 static void put_value(text *o, unsigned t, v128 v)
 {
     if (t == T_BOOL) {
@@ -915,12 +1131,18 @@ static void put_value(text *o, unsigned t, v128 v)
     }
 }
 
+static void here(xe *x, const text *o)
+{
+    x->line = o->line;
+    x->col = o->col;
+}
+
 static void pexpr(G *g, text *o, uint32_t i)
 {
     xe *x = &g->e[i];
     switch (x->k) {
     case E_LIT:
-        put_value(o, x->t, x->lit);
+        put_value(o, base(g, x->t), x->lit);
         break;
     case E_VAR:
         put_name(o, g, x->var);
@@ -932,38 +1154,54 @@ static void pexpr(G *g, text *o, uint32_t i)
         put(o, "(");
         pexpr(g, o, x->a);
         put(o, " ");
-        g->e[i].line = o->line;
-        g->e[i].col = o->col;
-        put(o, otext[x->op]);
+        here(&g->e[i], o);
+        put(o, otext[g->e[i].op]);
         put(o, " ");
         pexpr(g, o, g->e[i].b);
         put(o, ")");
         break;
     case E_UN:
         put(o, "(");
-        g->e[i].line = o->line;
-        g->e[i].col = o->col;
+        here(x, o);
         put(o, x->op == O_NEG ? "-(" : x->op == O_ABS ? "abs (" : "not (");
         pexpr(g, o, g->e[i].a);
         put(o, "))");
         break;
     case E_CONV:
-        g->e[i].line = o->line;
-        g->e[i].col = o->col;
-        put(o, tname[x->t]);
+        here(x, o);
+        put_type(o, g, x->t);
         put(o, "(");
         pexpr(g, o, g->e[i].a);
         put(o, ")");
         break;
     case E_CALL:
-        g->e[i].line = o->line;
-        g->e[i].col = o->col;
+        here(x, o);
         put_rname(o, g, x->fn);
         put(o, "(");
         for (uint32_t k = 0; k < g->e[i].nargs; k++) {
             if (k)
                 put(o, ", ");
             pexpr(g, o, g->ls[g->e[i].args + k]);
+        }
+        put(o, ")");
+        break;
+    case E_INDEX:
+        put_name(o, g, x->var);
+        here(x, o);
+        put(o, "[");
+        pexpr(g, o, g->e[i].a);
+        put(o, "]");
+        break;
+    case E_IN:
+        put(o, "(");
+        pexpr(g, o, x->a);
+        put(o, " in ");
+        if (g->e[i].fn) {
+            put_type(o, g, g->e[i].fn);
+        } else {
+            pexpr(g, o, g->e[i].b);
+            put(o, "..");
+            pexpr(g, o, g->e[i].c);
         }
         put(o, ")");
         break;
@@ -978,20 +1216,44 @@ static void indent(text *o, int ind)
         put(o, "  ");
 }
 
+static void pargs(G *g, text *o, uint32_t args, uint32_t n)
+{
+    put(o, "(");
+    for (uint32_t k = 0; k < n; k++) {
+        if (k)
+            put(o, ", ");
+        pexpr(g, o, g->ls[args + k]);
+    }
+    put(o, ")");
+}
+
 static void pstmt(G *g, text *o, uint32_t si, int ind)
 {
     xs s = g->st[si];
     indent(o, ind);
+    g->st[si].line = o->line;
+    g->st[si].col = o->col;
     switch (s.k) {
     case S_VAR:
         put(o, "var ");
+        g->st[si].nline = o->line;
+        g->st[si].ncol = o->col;
         put_name(o, g, s.var);
-        putf(o, ": %s := ", tname[g->v[s.var].t]);
+        put(o, ": ");
+        put_type(o, g, g->v[s.var].t);
+        put(o, " := ");
         pexpr(g, o, s.e);
         put(o, ";\n");
         break;
     case S_ASSIGN:
         put_name(o, g, s.var);
+        if (s.idx) {
+            g->st[si].iline = o->line; /* the index is checked at the [ */
+            g->st[si].icol = o->col;
+            put(o, "[");
+            pexpr(g, o, s.idx);
+            put(o, "]");
+        }
         put(o, " := ");
         pexpr(g, o, s.e);
         put(o, ";\n");
@@ -1033,7 +1295,9 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
     case S_FOR:
         put(o, "for var ");
         put_name(o, g, s.var);
-        putf(o, ": %s := ", tname[g->v[s.var].t]);
+        put(o, ": ");
+        put_type(o, g, g->v[s.var].t);
+        put(o, " := ");
         pexpr(g, o, s.e);
         put(o, s.down ? " downto " : " to ");
         pexpr(g, o, s.e2);
@@ -1043,7 +1307,7 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         put(o, "end;\n");
         break;
     case S_CASE: {
-        unsigned t = g->e[s.e].t;
+        unsigned t = base(g, g->e[s.e].t);
         put(o, "case ");
         pexpr(g, o, s.e);
         put(o, " of\n");
@@ -1072,23 +1336,14 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         break;
     }
     case S_WRITE:
-        put(o, "writeln(");
-        for (uint32_t k = 0; k < s.nargs; k++) {
-            if (k)
-                put(o, ", ");
-            pexpr(g, o, g->ls[s.args + k]);
-        }
-        put(o, ");\n");
+        put(o, "writeln");
+        pargs(g, o, s.args, s.nargs);
+        put(o, ";\n");
         break;
     case S_CALL:
         put_rname(o, g, s.fn);
-        put(o, "(");
-        for (uint32_t k = 0; k < s.nargs; k++) {
-            if (k)
-                put(o, ", ");
-            pexpr(g, o, g->ls[s.args + k]);
-        }
-        put(o, ");\n");
+        pargs(g, o, s.args, s.nargs);
+        put(o, ";\n");
         break;
     case S_EXIT:
     case S_CONT:
@@ -1119,13 +1374,39 @@ static void pblock(G *g, text *o, uint32_t b, uint32_t n, int ind)
 static void program(G *g, text *o, uint32_t nglob)
 {
     put(o, "program Random;\n");
+    if (g->nty > NTYPES) {
+        put(o, "\ntype\n");
+        for (uint32_t t = NTYPES; t < g->nty; t++) {
+            const xt *x = &g->ty[t];
+            put(o, "  ");
+            put_type(o, g, t);
+            put(o, " = ");
+            if (x->k == K_RANGE) {
+                put(o, tname[x->base]);
+                put(o, " range ");
+                put_value(o, x->base, x->lo);
+                put(o, "..");
+                put_value(o, x->base, x->hi);
+            } else {
+                put(o, "array[");
+                put_type(o, g, x->index);
+                put(o, "] of ");
+                put_type(o, g, x->elem);
+            }
+            put(o, ";\n");
+        }
+    }
     if (nglob) {
         put(o, "\nvar\n");
         for (uint32_t v = 0; v < nglob; v++) {
             put(o, "  ");
             put_name(o, g, v);
-            putf(o, ": %s := ", tname[g->v[v].t]);
-            pexpr(g, o, g->st[v].e);
+            put(o, ": ");
+            put_type(o, g, g->v[v].t);
+            if (!is_array(g, g->v[v].t)) {
+                put(o, " := ");
+                pexpr(g, o, g->st[v].e);
+            }
             put(o, ";\n");
         }
     }
@@ -1141,11 +1422,14 @@ static void program(G *g, text *o, uint32_t nglob)
             if (g->v[p].kind == V_VAR)
                 put(o, "var ");
             put_name(o, g, p);
-            putf(o, ": %s", tname[g->v[p].t]);
+            put(o, ": ");
+            put_type(o, g, g->v[p].t);
         }
         put(o, ")");
-        if (x->func)
-            putf(o, ": %s", tname[x->rt]);
+        if (x->func) {
+            put(o, ": ");
+            put_type(o, g, x->rt);
+        }
         put(o, ";\nbegin\n");
         pblock(g, o, x->blk, x->nblk, 1);
         put(o, "end ");
@@ -1168,13 +1452,14 @@ enum { X_NEXT, X_EXIT, X_CONT, X_RET };
 typedef struct {
     G *g;
     v128 *cell;
-    uint32_t *ref;
+    uint32_t *ref; /* the first cell of a variable, a var parameter's too */
     text out;
     bool trap, toolong;
     int code;
     uint32_t line, col;
     uint64_t steps;
     v128 ret;
+    uint32_t rt; /* the type of the result of the running function */
 } X;
 
 static v128 wrap(unsigned t, v128 v)
@@ -1188,32 +1473,53 @@ static bool fits(unsigned t, v128 v)
     return v >= tmin(t) && v <= tmax(t);
 }
 
-static v128 fail(X *x, uint32_t at, int code)
+static void stop(X *x, int code, uint32_t line, uint32_t col)
 {
     if (!x->trap) {
         x->trap = true;
         x->code = code;
-        x->line = x->g->e[at].line;
-        x->col = x->g->e[at].col;
+        x->line = line;
+        x->col = col;
     }
+}
+
+static v128 fail(X *x, uint32_t at, int code)
+{
+    stop(x, code, x->g->e[at].line, x->g->e[at].col);
     return 0;
+}
+
+/* v stored where type t is: a range is checked, reported at line:col */
+static bool store_ok(X *x, uint32_t t, v128 v, uint32_t line, uint32_t col)
+{
+    const G *g = x->g;
+    if (g->ty[t].k == K_RANGE && (v < lo_of(g, t) || v > hi_of(g, t))) {
+        stop(x, 101, line, col);
+        return false;
+    }
+    return true;
 }
 
 static int run_block(X *x, uint32_t b, uint32_t n);
 
 static v128 ev(X *x, uint32_t i);
 
-static v128 call(X *x, uint32_t fn, uint32_t args, uint32_t nargs)
+/* the arguments from left to right, each checked at the call at */
+static v128 call(X *x, uint32_t fn, uint32_t args, uint32_t nargs,
+                 uint32_t line, uint32_t col)
 {
     G *g = x->g;
     v128 val[4];
     uint32_t target[4];
     for (uint32_t k = 0; k < nargs; k++) {
-        uint32_t a = g->ls[args + k];
-        if (g->v[g->r[fn].par[k]].kind == V_VAR)
+        uint32_t a = g->ls[args + k], p = g->r[fn].par[k];
+        if (g->v[p].kind == V_VAR) {
             target[k] = x->ref[g->e[a].var];
-        else
+        } else {
             val[k] = ev(x, a);
+            if (!x->trap)
+                store_ok(x, g->v[p].t, val[k], line, col);
+        }
         if (x->trap)
             return 0;
     }
@@ -1222,19 +1528,32 @@ static v128 call(X *x, uint32_t fn, uint32_t args, uint32_t nargs)
         if (g->v[p].kind == V_VAR) {
             x->ref[p] = target[k];
         } else {
-            x->ref[p] = p;
-            x->cell[p] = val[k];
+            x->cell[x->ref[p]] = val[k];
         }
     }
+    uint32_t outer = x->rt;
     x->ret = 0;
+    x->rt = g->r[fn].rt;
     run_block(x, g->r[fn].blk, g->r[fn].nblk);
+    x->rt = outer;
     return x->ret;
+}
+
+/* the cell of element index of array variable v; false if outside */
+static bool element_cell(X *x, uint32_t v, v128 index, uint32_t *cell)
+{
+    const G *g = x->g;
+    uint32_t at = g->v[v].t;
+    if (index < g->ty[at].lo || index > g->ty[at].hi)
+        return false;
+    *cell = x->ref[v] + (uint32_t)(index - g->ty[at].lo);
+    return true;
 }
 
 static v128 binary(X *x, uint32_t i)
 {
     const xe *e = &x->g->e[i];
-    unsigned op = e->op, t = e->t;
+    unsigned op = e->op, t = base(x->g, e->t);
     if (t == T_BOOL && (op == O_AND || op == O_OR)) {
         v128 l = ev(x, e->a);
         if (x->trap)
@@ -1316,13 +1635,15 @@ static v128 binary(X *x, uint32_t i)
 
 static v128 ev(X *x, uint32_t i)
 {
-    const xe *e = &x->g->e[i];
+    const G *g = x->g;
+    const xe *e = &g->e[i];
     if (x->trap)
         return 0;
     if (++x->steps > STEP_LIMIT) {
         x->toolong = x->trap = true;
         return 0;
     }
+    unsigned t = base(g, e->t);
     switch (e->k) {
     case E_LIT:
         return e->lit;
@@ -1335,22 +1656,42 @@ static v128 ev(X *x, uint32_t i)
         if (x->trap)
             return 0;
         if (e->op == O_NOT)
-            return e->t == T_BOOL ? !v : wrap(e->t, ~v);
-        if (e->op == O_NEG && fam(e->t) == 'B')
-            return wrap(e->t, -v);
+            return t == T_BOOL ? !v : wrap(t, ~v);
+        if (e->op == O_NEG && fam(t) == 'B')
+            return wrap(t, -v);
         v = e->op == O_NEG ? -v : v < 0 ? -v : v;
-        return fits(e->t, v) ? v : fail(x, i, 6);
+        return fits(t, v) ? v : fail(x, i, 6);
     }
     case E_CONV: {
         v128 v = ev(x, e->a);
         if (x->trap)
             return 0;
-        if (fam(e->t) == 'B')
-            return wrap(e->t, v);
-        return fits(e->t, v) ? v : fail(x, i, 103);
+        if (fam(t) == 'B')
+            return wrap(t, v);
+        return v >= lo_of(g, e->t) && v <= hi_of(g, e->t) ? v : fail(x, i, 103);
     }
     case E_CALL:
-        return call(x, e->fn, e->args, e->nargs);
+        return call(x, e->fn, e->args, e->nargs, e->line, e->col);
+    case E_INDEX: {
+        v128 k = ev(x, e->a);
+        uint32_t c;
+        if (x->trap)
+            return 0;
+        if (!element_cell(x, e->var, k, &c))
+            return fail(x, i, 100);
+        return x->cell[c];
+    }
+    case E_IN: {
+        v128 v = ev(x, e->a), lo, hi;
+        if (e->fn) {
+            lo = lo_of(g, e->fn);
+            hi = hi_of(g, e->fn);
+        } else {
+            lo = ev(x, e->b);
+            hi = ev(x, e->c);
+        }
+        return lo <= v && v <= hi;
+    }
     }
     return 0;
 }
@@ -1376,12 +1717,31 @@ static int run_stmt(X *x, uint32_t si)
         return X_RET;
     }
     switch (s->k) {
-    case S_VAR:
-    case S_ASSIGN: {
+    case S_VAR: {
         v128 v = ev(x, s->e);
-        if (x->trap)
+        if (x->trap || !store_ok(x, g->v[s->var].t, v, s->nline, s->ncol))
             return X_RET;
         x->cell[x->ref[s->var]] = v;
+        return X_NEXT;
+    }
+    case S_ASSIGN: {
+        uint32_t c = x->ref[s->var];
+        uint32_t t = g->v[s->var].t;
+        if (s->idx) {
+            /* the target first: its index, checked */
+            v128 k = ev(x, s->idx);
+            if (x->trap)
+                return X_RET;
+            if (!element_cell(x, s->var, k, &c)) {
+                stop(x, 100, s->iline, s->icol);
+                return X_RET;
+            }
+            t = g->ty[t].elem;
+        }
+        v128 v = ev(x, s->e);
+        if (x->trap || !store_ok(x, t, v, s->line, s->col))
+            return X_RET;
+        x->cell[c] = v;
         return X_NEXT;
     }
     case S_IF:
@@ -1421,14 +1781,17 @@ static int run_stmt(X *x, uint32_t si)
                 return X_NEXT;
         }
     case S_FOR: {
+        uint32_t t = g->v[s->var].t;
         v128 lo = ev(x, s->e);
+        if (x->trap || !store_ok(x, t, lo, s->line, s->col))
+            return X_RET;
         v128 hi = ev(x, s->e2);
-        if (x->trap)
+        if (x->trap || !store_ok(x, t, hi, s->line, s->col))
             return X_RET;
         if (s->down ? lo < hi : lo > hi)
             return X_NEXT;
         for (v128 v = lo;; v += s->down ? -1 : 1) {
-            x->cell[s->var] = v;
+            x->cell[x->ref[s->var]] = v;
             int r = run_block(x, s->blk, s->nblk);
             if (r == X_RET)
                 return X_RET;
@@ -1458,12 +1821,12 @@ static int run_stmt(X *x, uint32_t si)
             v128 v = ev(x, a);
             if (x->trap)
                 return X_RET;
-            print_value(&x->out, g->e[a].t, v);
+            print_value(&x->out, base(g, g->e[a].t), v);
         }
         put(&x->out, "\n");
         return X_NEXT;
     case S_CALL:
-        call(x, s->fn, s->args, s->nargs);
+        call(x, s->fn, s->args, s->nargs, s->line, s->col);
         return x->trap ? X_RET : X_NEXT;
     case S_EXIT:
     case S_CONT:
@@ -1478,8 +1841,8 @@ static int run_stmt(X *x, uint32_t si)
     case S_RETURN:
         if (s->e) {
             x->ret = ev(x, s->e);
-            if (x->trap)
-                return X_RET;
+            if (!x->trap)
+                store_ok(x, x->rt, x->ret, s->line, s->col);
         }
         return X_RET;
     }
@@ -1500,6 +1863,7 @@ static int run_block(X *x, uint32_t b, uint32_t n)
 
 static void g_free(G *g)
 {
+    free(g->ty);
     free(g->e);
     free(g->st);
     free(g->arm);
@@ -1517,39 +1881,78 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     g.s = seed;
     g.cur = -1;
     new_e(&g, E_LIT, 0); /* node 0 stands for none */
+    for (unsigned t = 0; t < NTYPES; t++)
+        new_type(&g, (xt){K_BASE, (uint8_t)t, 0, 0, t == T_BOOL ? 0 : tmin(t),
+                          tmax(t)});
 
-    /* the globals: at least one of an integer type and one Boolean; their
-       initialisers are the statements of the same numbers */
+    /* the ranges, then the arrays, each indexed by a short range of its
+       own */
+    for (uint32_t k = 0, n = below(&g, 4); k < n; k++)
+        new_range(&g, false);
+    uint32_t narrays = below(&g, 3), arrays[2];
+    for (uint32_t k = 0; k < narrays; k++) {
+        uint32_t ix = new_range(&g, true);
+        uint32_t el = var_type(&g);
+        arrays[k] = new_type(&g, (xt){K_ARRAY, (uint8_t)base(&g, el), ix, el,
+                                      lo_of(&g, ix), hi_of(&g, ix)});
+    }
+
+    /* the globals: one of an integer type and one Boolean at least, then
+       the arrays; their initialisers are the statements of the same
+       numbers (none for an array) */
     uint32_t nglob = 2 + below(&g, 5);
-    for (uint32_t k = 0; k < nglob; k++) {
-        unsigned t = k == 0 ? int_type(&g) : k == 1 ? T_BOOL : any_type(&g);
+    for (uint32_t k = 0; k < nglob + narrays; k++) {
+        uint32_t t = k == 0       ? int_type(&g)
+                     : k == 1     ? T_BOOL
+                     : k >= nglob ? arrays[k - nglob]
+                                  : var_type(&g);
         uint32_t v = new_v(&g, t, V_GLOBAL);
         uint32_t s = new_s(&g, S_VAR);
         g.st[s].var = v;
-        g.st[s].e = lit(&g, t, rand_value(&g, t));
+        if (!is_array(&g, t))
+            g.st[s].e =
+                lit(&g, t,
+                    t == T_BOOL ? below(&g, 2)
+                                : rand_in(&g, lo_of(&g, t), hi_of(&g, t)));
         show(&g, v);
     }
+    nglob += narrays;
     g.budget = 30 + (int)below(&g, 60);
     for (uint32_t k = 0, nr = below(&g, 5); k < nr && g.budget > 10; k++)
         routine(&g);
     g.main_blk = block(&g, 4 + (int)below(&g, 12), &g.main_n);
-    /* the program ends printing every global */
+
+    /* the program begins filling the arrays and ends printing every
+       scalar global */
+    for (uint32_t v = 0; v < nglob; v++) {
+        uint32_t at = g.v[v].t;
+        if (!is_array(&g, at))
+            continue;
+        for (v128 k = g.ty[at].hi; k >= g.ty[at].lo; k--) {
+            uint32_t s = new_s(&g, S_ASSIGN);
+            uint32_t el = g.ty[at].elem;
+            g.st[s].var = v;
+            g.st[s].idx = lit(&g, base(&g, g.ty[at].index), k);
+            g.st[s].e = lit(&g, el,
+                            base(&g, el) == T_BOOL
+                                ? below(&g, 2)
+                                : rand_in(&g, lo_of(&g, el), hi_of(&g, el)));
+            append(&g, &g.main_blk, &g.main_n, s, true);
+        }
+    }
     {
-        uint32_t *x = limba_xmalloc((g.main_n + 1) * sizeof(uint32_t));
-        memcpy(x, g.ls + g.main_blk, g.main_n * sizeof(uint32_t));
-        uint32_t items[16], k = 0;
+        uint32_t items[32], k = 0;
         for (uint32_t v = 0; v < nglob; v++) {
-            if (v)
+            if (is_array(&g, g.v[v].t))
+                continue;
+            if (k)
                 items[k++] = new_e(&g, E_STR, 0);
             items[k++] = var_ref(&g, v);
         }
         uint32_t s = new_s(&g, S_WRITE);
         g.st[s].args = keep_list(&g, items, k);
         g.st[s].nargs = k;
-        x[g.main_n] = s;
-        g.main_blk = keep_list(&g, x, g.main_n + 1);
-        g.main_n++;
-        free(x);
+        append(&g, &g.main_blk, &g.main_n, s, false);
     }
 
     text src = {NULL, 0, 0, 1, 1};
@@ -1558,13 +1961,18 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     X x;
     memset(&x, 0, sizeof(x));
     x.g = &g;
-    x.cell = limba_xcalloc(g.nv ? g.nv : 1, sizeof(v128));
+    uint32_t ncell = 0;
     x.ref = limba_xmalloc((g.nv ? g.nv : 1) * sizeof(uint32_t));
-    for (uint32_t v = 0; v < g.nv; v++)
-        x.ref[v] = v;
+    for (uint32_t v = 0; v < g.nv; v++) {
+        x.ref[v] = ncell;
+        uint32_t t = g.v[v].t;
+        ncell += is_array(&g, t) ? (uint32_t)(g.ty[t].hi - g.ty[t].lo) + 1 : 1;
+    }
+    x.cell = limba_xcalloc(ncell ? ncell : 1, sizeof(v128));
     x.out.line = x.out.col = 1;
     for (uint32_t v = 0; v < nglob; v++)
-        x.cell[v] = g.e[g.st[v].e].lit;
+        if (!is_array(&g, g.v[v].t))
+            x.cell[x.ref[v]] = g.e[g.st[v].e].lit;
     run_block(&x, g.main_blk, g.main_n);
     bool ok = !x.toolong;
     if (ok) {

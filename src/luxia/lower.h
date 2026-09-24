@@ -91,8 +91,8 @@ limba_id lxl_addr(lxl *L, uint32_t node);
 void lxl_branch(lxl *L, uint32_t node, limba_id t, limba_id f);
 /* v, of type from, as a value of type to: range checks and widths */
 limba_id lxl_coerce(lxl *L, limba_id v, limba_ltype from, limba_ltype to);
-/* store the value of node into the variable target */
-void lxl_assign(lxl *L, uint32_t target, uint32_t value);
+/* the assignment node: store value into target, the target first */
+void lxl_assign(lxl *L, uint32_t node, uint32_t target, uint32_t value);
 void lxl_call(lxl *L, uint32_t node, limba_id *result);
 /* the storage of a symbol, as a use in the current function */
 limba_id lxl_var_addr(lxl *L, limba_sym s);

@@ -695,6 +695,40 @@ static const run_case run_cases[] = {
      "81 1024\n", "ok"},
     {"program p; begin writeln(\"a\"); halt(3); writeln(\"b\"); end.", "a\n",
      "halt 3"},
+    /* a range is checked at the assignment, the argument, the return,
+       whatever the value computed last */
+    {"program p;\ntype R = Int16 range 0..10;\nvar x: R := 3; y: Int16 := "
+     "10;\nbegin\n  x := (y + 1);\nend p.",
+     "", "trap 101 at 5:3"},
+    {"program p;\ntype R = Int16 range 0..10;\nvar y: Int16 := 10;\nprocedure "
+     "Q(a: R);\nbegin\nend Q;\nbegin\n  Q((y + 1));\nend p.",
+     "", "trap 101 at 8:3"},
+    {"program p;\ntype R = Int16 range 0..10;\nvar x: R := 10;\nfunction "
+     "F(a: R): R;\nbegin\n  return (a + 1);\nend F;\nbegin\n  "
+     "writeln(F(x));\nend p.",
+     "", "trap 101 at 6:3"},
+    /* inside an operation a constant takes the base type of a range */
+    {"program p; type R = Int16 range -5..20; var x: R := 3; y: Int16 := 0; "
+     "begin y := x + 100; writeln(y, \" \", x < 100); end p.",
+     "103 true\n", "ok"},
+    /* in on constants is a constant (it made an iconst without a type) */
+    {"program p; type R = Int8 range 1..5; var b: Boolean := false; begin b "
+     ":= 0 in 0..10; writeln(b, \" \", 5 in 1..3, \" \", 3 in R, \" \", 9 in "
+     "R); end p.",
+     "true false true false\n", "ok"},
+    /* a value without a sign never fits a range below zero */
+    {"program p; type R = Int32 range -1..-1; var b: Bits16 := 5; begin "
+     "writeln(R(b)); end p.",
+     "", "trap 103"},
+    /* the target of an assignment before its value */
+    {"program p;\nvar a: array[Int32 range 1..3] of Int32; z: Int32 := "
+     "0;\nbegin\n  a[1 div z] := 7 div z;\nend p.",
+     "", "trap 11 at 4:7"},
+    {"program p; var a: array[Int32 range 1..3] of Int32; function F(): "
+     "Int32; begin writeln(\"value\"); return 1; end F; function G(): "
+     "Int32; begin writeln(\"index\"); return 1; end G; begin a[G()] := "
+     "F(); end p.",
+     "index\nvalue\n", "ok"},
     /* abs of a number without a sign is the number (found by the random
        programs: it was taken as signed) */
     {"program p; var u: UInt16 := 65534; b: UInt8 := 200; begin "
@@ -991,10 +1025,11 @@ static int test_random(void)
         limba_lxgen_free(&p);
     }
     printf("test_luxia: %llu random programs from %llu: %u ended, trapped "
-           "%u overflow, %u division, %u conversion, %u shift; %u over the "
-           "limits; %zu bytes printed, %u failures\n",
+           "%u overflow, %u division, %u index, %u range, %u conversion, %u "
+           "shift; %u over the limits; %zu bytes printed, %u failures\n",
            (unsigned long long)count, (unsigned long long)first, ok, trap[6],
-           trap[11], trap[103], trap[104], other, bytes, failures);
+           trap[11], trap[100], trap[101], trap[103], trap[104], other, bytes,
+           failures);
     return (int)failures;
 }
 

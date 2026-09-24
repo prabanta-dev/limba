@@ -257,7 +257,9 @@ static void var_decl(lxl *L, uint32_t d)
             lxl_store *st = &L->store[s];
             limba_id v;
             if (lxl_scalar(L, t)) {
-                v = lxl_coerce(L, lxl_value(L, init), L->S->type[init], t);
+                v = lxl_value(L, init);
+                lxl_at(L, tmp); /* a range is checked at the name */
+                v = lxl_coerce(L, v, L->S->type[init], t);
                 if (st->kind == LXL_SSA)
                     limba_ssa_def(L->ssa, st->var, L->cur, v);
                 else {
@@ -376,8 +378,12 @@ static void for_stmt(lxl *L, uint32_t node)
         return;
     limba_id it = lxl_type(L, t);
     uint32_t fn = nd(L, range)->a, tn = nd(L, range)->b;
-    limba_id from = lxl_coerce(L, lxl_value(L, fn), L->S->type[fn], t);
-    limba_id to = lxl_coerce(L, lxl_value(L, tn), L->S->type[tn], t);
+    limba_id from = lxl_value(L, fn);
+    lxl_at(L, node); /* a range is checked at the for */
+    from = lxl_coerce(L, from, L->S->type[fn], t);
+    limba_id to = lxl_value(L, tn);
+    lxl_at(L, node);
+    to = lxl_coerce(L, to, L->S->type[tn], t);
     bool sg = lxl_signed(L, t);
     unsigned cc = down ? (sg ? LIMBA_CC_SGE : LIMBA_CC_UGE)
                        : (sg ? LIMBA_CC_SLE : LIMBA_CC_ULE);
@@ -494,8 +500,11 @@ static void return_stmt(lxl *L, uint32_t node)
 {
     uint32_t e = nd(L, node)->a;
     limba_id v = LIMBA_NONE;
-    if (e)
-        v = lxl_coerce(L, lxl_value(L, e), L->S->type[e], L->result);
+    if (e) {
+        v = lxl_value(L, e);
+        lxl_at(L, node); /* a range is checked at the return */
+        v = lxl_coerce(L, v, L->S->type[e], L->result);
+    }
     limba_ssa_ret(L->ssa, L->cur, v);
     dead_end(L);
 }
@@ -513,7 +522,7 @@ static void stmt(lxl *L, uint32_t node)
     lxl_at(L, node);
     switch (x->kind) {
     case LXN_ASSIGN:
-        lxl_assign(L, x->a, x->b);
+        lxl_assign(L, node, x->a, x->b);
         break;
     case LXN_CALLST:
         lxl_call(L, x->a, &r);

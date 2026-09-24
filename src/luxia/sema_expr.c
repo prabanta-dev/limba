@@ -143,16 +143,18 @@ static bool unify(limba_lxs *S, uint32_t node, uint32_t l, uint32_t r,
         }
         return true;
     }
+    /* a constant takes the base type of the other operand: a range is
+       checked where a value is stored, not inside an operation (§ 4.5) */
     if (untyped(S, *lt)) {
-        if (!convert_const(S, l, *rt))
+        if (!convert_const(S, l, lxs_base(S, *rt)))
             return false;
-        *lt = *rt;
+        *lt = lxs_base(S, *rt);
         return true;
     }
     if (untyped(S, *rt)) {
-        if (!convert_const(S, r, *lt))
+        if (!convert_const(S, r, lxs_base(S, *lt)))
             return false;
-        *rt = *lt;
+        *rt = lxs_base(S, *lt);
         return true;
     }
     if (*lt == S->ts.nil && kind(S, *rt) == LIMBA_LTK_POINTER) {
@@ -879,7 +881,14 @@ static limba_ltype membership(limba_lxs *S, uint32_t node, uint32_t scope)
                 char ta[128], tb[128];
                 lxs_error(S, LXE_TYPE_MISMATCH, node, "%s is not a range of %s",
                           lxs_tname(S, rt, tb), lxs_tname(S, t, ta));
+                return S->ts.bool_;
             }
+            /* a constant is tested now, as a comparison is (§ 4.4) */
+            __int128 k;
+            if (rt && S->val[v] && limba_types_is_discrete(&S->ts, rt) &&
+                lxs_value_to_int(S, S->val[v], &k))
+                S->val[node] = lxs_value_int(S, k >= lxs_ty(S, rt)->lo &&
+                                                    k <= lxs_ty(S, rt)->hi);
             return S->ts.bool_;
         }
     }
@@ -898,7 +907,13 @@ static limba_ltype membership(limba_lxs *S, uint32_t node, uint32_t scope)
     if (S->type[v] && !limba_types_is_discrete(&S->ts, S->type[v]) &&
         !untyped(S, S->type[v]))
         op_error(S, node, S->type[v], "tests discrete values");
-    return set(S, node, S->ts.bool_);
+    set(S, node, S->ts.bool_);
+    /* constants are tested now, as a comparison is (§ 4.4) */
+    if (S->val[v] && S->val[lo] && S->val[hi])
+        S->val[node] =
+            lxs_value_int(S, lxs_value_cmp(S, S->val[lo], S->val[v]) <= 0 &&
+                                 lxs_value_cmp(S, S->val[v], S->val[hi]) <= 0);
+    return S->ts.bool_;
 }
 
 limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,

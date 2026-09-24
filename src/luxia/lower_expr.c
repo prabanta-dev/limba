@@ -220,6 +220,9 @@ limba_id lxl_conv(lxl *L, limba_id v, limba_ltype from, limba_ltype to)
                 ok = ok == LIMBA_NONE ? c
                                       : bin(L, LIMBA_OP_AND, LIMBA_T_I1, ok, c);
             }
+        } else if (hi < 0) {
+            /* no value without a sign is in a range below zero */
+            ok = cmp(L, false, LIMBA_CC_NE, w, w);
         } else {
             if (lo > 0)
                 ok = cmp(L, false, LIMBA_CC_UGE, w,
@@ -778,27 +781,35 @@ limba_id lxl_value(lxl *L, uint32_t node)
     return lxl_iconst(L, lxl_type(L, t), 0);
 }
 
-void lxl_assign(lxl *L, uint32_t target, uint32_t value)
+void lxl_assign(lxl *L, uint32_t node, uint32_t target, uint32_t value)
 {
     limba_lxs *S = L->S;
     limba_ltype t = ntype(L, target);
+    /* the target first, its index checked, then the value (luxia_0.md
+       § 6: from left to right) */
     if (!lxl_scalar(L, t)) {
         uint64_t size = ti(L, t)->size;
-        limba_id src = lxl_addr(L, value);
         limba_id dst = lxl_addr(L, target);
+        limba_id src = lxl_addr(L, value);
         uint32_t o[3] = {dst, src, lxl_iconst(L, LIMBA_T_I64, (int64_t)size)};
         lxl_emit(L, LIMBA_OP_MEMCPY, LIMBA_T_VOID, 0, 0, 0, o, 3);
         return;
     }
-    limba_id v = lxl_coerce(L, lxl_value(L, value), ntype(L, value), t);
     limba_lx_node *x = nd(L, target);
     if (x->kind == LXN_REF) {
         limba_sym s = S->sym[target];
         const lxl_store *st = &L->store[s];
         if (st->kind == LXL_SSA) {
+            limba_id v = lxl_value(L, value);
+            lxl_at(L, node); /* a range is checked at the assignment */
+            v = lxl_coerce(L, v, ntype(L, value), t);
             limba_ssa_def(L->ssa, st->var, L->cur, v);
             return;
         }
     }
-    store(L, v, lxl_addr(L, target));
+    limba_id dst = lxl_addr(L, target);
+    limba_id v = lxl_value(L, value);
+    lxl_at(L, node);
+    v = lxl_coerce(L, v, ntype(L, value), t);
+    store(L, v, dst);
 }
