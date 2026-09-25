@@ -25,6 +25,10 @@ typedef struct {
     size_t outlen;
     char end[64]; /* "ok", "ok, N live, 0 bad frees" (N records made by
                      new never freed) or "trap CODE at LINE:COLUMN" */
+    char *in;     /* what the program reads, NULL for nothing */
+    size_t inlen;
+    int argc; /* its command line, for arg */
+    char **argv;
 } limba_lxgen;
 
 /* the program of a seed; false if no attempt ran within the limits */

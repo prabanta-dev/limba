@@ -533,6 +533,11 @@ static const sema_case sema_cases[] = {
     /* 1 is the exit status of the errors at run time */
     {"program p; begin halt(1); end.", "L0055@1:23"},
     {"program p; begin halt(256); end.", "L0055@1:23"},
+    /* a width from 0, decimals from 0 to 100, arguments from 1 */
+    {"program p; var x: Int32 := 1; begin writeln(x:-1); end.", "L0029@1:47"},
+    {"program p; var r: Float64 := 1.0; begin writeln(r:5:101); end.",
+     "L0029@1:53"},
+    {"program p; begin writeln(arg(0)); end.", "L0029@1:30"},
     /* open arrays: index of the same base, same elements, bounds inside a
        range, only for parameters */
     {"program p; var b: array[Int16 range 1..2] of Int8; procedure Q(v: "
@@ -756,6 +761,39 @@ static const run_case run_cases[] = {
     /* halt with a computed 1 is an error at run time, status 1 */
     {"program p; var n: Int32 := 1; begin halt(n); end p.", "", "trap 101"},
     {"program p; var n: Int32 := 0; begin halt(n); end p.", "", "halt 0"},
+    /* val reads a literal of Luxia of the type of its variable, spaces
+       around; the variable changes only when it is true */
+    {"program p; var i: Int8 := 0; u: UInt64 := 0; b: Bits8 := 0; f: "
+     "Float32 := 0.0; d: Float64 := 0.0; begin\n"
+     "writeln(val(\" -128 \", i), \" \", i, \" \", val(\"-129\", i), \" \", i, "
+     "\" \", val(\"0x7f\", i), \" \", i);\n"
+     "writeln(val(\"18446744073709551615\", u), \" \", u, \" \", val(\"-0\", "
+     "u), \" \", u, \" \", val(\"-1\", u), \" \", u);\n"
+     "writeln(val(\"255\", b), \" \", b, \" \", val(\"256\", b), \" \", b, \" "
+     "\", val(\"1_0\", b), \" \", b, \" \", val(\"1__0\", b), \" \", "
+     "val(\"_1\", b), \" \", val(\"1.\", d), \" \", val(\".5\", d));\n"
+     "writeln(val(\"1.0000000596046447753906250001\", f), \" \", f, \" \", "
+     "val(\"3.5e38\", f), \" \", val(\"1e3\", i), \" \", val(\"1e3\", d), "
+     "\" \", d);\n"
+     "writeln(val(\"inf\", d), \" \", d, \" \", val(\"-inf\", d), \" \", d, "
+     "\" \", val(\"nan\", d), \" \", d, \" \", val(\"-nan\", d), \" \", "
+     "val(\"1e400\", d), \" \", val(\"0b101\", d), \" \", d);\nend p.",
+     "true -128 false -128 true 127\n"
+     "true 18446744073709551615 true 0 false 0\n"
+     "true 255 false 255 true 10 false false false false\n"
+     "true 1.0000001192092896 false false true 1000.0\n"
+     "true inf true -inf true nan false false true 5.0\n",
+     "ok"},
+    /* arg from 1 to argcount(); a width from 0, decimals from 0 to 100,
+       checked where they are written */
+    {"program p; begin writeln(argcount());\nwriteln(arg(1)); end p.", "0\n",
+     "trap 101 at 2:9"},
+    {"program p; var n: Int32 := -1; r: Float64 := 1.5; begin "
+     "writeln(r:4:1, r:0);\nwriteln(r:n); end p.",
+     " 1.51.5\n", "trap 101 at 2:11"},
+    {"program p; var k: Int32 := 101; r: Float64 := 1.5; begin "
+     "writeln(r:1:0);\nwriteln(r:3:k); end p.",
+     "2\n", "trap 101 at 2:13"},
     /* an open array takes the bounds of its argument (Ada) */
     {"program p; type V = array[Int32 range <>] of Int64; var a: "
      "array[Int32 range 5..9] of Int64; n: Int32 := 3; procedure F(var v: "
@@ -1006,10 +1044,10 @@ static const run_case run_cases[] = {
 
 /* run main on the input in (NULL: none); what it printed (malloc'd, *len
    bytes) and how it ended */
-static char *run_module(limba_module *m, const char *in, size_t inlen,
-                        char *end, size_t size, size_t *len)
+static char *run_module(limba_module *m, const char *in, size_t inlen, int argc,
+                        char **argv, char *end, size_t size, size_t *len)
 {
-    limba_eval_limits lim = {0, 0, 0, NULL, NULL};
+    limba_eval_limits lim = {0, 0, argc, argv, NULL};
     if (in && inlen)
         lim.in = fmemopen((void *)in, inlen, "r");
     limba_eval_result r;
@@ -1040,10 +1078,11 @@ static char *run_module(limba_module *m, const char *in, size_t inlen,
 /* compile a Luxia source to a verified module, run it, then optimise it
    and run it again: both runs must agree (the OPTDIFF net); the output
    may hold any byte, so its length goes to *len when len is not NULL;
-   both runs read the input in (NULL: none) */
+   both runs read the input in (NULL: none), with the command line
+   argv */
 static char *compile_run(const char *src, const char *in, size_t inlen,
-                         char *end, size_t size, limba_report *keep,
-                         size_t *len)
+                         int argc, char **argv, char *end, size_t size,
+                         limba_report *keep, size_t *len)
 {
     size_t n1 = 0, n2 = 0;
     limba_source s;
@@ -1077,12 +1116,13 @@ static char *compile_run(const char *src, const char *in, size_t inlen,
         if (limba_verify(m, &d) != 0) {
             snprintf(end, size, "invalid IR: %.200s", d.msg);
         } else {
-            out = run_module(m, in, inlen, end, size, &n1);
+            out = run_module(m, in, inlen, argc, argv, end, size, &n1);
             char end2[256];
             if (limba_optimize(m, NULL, &d) != 0) {
                 snprintf(end, size, "optimiser: %.200s", d.msg);
             } else {
-                char *out2 = run_module(m, in, inlen, end2, sizeof(end2), &n2);
+                char *out2 = run_module(m, in, inlen, argc, argv, end2,
+                                        sizeof(end2), &n2);
                 if (n1 != n2 || (n1 && memcmp(out, out2, n1)) ||
                     strcmp(end, end2)) {
                     char first[128];
@@ -1114,8 +1154,8 @@ static int test_run(void)
         const run_case *c = &run_cases[i];
         char end[256];
         limba_report dummy;
-        char *out =
-            compile_run(c->src, NULL, 0, end, sizeof(end), &dummy, NULL);
+        char *out = compile_run(c->src, NULL, 0, 0, NULL, end, sizeof(end),
+                                &dummy, NULL);
         const char *o = out ? out : "";
         /* the place of a trap is compared only when the case gives it */
         char *at = strstr(end, " at ");
@@ -1195,8 +1235,8 @@ static int test_programs(unsigned *count)
         if (exp && !errors[0]) {
             char end[256];
             size_t olen;
-            char *out =
-                compile_run(text, in, inlen, end, sizeof(end), NULL, &olen);
+            char *out = compile_run(text, in, inlen, 0, NULL, end, sizeof(end),
+                                    NULL, &olen);
             if (strcmp(end, "ok") || olen != elen ||
                 (olen && memcmp(out, exp, olen))) {
                 fprintf(stderr,
@@ -1259,7 +1299,8 @@ static int test_random(void)
         }
         char end[256];
         size_t olen;
-        char *out = compile_run(p.src, NULL, 0, end, sizeof(end), NULL, &olen);
+        char *out = compile_run(p.src, p.in, p.inlen, p.argc, p.argv, end,
+                                sizeof(end), NULL, &olen);
         if (strcmp(end, p.end) || olen != p.outlen ||
             (olen && memcmp(out, p.out, olen))) {
             size_t k = 0;

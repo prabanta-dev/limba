@@ -218,8 +218,20 @@ static void lx_write(lxl *L, uint32_t node, bool line)
         }
         uint32_t vn = x->a, wn = x->b, dn = x->c;
         limba_ltype t = L->S->type[vn];
+        /* a width from 0, decimals from 0 to 100, each checked where it
+           is written, before the next is computed (§ 9) */
         limba_id v = lxl_value(L, vn), w = lxl_value(L, wn);
-        limba_id d = dn ? lxl_value(L, dn) : LIMBA_NONE;
+        limba_id zero = lxl_iconst(L, LIMBA_T_I32, 0);
+        lxl_at(L, wn);
+        lxl_check(L, icmp(L, LIMBA_CC_SGE, w, zero), LXR_RANGE);
+        limba_id d = LIMBA_NONE;
+        if (dn) {
+            d = lxl_value(L, dn);
+            lxl_at(L, dn);
+            lxl_check(L,
+                      icmp(L, LIMBA_CC_ULE, d, lxl_iconst(L, LIMBA_T_I32, 100)),
+                      LXR_RANGE);
+        }
         uint32_t args[2] = {to_string(L, v, t, d), w};
         lxl_rt(L, LIMBA_RT_PRINT_STR_W, LIMBA_T_VOID, args, 2);
     }
@@ -369,23 +381,30 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         *result = to_string(L, lxl_value(L, a0), t0, LIMBA_NONE);
         return;
     case LXB_VAL: {
+        /* the runtime reads a number of the type of the variable, its
+           range too: a text beyond it is no such number (§ 9) */
         uint32_t xn = arg(L, node, 1);
         limba_ltype xt = S->type[xn];
+        const limba_typeinfo *x = ti(L, xt);
         bool real = ti(L, lxs_base(S, xt))->kind == LIMBA_LTK_FLOAT;
-        limba_id tmp = temp(L);
-        uint32_t a[2] = {lxl_value(L, a0), tmp};
-        limba_id ok =
-            lxl_rt(L, real ? LIMBA_RT_STR_TO_F64 : LIMBA_RT_STR_TO_I64,
-                   LIMBA_T_I1, a, 2);
+        limba_id it = lxl_type(L, xt), tmp = temp(L);
+        uint32_t a[4] = {lxl_value(L, a0), tmp,
+                         lxl_iconst(L, LIMBA_T_I64, (int64_t)x->lo),
+                         lxl_iconst(L, LIMBA_T_I64, (int64_t)(uint64_t)x->hi)};
+        unsigned rt = real && it == LIMBA_T_F32 ? LIMBA_RT_STR_TO_F32
+                      : real                    ? LIMBA_RT_STR_TO_F64
+                      : lxl_signed(L, xt)       ? LIMBA_RT_STR_TO_I64
+                                                : LIMBA_RT_STR_TO_U64;
+        limba_id ok = lxl_rt(L, rt, LIMBA_T_I1, a, real ? 2 : 4);
         /* the variable changes only when the text is a number */
         limba_id yes = limba_ssa_block(L->ssa), done = limba_ssa_block(L->ssa);
         limba_ssa_cbr(L->ssa, L->cur, ok, yes, done);
         limba_ssa_seal(L->ssa, yes);
         L->cur = yes;
-        limba_id raw =
-            un(L, LIMBA_OP_LOAD, real ? LIMBA_T_F64 : LIMBA_T_I64, tmp);
-        limba_id conv = lxl_conv(L, raw, real ? S->ty_f64 : S->ty_int[3], xt);
-        uint32_t so[2] = {conv, lxl_addr(L, xn)};
+        limba_id v = un(L, LIMBA_OP_LOAD, real ? it : LIMBA_T_I64, tmp);
+        if (!real && it != LIMBA_T_I64)
+            v = un(L, LIMBA_OP_TRUNC, it, v);
+        uint32_t so[2] = {v, lxl_addr(L, xn)};
         lxl_emit(L, LIMBA_OP_STORE, LIMBA_T_VOID, 0, 0, 0, so, 2);
         limba_ssa_br(L->ssa, L->cur, done);
         limba_ssa_seal(L->ssa, done);
@@ -434,10 +453,17 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
     case LXB_ARGCOUNT:
         *result = lxl_rt(L, LIMBA_RT_ARG_COUNT, LIMBA_T_I32, NULL, 0);
         return;
-    case LXB_ARG:
+    case LXB_ARG: {
+        /* from 1 to argcount(), as an index (§ 9) */
         v = lxl_value(L, a0);
+        limba_id n = lxl_rt(L, LIMBA_RT_ARG_COUNT, LIMBA_T_I32, NULL, 0);
+        limba_id k =
+            bin(L, LIMBA_OP_SUB, LIMBA_T_I32, v, lxl_iconst(L, LIMBA_T_I32, 1));
+        lxl_at(L, node);
+        lxl_check(L, icmp(L, LIMBA_CC_ULT, k, n), LXR_RANGE);
         *result = lxl_rt(L, LIMBA_RT_ARG, LIMBA_T_STR, &v, 1);
         return;
+    }
     case LXB_HALT: {
         v = lxl_value(L, a0);
         /* 0 or 2..255: 1 is the status of the errors at run time */

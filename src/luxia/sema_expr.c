@@ -646,6 +646,16 @@ static void printable(limba_lxs *S, uint32_t a, uint32_t scope)
     }
 }
 
+/* a constant argument a outside lo..hi, the values its parameter takes:
+   known before the run, an error then as for a range (§ 9) */
+static void const_within(limba_lxs *S, uint32_t a, __int128 lo, __int128 hi,
+                         const char *what)
+{
+    __int128 k;
+    if (S->val[a] && lxs_value_to_int(S, S->val[a], &k) && (k < lo || k > hi))
+        lxs_error(S, LXE_CONST_RANGE, a, "%s", what);
+}
+
 static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
                            limba_sym s, limba_ltype expected)
 {
@@ -671,8 +681,10 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
             uint32_t v = ax->a, w = ax->b, d = ax->c;
             printable(S, v, scope);
             arg_of(S, w, scope, S->ty_int[2]);
+            const_within(S, w, 0, INT32_MAX, "a width is 0 or more");
             if (d) {
                 arg_of(S, d, scope, S->ty_int[2]);
+                const_within(S, d, 0, 100, "decimals go from 0 to 100");
                 if (S->type[v] && !is_float(S, S->type[v]))
                     lxs_error(S, LXE_FORMAT_PLACE, d,
                               "decimals are for real numbers");
@@ -833,8 +845,11 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         arity(S, node, 0, nm, scope);
         return set(S, node, S->ty_int[2]);
     case LXB_ARG:
-        if (arity(S, node, 1, nm, scope))
+        if (arity(S, node, 1, nm, scope)) {
             arg_of(S, arg_at(S, node, 0), scope, S->ty_int[2]);
+            const_within(S, arg_at(S, node, 0), 1, INT32_MAX,
+                         "the arguments are counted from 1");
+        }
         return set(S, node, S->ts.string);
     case LXB_HALT:
         if (arity(S, node, 1, nm, scope)) {

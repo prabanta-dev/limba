@@ -215,14 +215,18 @@ enum {
     E_PRED,
     E_ORD,
     E_MATH,   /* function op of the library on the real a */
-    E_SLEN,   /* length of the string a */
+    E_SLEN,   /* length (op 0), low (1) or high (2) of the string a */
     E_SIDX,   /* byte b of the string variable var */
     E_COPY,   /* copy(a, b, c) */
     E_STRF,   /* str(a) */
     E_CHR,    /* chr(a) */
     E_FMT,    /* a:b, or a:b:c for a real, an item of writeln */
     E_CFIELD, /* field b of the record call a returns */
-    E_CINDEX  /* element b of the array call a returns */
+    E_CINDEX, /* element b of the array call a returns */
+    E_VAL,    /* val(a, var): true when the string a is a number */
+    E_READ,   /* readline(var) */
+    E_ARGC,   /* argcount() */
+    E_ARG     /* arg(a) */
 };
 
 /* a call of a function whose result is a record or an array has in var
@@ -346,6 +350,11 @@ typedef struct {
         uint32_t n;
     } *str;
     uint32_t nstr, capstr;
+    /* the command line and the lines of the input, strings; the input
+       ends with a newline when nl_end */
+    uint32_t arg[3], narg;
+    uint32_t line[6], nline;
+    bool nl_end;
 } G;
 
 static uint32_t new_str(G *g, const char *b, size_t n)
@@ -1358,10 +1367,21 @@ static uint32_t enum_expr(G *g, uint32_t et, int d, bool need_var)
 static uint32_t str_expr(G *g, int d, bool need_var);
 static uint32_t char_expr(G *g, int d, bool need_var);
 
+static uint32_t val_expr(G *g, int d);
+static uint32_t read_expr(G *g);
+static uint32_t arg_expr(G *g);
+
 static uint32_t leaf(G *g, unsigned t, bool need_var, int d)
 {
     if (!need_var && is_int_base(t) && chance(g, 12))
         return const_leaf(g, t);
+    if (t == T_BOOL && d > 0 && chance(g, 6)) {
+        uint32_t r = chance(g, 50) ? val_expr(g, d) : read_expr(g);
+        if (r)
+            return r;
+    }
+    if (t == T_I32 && chance(g, 3))
+        return new_e(g, E_ARGC, T_I32);
     uint32_t et = t == T_U32 && chance(g, 15) ? pick_enum(g) : 0;
     if (et) {
         uint32_t a = enum_expr(g, et, d - 1, true);
@@ -1383,6 +1403,7 @@ static uint32_t leaf(G *g, unsigned t, bool need_var, int d)
     if (t == T_I64 && d > 0 && chance(g, 6)) {
         uint32_t a = str_expr(g, d - 1, true);
         uint32_t i = new_e(g, E_SLEN, T_I64);
+        g->e[i].op = (uint8_t)(chance(g, 60) ? 0 : 1 + below(g, 2));
         g->e[i].a = a;
         return i;
     }
@@ -1475,10 +1496,13 @@ static uint32_t membership(G *g, int d)
 }
 
 /* a String: a variable, a literal, a & b of strings and characters,
-   copy, str of a number, a Boolean or a character, a call */
+   copy, str of a number, a Boolean or a character, an argument, a
+   call */
 static uint32_t str_expr(G *g, int d, bool need_var)
 {
     if (d <= 0 || chance(g, 30)) {
+        if (chance(g, g->narg ? 8 : 1))
+            return arg_expr(g);
         int v = pick_var(g, T_STR, false, false);
         if (v >= 0 && (need_var || chance(g, 70)))
             return var_ref(g, (uint32_t)v);
@@ -1579,16 +1603,235 @@ static uint32_t halt_stmt(G *g, uint32_t *out)
     return n;
 }
 
-/* item a of a writeln, sometimes a:width or, for a real, a:width:decimals
-   (widths 0 to 12 and decimals 0 to 10: what lies outside is not decided
-   yet) */
+/* texts for val: numbers of both kinds, at the edges of the types, in
+   every base, with a sign and spaces around, inf and nan, and texts that
+   are almost numbers; 1.0000000596046447753906250001 is a Float32 that
+   two roundings (to Float64, then to Float32) get wrong */
+static const char *const val_text[] = {"0",
+                                       "-0",
+                                       "+7",
+                                       "42",
+                                       "-1",
+                                       "127",
+                                       "-129",
+                                       "255",
+                                       "256",
+                                       "300",
+                                       "65535",
+                                       "-32769",
+                                       "2147483648",
+                                       "4294967296",
+                                       "16777217",
+                                       "9223372036854775807",
+                                       "-9223372036854775808",
+                                       "9223372036854775808",
+                                       "18446744073709551615",
+                                       "18446744073709551616",
+                                       " 12",
+                                       "12 ",
+                                       "  -3  ",
+                                       "1_000",
+                                       "0xff",
+                                       "0xFF",
+                                       "-0x80",
+                                       "0x7fff_ffff",
+                                       "0xffffffffffffffff",
+                                       "0o17",
+                                       "0b1010",
+                                       "0b1_0000_0001",
+                                       "1.5",
+                                       "-2.25",
+                                       "1e3",
+                                       "1.5e-9",
+                                       "2e+10",
+                                       "0.1",
+                                       "3.4028235e38",
+                                       "3.5e38",
+                                       "1e-50",
+                                       "1.0000000596046447753906250001",
+                                       "1e400",
+                                       "1e-400",
+                                       "inf",
+                                       "-inf",
+                                       "+inf",
+                                       "nan",
+                                       "",
+                                       " ",
+                                       "-",
+                                       "+",
+                                       "x",
+                                       "12x",
+                                       "1 2",
+                                       "--1",
+                                       "1e",
+                                       "1.",
+                                       ".5",
+                                       "1E3",
+                                       "0XFF",
+                                       "0x",
+                                       "0o8",
+                                       "0b2",
+                                       "1__0",
+                                       "_1",
+                                       "1_",
+                                       "Inf",
+                                       "-nan",
+                                       "0x_1"};
+
+static uint32_t number_text(G *g)
+{
+    const char *t = val_text[below(g, sizeof(val_text) / sizeof(val_text[0]))];
+    return new_str(g, t, strlen(t));
+}
+
+/* a text for val into a variable of type t: half the time one of the
+   table; else, for an integer, an edge of t (low - 1, low, high, high +
+   1) in decimal or hexadecimal, maybe with spaces around and a _ in the
+   digits or out of them; for a real, a text at the edges of the reals */
+static uint32_t val_text_for(G *g, uint32_t t)
+{
+    if (chance(g, 50))
+        return number_text(g);
+    if (fam(base(g, t)) == 'F') {
+        static const char *const r[] = {"inf",
+                                        "-inf",
+                                        "+inf",
+                                        "nan",
+                                        "-nan",
+                                        "+nan",
+                                        "1e400",
+                                        "-1e400",
+                                        "1e-400",
+                                        "3.4028235e38",
+                                        "3.5e38",
+                                        "1e-50",
+                                        "1.0000000596046447753906250001",
+                                        "0x1_0000_0000_0000_0001",
+                                        "-0.0"};
+        const char *x = r[below(g, sizeof(r) / sizeof(r[0]))];
+        return new_str(g, x, strlen(x));
+    }
+    v128 edge[4] = {lo_of(g, t) - 1, lo_of(g, t), hi_of(g, t), hi_of(g, t) + 1};
+    v128 v = edge[below(g, 4)];
+    u128 m = v < 0 ? -(u128)v : (u128)v;
+    bool hex = chance(g, 30);
+    char b[64], d[48];
+    size_t n = 0;
+    do {
+        d[n++] = "0123456789abcdef"[m % (hex ? 16 : 10)];
+        m /= hex ? 16 : 10;
+    } while (m);
+    size_t k = 0;
+    if (chance(g, 15))
+        b[k++] = ' ';
+    if (v < 0 || chance(g, 20))
+        b[k++] = v < 0 ? '-' : '+';
+    if (hex) {
+        b[k++] = '0';
+        b[k++] = 'x';
+    }
+    /* now and then a _ among the digits, or before or after them */
+    size_t under = chance(g, 20) ? below(g, (uint32_t)n + 1) : SIZE_MAX;
+    for (size_t q = n; q-- > 0;) {
+        if (q + 1 == n - under)
+            b[k++] = '_';
+        b[k++] = d[q];
+    }
+    if (under == n)
+        b[k++] = '_';
+    if (chance(g, 15))
+        b[k++] = ' ';
+    return new_str(g, b, k);
+}
+
+/* arg(k): k a literal from 1 to argcount(), or argcount() itself; now
+   and then one past, argcount() + 1 or a literal (a range error) */
+static uint32_t arg_expr(G *g)
+{
+    uint32_t k;
+    if (g->narg && chance(g, 70)) {
+        k = lit(g, T_I32, 1 + below(g, g->narg));
+    } else if (g->narg && chance(g, 60)) {
+        k = new_e(g, E_ARGC, T_I32);
+    } else if (chance(g, 50)) {
+        k = lit(g, T_I32, g->narg + 1);
+    } else {
+        uint32_t c = new_e(g, E_ARGC, T_I32), one = lit(g, T_I32, 1);
+        k = binop(g, O_ADD, T_I32, c, one);
+    }
+    uint32_t i = new_e(g, E_ARG, T_STR);
+    g->e[i].a = k;
+    return i;
+}
+
+/* val(s, x) into a writable variable x of a numeric type, s a text of
+   the table, str of an integer or an argument; 0 if there is no x */
+static uint32_t val_expr(G *g, int d)
+{
+    /* a real one often, as they are fewer */
+    bool real = chance(g, 40);
+    uint32_t n = 0, v = 0;
+    for (int pass = 0; pass < 2 && !n; pass++, real = !real)
+        for (uint32_t i = 0; i < g->nscope; i++) {
+            uint32_t w = g->scope[i], t = g->v[w].t;
+            if (!is_scalar(g, t) || is_enum(g, t) || !writable(g, w) ||
+                !strchr(real ? "F" : "SUB", fam(base(g, t))))
+                continue;
+            if (below(g, ++n) == 0)
+                v = w;
+        }
+    if (!n)
+        return 0;
+    uint32_t a;
+    if (g->narg && chance(g, 10)) {
+        a = arg_expr(g);
+    } else if (d > 0 && chance(g, 20)) {
+        uint32_t b = expr(g, int_type(g), d - 1, true);
+        a = new_e(g, E_STRF, T_STR);
+        g->e[a].a = b;
+    } else {
+        a = lit(g, T_STR, val_text_for(g, g->v[v].t));
+    }
+    uint32_t i = new_e(g, E_VAL, T_BOOL);
+    g->e[i].var = v;
+    g->e[i].a = a;
+    return i;
+}
+
+/* readline(s) into a writable String variable; 0 if none, or in a
+   function (it reads the input) */
+static uint32_t read_expr(G *g)
+{
+    int v = in_function(g) ? -1 : pick_var(g, T_STR, true, true);
+    if (v < 0)
+        return 0;
+    uint32_t i = new_e(g, E_READ, T_BOOL);
+    g->e[i].var = (uint32_t)v;
+    return i;
+}
+
+/* argcount() + k, no constant: a width or decimals out of their range
+   that the front end cannot see */
+static uint32_t past(G *g, int k)
+{
+    uint32_t c = new_e(g, E_ARGC, T_I32), n = lit(g, T_I32, k < 0 ? -k : k);
+    return binop(g, k < 0 ? O_SUB : O_ADD, T_I32, c, n);
+}
+
+/* item a of a writeln, sometimes a:width or, for a real, a:width:decimals:
+   widths 0 to 12 and decimals 0 to 10, seldom a negative width or
+   decimals out of 0..100 (a range error at them) */
 static uint32_t format(G *g, uint32_t a)
 {
     if (g->e[a].k == E_STR || !chance(g, 25))
         return a;
     bool real = fam(base(g, g->e[a].t)) == 'F';
-    uint32_t w = lit(g, T_I32, below(g, 13));
-    uint32_t d = real && chance(g, 60) ? lit(g, T_I32, below(g, 11)) : 0;
+    uint32_t w = chance(g, 1) ? past(g, -4 - (int)below(g, 3))
+                              : lit(g, T_I32, below(g, 13));
+    uint32_t d = 0;
+    if (real && chance(g, 60))
+        d = chance(g, 1) ? past(g, chance(g, 50) ? -4 : 101)
+                         : lit(g, T_I32, below(g, 11));
     uint32_t i = new_e(g, E_FMT, g->e[a].t);
     g->e[i].a = a;
     g->e[i].b = w;
@@ -1788,6 +2031,7 @@ static uint32_t bump(G *g, uint32_t w)
 
 /* the body of a loop, whose first statement is first (0: none) */
 static uint32_t declare_dyn(G *g);
+static uint32_t read_write(G *g);
 static void append(G *g, uint32_t *b, uint32_t *n, uint32_t s, bool front);
 
 static void loop_body(G *g, uint32_t s, uint32_t first)
@@ -1977,6 +2221,13 @@ static uint32_t stmt(G *g, uint32_t *out)
            be outside */
         return halt_stmt(g, out);
     }
+    if (!pure && chance(g, 8)) {
+        uint32_t s = read_write(g);
+        if (s) {
+            out[0] = s;
+            return 1;
+        }
+    }
     int sv = chance(g, 4) ? pick_var(g, T_STR, false, false) : -1;
     if (sv >= 0 && deep) {
         /* for var i: Int64 := 1 to length(s) (or down) printing s[i]; the
@@ -1984,8 +2235,15 @@ static uint32_t stmt(G *g, uint32_t *out)
         uint32_t s = new_s(g, S_FOR);
         bool down = chance(g, 40);
         uint32_t one = lit(g, T_I64, 1 + below(g, 2));
+        if (chance(g, 25)) { /* low(s) */
+            uint32_t r = var_ref(g, (uint32_t)sv);
+            one = new_e(g, E_SLEN, T_I64);
+            g->e[one].op = 1;
+            g->e[one].a = r;
+        }
         uint32_t sr = var_ref(g, (uint32_t)sv);
         uint32_t len = new_e(g, E_SLEN, T_I64);
+        g->e[len].op = chance(g, 30) ? 2 : 0; /* high(s) or length(s) */
         g->e[len].a = sr;
         uint32_t i = new_v(g, T_I64, V_LOOP);
         g->st[s].var = i;
@@ -2353,6 +2611,22 @@ static uint32_t stmt(G *g, uint32_t *out)
     g->st[s].nargs = k;
     out[0] = s;
     return 1;
+}
+
+/* writeln(val(s, x), " ", x) or writeln(readline(s), " ", s): what was
+   read, shown at once; 0 if there is no variable for it */
+static uint32_t read_write(G *g)
+{
+    uint32_t r = chance(g, 70) ? val_expr(g, depth(g)) : read_expr(g);
+    if (!r)
+        return 0;
+    uint32_t v = g->e[r].var;
+    uint32_t items[3] = {r, new_e(g, E_STR, 0), 0};
+    items[2] = var_ref(g, v);
+    uint32_t s = new_s(g, S_WRITE);
+    g->st[s].args = keep_list(g, items, 3);
+    g->st[s].nargs = 3;
+    return s;
 }
 
 /* a jump that ends a block: return, or exit or continue in a loop */
@@ -2756,7 +3030,28 @@ static void pexpr(G *g, text *o, uint32_t i)
         put(o, ")");
         break;
     case E_SLEN:
-        put(o, "length(");
+        put(o, x->op == 1 ? "low(" : x->op == 2 ? "high(" : "length(");
+        pexpr(g, o, x->a);
+        put(o, ")");
+        break;
+    case E_VAL:
+        put(o, "val(");
+        pexpr(g, o, x->a);
+        put(o, ", ");
+        put_name(o, g, g->e[i].var);
+        put(o, ")");
+        break;
+    case E_READ:
+        put(o, "readline(");
+        put_name(o, g, x->var);
+        put(o, ")");
+        break;
+    case E_ARGC:
+        put(o, "argcount()");
+        break;
+    case E_ARG:
+        here(x, o); /* the index is checked at its name */
+        put(o, "arg(");
         pexpr(g, o, x->a);
         put(o, ")");
         break;
@@ -3195,7 +3490,8 @@ typedef struct {
     uint32_t line, col;
     uint64_t steps;
     v128 ret;
-    uint32_t rt; /* the type of the result of the running function */
+    uint32_t rt;   /* the type of the result of the running function */
+    uint32_t next; /* the line of the input readline reads next */
 } X;
 
 static v128 wrap(unsigned t, v128 v)
@@ -3528,6 +3824,132 @@ static v128 binary(X *x, uint32_t i)
     return v;
 }
 
+/* v of base from converted to type to at node i: a real rounded, an
+   integer that must fit, the low bits for a Bits type */
+static v128 convert(X *x, uint32_t i, unsigned from, uint32_t to, v128 v)
+{
+    const G *g = x->g;
+    unsigned t = base(g, to);
+    if (fam(t) == 'F') {
+        if (fam(from) == 'F')
+            return fres(t, fval(v));
+        if (t == T_F32) /* rounded once, to float */
+            return fbits(fam(from) == 'S' ? (double)(float)(int64_t)v
+                                          : (double)(float)(uint64_t)v);
+        return fbits(fam(from) == 'S' ? (double)(int64_t)v
+                                      : (double)(uint64_t)v);
+    }
+    if (fam(from) == 'F') {
+        /* halves away from zero (Ada), then it must fit, Bits too */
+        double d = round(fval(v));
+        if (!(fabs(d) < 0x1p100))
+            return fail(x, i, 103);
+        v = (v128)d;
+    } else if (fam(t) == 'B') {
+        return wrap(t, v);
+    }
+    return v >= lo_of(g, to) && v <= hi_of(g, to) ? v : fail(x, i, 103);
+}
+
+static unsigned digit_value(char c)
+{
+    return c >= '0' && c <= '9'   ? (unsigned)(c - '0')
+           : c >= 'a' && c <= 'f' ? (unsigned)(c - 'a' + 10)
+           : c >= 'A' && c <= 'F' ? (unsigned)(c - 'A' + 10)
+                                  : 99;
+}
+
+/* a group of digits of base b at p[*i], a _ only between two of them,
+   copied to t at *k without the _; false if there is none */
+static bool digit_group(const char *p, size_t n, size_t *i, unsigned b, char *t,
+                        size_t *k)
+{
+    size_t from = *i;
+    while (*i < n) {
+        if (digit_value(p[*i]) < b)
+            t[(*k)++] = p[(*i)++];
+        else if (p[*i] == '_' && *i > from && *i + 1 < n &&
+                 digit_value(p[*i + 1]) < b)
+            (*i)++;
+        else
+            break;
+    }
+    return *i > from;
+}
+
+/* the text s as val reads it into a variable of type t (§ 9): spaces and
+   tabs around, a sign, then a literal of Luxia (0x 0o 0b, a real with
+   digits on both sides of the point and a lowercase e); an integer must
+   lie in t, a real is rounded once to t and must not overflow it; inf
+   and nan (with no sign) too. The texts made here are short */
+static bool read_number(const G *g, const struct xstr *s, uint32_t t, v128 *v)
+{
+    const char *p = s->b, *e = s->b + s->n;
+    while (p < e && (*p == ' ' || *p == '\t'))
+        p++;
+    while (e > p && (e[-1] == ' ' || e[-1] == '\t'))
+        e--;
+    char sign = p < e && (*p == '+' || *p == '-') ? *p++ : 0;
+    size_t n = (size_t)(e - p), i = 0, k = 0;
+    unsigned bt = base(g, t);
+    bool real = fam(bt) == 'F';
+    if (real && n == 3 &&
+        (!memcmp(p, "inf", 3) || (!memcmp(p, "nan", 3) && !sign))) {
+        double d = p[0] == 'i' ? INFINITY : NAN;
+        *v = fbits(sign == '-' ? -d : d);
+        return true;
+    }
+    char txt[160];
+    if (n >= sizeof(txt) - 1)
+        return false; /* none so long here */
+    unsigned b = 10;
+    if (n > 2 && p[0] == '0' && (p[1] == 'x' || p[1] == 'o' || p[1] == 'b')) {
+        b = p[1] == 'x' ? 16 : p[1] == 'o' ? 8 : 2;
+        i = 2;
+    }
+    if (!digit_group(p, n, &i, b, txt, &k))
+        return false;
+    u128 mag = 0;
+    for (size_t q = 0; q < k && mag >> 120 == 0; q++)
+        mag = mag * b + digit_value(txt[q]);
+    bool whole = true;
+    if (b == 10 && i < n && p[i] == '.') {
+        txt[k++] = '.';
+        i++;
+        if (!digit_group(p, n, &i, 10, txt, &k))
+            return false;
+        whole = false;
+    }
+    if (b == 10 && i < n && p[i] == 'e') {
+        txt[k++] = 'e';
+        i++;
+        if (i < n && (p[i] == '+' || p[i] == '-'))
+            txt[k++] = p[i++];
+        if (!digit_group(p, n, &i, 10, txt, &k))
+            return false;
+        whole = false;
+    }
+    txt[k] = 0;
+    if (i != n || (!real && !whole))
+        return false;
+    if (!real) {
+        v128 x = sign == '-' ? -(v128)mag : (v128)mag;
+        if (mag >> 120 || x < lo_of(g, t) || x > hi_of(g, t))
+            return false;
+        *v = x;
+        return true;
+    }
+    /* a decimal text by the library, in the base of the text a whole
+       number converted once */
+    double d = b == 10 ? (bt == T_F32 ? strtof(txt, NULL) : strtod(txt, NULL))
+               : bt == T_F32 ? (double)(float)mag
+                             : (double)mag;
+    if (isinf(d))
+        return false;
+    *v = fbits(sign == '-' ? -d : d);
+    return true;
+}
+
 static v128 ev(X *x, uint32_t i)
 {
     const G *g = x->g;
@@ -3568,26 +3990,34 @@ static v128 ev(X *x, uint32_t i)
         v128 v = ev(x, e->a);
         if (x->trap)
             return 0;
-        unsigned from = base(g, g->e[e->a].t);
-        if (fam(t) == 'F') {
-            if (fam(from) == 'F')
-                return fres(t, fval(v));
-            if (t == T_F32) /* rounded once, to float */
-                return fbits(fam(from) == 'S' ? (double)(float)(int64_t)v
-                                              : (double)(float)(uint64_t)v);
-            return fbits(fam(from) == 'S' ? (double)(int64_t)v
-                                          : (double)(uint64_t)v);
-        }
-        if (fam(from) == 'F') {
-            /* halves away from zero (Ada), then it must fit, Bits too */
-            double d = round(fval(v));
-            if (!(fabs(d) < 0x1p100))
-                return fail(x, i, 103);
-            v = (v128)d;
-        } else if (fam(t) == 'B') {
-            return wrap(t, v);
-        }
-        return v >= lo_of(g, e->t) && v <= hi_of(g, e->t) ? v : fail(x, i, 103);
+        return convert(x, i, base(g, g->e[e->a].t), e->t, v);
+    }
+    case E_VAL: {
+        /* the variable changes only when the text is a number */
+        v128 s = ev(x, e->a);
+        if (x->trap)
+            return 0;
+        uint32_t vt = g->v[e->var].t;
+        v128 v;
+        if (!read_number(g, &g->str[(uint32_t)s], vt, &v))
+            return 0;
+        x->cell[x->ref[e->var]] = v;
+        return 1;
+    }
+    case E_READ: {
+        /* the next line, without its end; past the last, "" and false */
+        bool more = x->next < g->nline;
+        x->cell[x->ref[e->var]] = more ? g->line[x->next++] : 0;
+        return more;
+    }
+    case E_ARGC:
+        return g->narg;
+    case E_ARG: {
+        v128 k = ev(x, e->a);
+        if (x->trap)
+            return 0;
+        /* from 1 to argcount(), checked at its name */
+        return k >= 1 && k <= g->narg ? g->arg[k - 1] : fail(x, i, 101);
     }
     case E_CALL: {
         v128 r = call(x, e->fn, e->args, e->nargs, e->line, e->col);
@@ -3645,8 +4075,11 @@ static v128 ev(X *x, uint32_t i)
         return x->trap ? 0 : valid(x, i, e->t, x->cell[(uint32_t)c + e->b]);
     }
     case E_SLEN: {
+        /* low evaluates the string too */
         v128 v = ev(x, e->a);
-        return x->trap ? 0 : (v128)g->str[(uint32_t)v].n;
+        if (x->trap)
+            return 0;
+        return e->op == 1 ? 1 : (v128)g->str[(uint32_t)v].n;
     }
     case E_SIDX: {
         v128 v = x->cell[x->ref[e->var]];
@@ -3937,7 +4370,11 @@ static int run_stmt(X *x, uint32_t si)
                 const xe *fe = &g->e[a];
                 v128 v = ev(x, fe->a);
                 v128 w = x->trap ? 0 : ev(x, fe->b);
+                if (!x->trap && w < 0)
+                    fail(x, fe->b, 101); /* at the width */
                 v128 d = x->trap || !fe->c ? 0 : ev(x, fe->c);
+                if (!x->trap && (d < 0 || d > 100))
+                    fail(x, fe->c, 101); /* at the decimals */
                 if (x->trap)
                     return X_RET;
                 text t = {NULL, 0, 0, 1, 1};
@@ -4068,6 +4505,18 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     g.cur = -1;
     new_e(&g, E_LIT, 0); /* node 0 stands for none */
     new_str(&g, "", 0);  /* string 0 is empty */
+    /* the command line and the input: pieces like those of the literals,
+       and texts for val */
+    g.narg = below(&g, 4);
+    for (uint32_t k = 0; k < g.narg; k++)
+        g.arg[k] =
+            chance(&g, 50) ? (uint32_t)rand_value(&g, T_STR) : number_text(&g);
+    g.nline = below(&g, 7);
+    for (uint32_t k = 0; k < g.nline; k++)
+        g.line[k] =
+            chance(&g, 50) ? (uint32_t)rand_value(&g, T_STR) : number_text(&g);
+    /* an empty last line with no newline is no line */
+    g.nl_end = chance(&g, 80) || (g.nline && !g.str[g.line[g.nline - 1]].n);
     for (unsigned t = 0; t < NTYPES; t++)
         new_type(&g, (xt){K_BASE, (uint8_t)t, 0, 0, t == T_BOOL ? 0 : tmin(t),
                           tmax(t), 0, 0});
@@ -4349,6 +4798,23 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         p->out = x.out.b;
         p->outlen = x.out.n;
         x.out.b = NULL;
+        text in = {NULL, 0, 0, 1, 1};
+        for (uint32_t k = 0; k < g.nline; k++) {
+            putn(&in, g.str[g.line[k]].b, g.str[g.line[k]].n);
+            if (k + 1 < g.nline || g.nl_end)
+                put(&in, "\n");
+        }
+        p->in = in.b;
+        p->inlen = in.n;
+        p->argc = (int)g.narg;
+        p->argv = limba_xcalloc(g.narg + 1, sizeof(char *));
+        for (uint32_t k = 0; k < g.narg; k++) {
+            const struct xstr *a = &g.str[g.arg[k]];
+            p->argv[k] = limba_xmalloc(a->n + 1);
+            if (a->n)
+                memcpy(p->argv[k], a->b, a->n);
+            p->argv[k][a->n] = 0;
+        }
         if (x.halt)
             snprintf(p->end, sizeof(p->end), "halt %d at %u:%u", x.code, x.line,
                      x.col);
@@ -4385,5 +4851,9 @@ void limba_lxgen_free(limba_lxgen *p)
 {
     free(p->src);
     free(p->out);
+    free(p->in);
+    for (int k = 0; k < p->argc; k++)
+        free(p->argv[k]);
+    free(p->argv);
     memset(p, 0, sizeof(*p));
 }

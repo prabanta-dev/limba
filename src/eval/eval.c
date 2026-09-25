@@ -212,24 +212,163 @@ static size_t utf8(uint32_t c, char *buf)
 }
 
 /* a whole string as a number: optional blanks around, nothing else */
-static bool parse_number(const estr *s, bool real, uint64_t *out)
+/* ---- val: a number of a text (luxia_0.md § 9) ---- */
+
+static int digit_of(char c, unsigned base)
 {
-    char buf[128];
-    size_t n = s->len < sizeof(buf) - 1 ? s->len : sizeof(buf) - 1;
-    memcpy(buf, s->data, n);
-    buf[n] = 0;
-    char *end;
-    errno = 0;
-    if (real) {
-        double d = strtod(buf, &end);
-        *out = fbits(d, LIMBA_T_F64);
-    } else {
-        long long v = strtoll(buf, &end, 10);
-        *out = (uint64_t)v;
+    int v = c >= '0' && c <= '9'   ? c - '0'
+            : c >= 'a' && c <= 'f' ? c - 'a' + 10
+            : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                                   : -1;
+    return v >= 0 && (unsigned)v < base ? v : -1;
+}
+
+/* the digits of base at p[*i], a _ only between two of them, copied to
+   buf at *k without the _; false if there is none */
+static bool num_digits(const char *p, size_t n, size_t *i, unsigned base,
+                       char *buf, size_t *k)
+{
+    size_t start = *i;
+    while (*i < n) {
+        if (digit_of(p[*i], base) >= 0)
+            buf[(*k)++] = p[(*i)++];
+        else if (p[*i] == '_' && *i > start && *i + 1 < n &&
+                 digit_of(p[*i + 1], base) >= 0)
+            (*i)++;
+        else
+            break;
     }
-    while (*end == ' ' || *end == '\t')
-        end++;
-    return errno == 0 && end != buf && *end == 0 && n == s->len;
+    return *i > start;
+}
+
+/* the literal p[0..n) in buf without its _: 1 for an integer of *base
+   (the digits only), 2 for a real (for strtod), 0 for no literal */
+static int num_literal(const char *p, size_t n, char *buf, unsigned *base)
+{
+    size_t i = 0, k = 0;
+    int kind = 1;
+    *base = 10;
+    if (n > 2 && p[0] == '0' && (p[1] == 'x' || p[1] == 'o' || p[1] == 'b')) {
+        *base = p[1] == 'x' ? 16 : p[1] == 'o' ? 8 : 2;
+        i = 2;
+        if (!num_digits(p, n, &i, *base, buf, &k))
+            return 0;
+    } else {
+        if (!num_digits(p, n, &i, 10, buf, &k))
+            return 0;
+        if (i < n && p[i] == '.') {
+            buf[k++] = p[i++];
+            if (!num_digits(p, n, &i, 10, buf, &k))
+                return 0;
+            kind = 2;
+        }
+        if (i < n && p[i] == 'e') {
+            buf[k++] = p[i++];
+            if (i < n && (p[i] == '+' || p[i] == '-'))
+                buf[k++] = p[i++];
+            if (!num_digits(p, n, &i, 10, buf, &k))
+                return 0;
+            kind = 2;
+        }
+    }
+    buf[k] = 0;
+    return i == n ? kind : 0;
+}
+
+/* the body of the number in s, without the spaces and tabs around and the
+   sign (+, - or 0 for none); false if nothing is left */
+static bool num_body(const estr *s, const char **p, size_t *n, char *sign)
+{
+    const char *b = s->data, *e = s->data + s->len;
+    while (b < e && (*b == ' ' || *b == '\t'))
+        b++;
+    while (e > b && (e[-1] == ' ' || e[-1] == '\t'))
+        e--;
+    *sign = b < e && (*b == '+' || *b == '-') ? *b++ : 0;
+    *p = b;
+    *n = (size_t)(e - b);
+    return b < e;
+}
+
+/* an integer of s: its magnitude and sign; false past 64 bits */
+static bool num_int(const estr *s, uint64_t *mag, bool *neg)
+{
+    const char *p;
+    size_t n;
+    unsigned base;
+    char sign;
+    if (!num_body(s, &p, &n, &sign))
+        return false;
+    *neg = sign == '-';
+    char *buf = limba_xmalloc(n + 1);
+    bool ok = num_literal(p, n, buf, &base) == 1;
+    *mag = 0;
+    for (char *c = buf; ok && *c; c++)
+        ok = !__builtin_mul_overflow(*mag, base, mag) &&
+             !__builtin_add_overflow(*mag, (uint64_t)digit_of(*c, base), mag);
+    free(buf);
+    return ok;
+}
+
+/* a real of s, rounded once to f64 or f32 (the bits of the double that
+   holds it); false for a finite text beyond the type */
+static bool num_real(const estr *s, bool f32, uint64_t *out)
+{
+    const char *p;
+    size_t n;
+    char sign;
+    unsigned base;
+    if (!num_body(s, &p, &n, &sign))
+        return false;
+    double d;
+    if (n == 3 && !memcmp(p, "inf", 3)) {
+        d = INFINITY;
+    } else if (n == 3 && !memcmp(p, "nan", 3)) {
+        if (sign)
+            return false; /* nan has no sign */
+        d = NAN;
+    } else {
+        /* room for 0x, a hexadecimal digit for each binary one, p0 */
+        char *buf = limba_xmalloc(n + 8), *text = buf;
+        int kind = num_literal(p, n, buf, &base);
+        if (kind == 1 && base != 10) {
+            /* the digits as hexadecimal ones, for a rounding done once:
+               a digit of base 2^b is b bits, zeros pad the first */
+            unsigned b = base == 16 ? 4 : base == 8 ? 3 : 1;
+            size_t nbits = strlen(buf) * b, pad = (4 - nbits % 4) % 4;
+            size_t nh = (nbits + pad) / 4;
+            text = limba_xmalloc(nh + 8);
+            memcpy(text, "0x", 2);
+            for (size_t h = 0; h < nh; h++) {
+                unsigned v = 0;
+                for (size_t q = h * 4; q < h * 4 + 4; q++) {
+                    size_t at = q - pad; /* the bit in the digits */
+                    unsigned one =
+                        q < pad ? 0
+                                : ((unsigned)digit_of(buf[at / b], base) >>
+                                   (b - 1 - at % b)) &
+                                      1;
+                    v = v << 1 | one;
+                }
+                text[2 + h] = "0123456789abcdef"[v];
+            }
+            memcpy(text + 2 + nh, "p0", 3);
+        }
+        d = 0;
+        if (kind) {
+            if (f32)
+                d = strtof(text, NULL);
+            else
+                d = strtod(text, NULL);
+        }
+        if (text != buf)
+            free(text);
+        free(buf);
+        if (!kind || isinf(d))
+            return false;
+    }
+    *out = fbits(sign == '-' ? -d : d, f32 ? LIMBA_T_F32 : LIMBA_T_F64);
+    return true;
 }
 
 static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
@@ -300,12 +439,27 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         return true;
     }
     case LIMBA_RT_STR_TO_I64:
-    case LIMBA_RT_STR_TO_F64: {
-        uint64_t v;
-        bool ok = parse_number(str_of(a[0]), rt == LIMBA_RT_STR_TO_F64, &v);
+    case LIMBA_RT_STR_TO_U64: {
+        uint64_t mag;
+        bool neg, ok = num_int(str_of(a[0]), &mag, &neg);
+        if (rt == LIMBA_RT_STR_TO_I64)
+            ok = ok && mag <= (uint64_t)INT64_MAX + neg &&
+                 (int64_t)(neg ? 0 - mag : mag) >= (int64_t)a[2] &&
+                 (int64_t)(neg ? 0 - mag : mag) <= (int64_t)a[3];
+        else
+            ok = ok && (!neg || mag == 0) && mag >= a[2] && mag <= a[3];
         if (ok)
-            store((void *)(uintptr_t)a[1],
-                  rt == LIMBA_RT_STR_TO_F64 ? LIMBA_T_F64 : LIMBA_T_I64, v);
+            store((void *)(uintptr_t)a[1], LIMBA_T_I64, neg ? 0 - mag : mag);
+        *r = ok;
+        return true;
+    }
+    case LIMBA_RT_STR_TO_F64:
+    case LIMBA_RT_STR_TO_F32: {
+        bool f32 = rt == LIMBA_RT_STR_TO_F32;
+        uint64_t v;
+        bool ok = num_real(str_of(a[0]), f32, &v);
+        if (ok)
+            store((void *)(uintptr_t)a[1], f32 ? LIMBA_T_F32 : LIMBA_T_F64, v);
         *r = ok;
         return true;
     }

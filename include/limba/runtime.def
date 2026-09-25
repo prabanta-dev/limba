@@ -57,7 +57,13 @@ LIMBA_RT(STR_FROM_CHAR, "str_from_char", "(i32) -> str", LIMBA_RTA_ALLOC)
 LIMBA_RT(STR_FROM_BOOL, "str_from_bool", "(i1) -> str", LIMBA_RTA_ALLOC)
 LIMBA_RT(READ_LINE, "read_line", "(ptr) -> i1",
          LIMBA_RTA_IO | LIMBA_RTA_ALLOC | LIMBA_RTA_WRITES_MEM)
-LIMBA_RT(STR_TO_I64, "str_to_i64", "(str, ptr) -> i1", LIMBA_RTA_WRITES_MEM)
+/* val (luxia_0.md § 9): a number of the text, spaces and tabs around, a
+   sign, then a literal of Luxia; str_to_i64 takes an integer in lo..hi
+   (the last two operands), str_to_f64 an integer or a real rounded once
+   to f64 (or inf, -inf, nan), and writes it at the pointer; false, and
+   nothing written, for a text that is no such number */
+LIMBA_RT(STR_TO_I64, "str_to_i64", "(str, ptr, i64, i64) -> i1",
+         LIMBA_RTA_WRITES_MEM)
 LIMBA_RT(STR_TO_F64, "str_to_f64", "(str, ptr) -> i1", LIMBA_RTA_WRITES_MEM)
 LIMBA_RT(ARG_COUNT, "arg_count", "() -> i32", LIMBA_RTA_IO)
 LIMBA_RT(ARG, "arg", "(i32) -> str", LIMBA_RTA_IO | LIMBA_RTA_ALLOC)
@@ -79,3 +85,8 @@ LIMBA_RT(UINT_POW, "uint_pow", "(i64, i64) -> i64",
          LIMBA_RTA_PURE | LIMBA_RTA_MAY_TRAP)
 /* modulo 2^64 */
 LIMBA_RT(BITS_POW, "bits_pow", "(i64, i64) -> i64", LIMBA_RTA_PURE)
+/* val: as str_to_i64, lo..hi without a sign (-0 is 0); as str_to_f64,
+   rounded once to f32 */
+LIMBA_RT(STR_TO_U64, "str_to_u64", "(str, ptr, i64, i64) -> i1",
+         LIMBA_RTA_WRITES_MEM)
+LIMBA_RT(STR_TO_F32, "str_to_f32", "(str, ptr) -> i1", LIMBA_RTA_WRITES_MEM)

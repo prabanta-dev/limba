@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- `val` reads a literal of Luxia of the type of its variable, as Ada's
+  `'Value`: a sign, spaces and tabs around, `_` between two digits,
+  `0x`, `0o` and `0b`, and for a real `inf`, `-inf` and `nan`, what `str`
+  writes; a real is rounded once to its type (a `Float32` was rounded
+  twice, through `Float64`), a `UInt64` reads up to 2^64 - 1. A text that
+  is no number of that type, its range included, gives `false` and
+  leaves the variable alone: `"300"` into a `UInt8` stopped the program.
+  `str_to_i64` takes the bounds; `str_to_u64` and `str_to_f32` are new.
+- `arg(i)` outside 1..`argcount()`, a negative width and decimals outside
+  0..100 in `x:w:d` are range errors where they are written, compile
+  errors (L0029) when constant: they were an empty string, no padding
+  and 0 or 100 decimals.
+- The random programs call `val` (texts at the edges of each type, in
+  every base, with spaces and misplaced `_`), `readline` on an input of
+  their own, `argcount` and `arg` on a command line of their own, `low`
+  and `high` of strings, and now and then write with a width or decimals
+  out of range; `tools/lx_gen -i` and `-a` print that input and command
+  line.
 - A NaN written with decimals (`x:w:d`) is `nan`, as without them: the
   reference interpreter wrote `-nan` for 0 / 0, whose sign bit x86 sets.
 - The random programs write items with a width (`x:w`, 0 to 12) and
