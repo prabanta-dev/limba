@@ -92,6 +92,7 @@ typedef struct {
     limba_sym *dyns;
     uint32_t ndyns, capdyns;
     uint32_t *node_pos; /* per node: its position in the module, plus 1 */
+    unsigned suppress;  /* the checks turned off here, LXS_CHECK_* */
 } lxl;
 
 /* IR types */
@@ -105,6 +106,8 @@ limba_id lxl_iconst(lxl *L, limba_id type, int64_t v);
 limba_id lxl_rt(lxl *L, unsigned rt, limba_id type, const uint32_t *args,
                 uint32_t n);
 void lxl_check(lxl *L, limba_id cond, int64_t code);
+/* the overflow check of add, sub and mul is on here */
+bool lxl_overflow_checked(const lxl *L);
 /* a slot for a value of type t, made in the entry block; node is where
    a type too large for the stack is reported */
 limba_id lxl_temp(lxl *L, limba_ltype t, uint32_t node);

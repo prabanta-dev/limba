@@ -69,3 +69,6 @@ LX_NODE(CALL, "call", "nl--")        /* callee, arguments */
 LX_NODE(FMT, "fmt", "nnn-")          /* value:width:decimals */
 LX_NODE(NEW, "new", "n---")          /* the type */
 LX_NODE(TBOX, "tbox", "i---")        /* I range <>: the name of I */
+LX_NODE(PRAGMA, "pragma", "nl--")    /* its name, the names of the checks;
+                                        op: after the checks, the bits of
+                                        the checks, LXS_UNSUPPRESS */

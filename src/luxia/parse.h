@@ -76,6 +76,8 @@ uint32_t limba_lxp_vardecl(limba_lxp *P);
 void limba_lxp_end(limba_lxp *P, uint32_t opener);
 
 uint32_t limba_lxp_stmts(limba_lxp *P);
+/* pragma name(check, ...), the ';' left to the caller */
+uint32_t limba_lxp_pragma(limba_lxp *P);
 uint32_t limba_lxp_expr(limba_lxp *P, unsigned min);
 uint32_t limba_lxp_designator(limba_lxp *P);
 bool limba_lxp_starts_expr(unsigned kind);

@@ -63,9 +63,42 @@ static int write_module(const limba_module *m, const char *in, const char *emit,
     return status;
 }
 
-int limba_luxia_main(const char *in, const char *emit, const char *outpath,
-                     bool check, int level, const limba_opt_options *opt)
+/* the bits of the checks named in list, separated by commas; false if
+   a name is no check */
+static bool suppress_bits(const char *list, unsigned *bits)
 {
+    *bits = 0;
+    while (list && *list) {
+        const char *end = strchr(list, ',');
+        size_t n = end ? (size_t)(end - list) : strlen(list);
+        unsigned b = lxs_check_bits(list, n);
+        if (!b) {
+            fprintf(stderr,
+                    "limba: --suppress: '%.*s' is no check: index_check, "
+                    "range_check, overflow_check, division_check, "
+                    "conversion_check, shift_check, nil_check or "
+                    "all_checks\n",
+                    (int)n, list);
+            return false;
+        }
+        *bits |= b;
+        list = end ? end + 1 : NULL;
+    }
+    return true;
+}
+
+int limba_luxia_main(const char *in, const char *emit, const char *outpath,
+                     bool check, int level, const limba_opt_options *opt,
+                     const char *suppress)
+{
+    unsigned off = 0;
+    if (!suppress_bits(suppress, &off))
+        return 2;
+    if (off)
+        fprintf(stderr,
+                "limba: warning: --suppress turns checks off in the whole "
+                "of %s: where one would fail, the behaviour is undefined\n",
+                in);
     limba_source src;
     limba_source_init(&src);
     uint32_t file = limba_source_load(&src, in);
@@ -90,6 +123,7 @@ int limba_luxia_main(const char *in, const char *emit, const char *outpath,
            that are only their echo */
         if (rep.errors == 0 && !(emit && !strcmp(emit, "ast"))) {
             limba_lxs_init(&sema, &ast, &lx, &src, &rep);
+            sema.suppress = off;
             limba_lxs_check(&sema);
             checked = true;
         }

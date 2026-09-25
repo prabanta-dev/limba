@@ -145,8 +145,39 @@ limba_id lxl_rt(lxl *L, unsigned rt, limba_id type, const uint32_t *args,
     return lxl_emit(L, LIMBA_OP_CALLRT, type, 0, rt, 0, args, n);
 }
 
+/* the check a code of an error at run time belongs to (§ 9) */
+static unsigned check_of(int64_t code)
+{
+    switch (code) {
+    case LXR_INDEX:
+        return LXS_CHECK_INDEX;
+    case LXR_RANGE:
+        return LXS_CHECK_RANGE;
+    case LXR_OVERFLOW:
+        return LXS_CHECK_OVERFLOW;
+    case LXR_DIVZERO:
+        return LXS_CHECK_DIVISION;
+    case LXR_CONVERSION:
+        return LXS_CHECK_CONVERSION;
+    case LXR_SHIFT:
+        return LXS_CHECK_SHIFT;
+    case LXR_NIL:
+        return LXS_CHECK_NIL;
+    }
+    return 0;
+}
+
+bool lxl_overflow_checked(const lxl *L)
+{
+    return !(L->suppress & LXS_CHECK_OVERFLOW);
+}
+
+/* a check turned off by a pragma is not made: where it would fail, the
+   behaviour is undefined (§ 9) */
 void lxl_check(lxl *L, limba_id cond, int64_t code)
 {
+    if (L->suppress & check_of(code))
+        return;
     lxl_emit(L, LIMBA_OP_CHECK, LIMBA_T_VOID, 0, code, 0, &cond, 1);
 }
 
@@ -367,6 +398,7 @@ static void var_decl(lxl *L, uint32_t d)
 /* ---- statements ---- */
 
 static void stmts(lxl *L, uint32_t list);
+static void pragma(lxl *L, uint32_t node);
 
 static void push_loop(lxl *L, limba_id exit, limba_id cont)
 {
@@ -741,14 +773,37 @@ static void stmt(lxl *L, uint32_t node)
     case LXN_CONST:
         const_stmt(L, node);
         break;
+    case LXN_PRAGMA:
+        pragma(L, node);
+        break;
     }
+}
+
+/* a pragma: its checks off, or back on */
+static void pragma(lxl *L, uint32_t node)
+{
+    unsigned op = nd(L, node)->op;
+    if (op & LXS_UNSUPPRESS)
+        L->suppress &= ~(op & LXS_CHECK_ALL);
+    else
+        L->suppress |= op & LXS_CHECK_ALL;
+}
+
+/* the pragmas among the declarations of list */
+static void pragmas(lxl *L, uint32_t list)
+{
+    for (uint32_t i = 0; i < list_n(L, list); i++)
+        if (nd(L, list_at(L, list, i))->kind == LXN_PRAGMA)
+            pragma(L, list_at(L, list, i));
 }
 
 static void stmts(lxl *L, uint32_t list)
 {
     uint32_t keep = L->ndyns;
+    unsigned suppress = L->suppress; /* a pragma here lasts to the end */
     for (uint32_t i = 0; i < list_n(L, list); i++)
         stmt(L, list_at(L, list, i));
+    L->suppress = suppress;
     if (L->ndyns > keep) {
         if (!limba_ssa_terminated(L->ssa, L->cur))
             free_dyns(L, keep);
@@ -924,6 +979,8 @@ static void routine_body(lxl *L, limba_sym s)
     const limba_typeinfo *sig = ti(L, y->type);
     L->result = sig->elem == S->ts.void_ ? 0 : sig->elem;
     begin_function(L, L->func_of[s]);
+    unsigned file = L->suppress;
+    pragmas(L, locals); /* for the whole routine */
     limba_func *f = limba_ssa_func(L->ssa);
     uint32_t k = 0, v = 0;
     if (L->result && !lxl_scalar(L, L->result))
@@ -983,6 +1040,7 @@ static void routine_body(lxl *L, limba_sym s)
     L->routine_node = r->a;
     stmts(L, list);
     end_function(L, r->a, L->result != 0);
+    L->suppress = file;
 }
 
 /* ---- the program ---- */
@@ -1001,6 +1059,8 @@ limba_module *limba_lxl_program(limba_lxs *S)
     L->tmap = limba_xcalloc(S->ts.n + 1, sizeof(*L->tmap));
     L->node_pos = limba_xcalloc(S->t->nnode + 1, sizeof(*L->node_pos));
     scan_taken(L);
+    L->suppress = S->suppress;
+    pragmas(L, nd(L, S->t->root)->b); /* for the whole file */
 
     limba_lx_node *p = nd(L, S->t->root);
     uint32_t decls = p->b, body = p->c;

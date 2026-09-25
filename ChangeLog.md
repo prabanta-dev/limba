@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Checks can be turned off where they are not wanted, as Ada's `pragma
+  Suppress`: `pragma suppress(index_check, overflow_check);` among the
+  declarations of the program holds for the whole file, among those of a
+  routine for the routine, as a statement to the end of its list;
+  `pragma unsuppress(...)` turns them back on, the innermost wins. The
+  checks are `index_check`, `range_check`, `overflow_check`,
+  `division_check`, `conversion_check`, `shift_check`, `nil_check` and
+  `all_checks`; `limba --suppress=...` turns them off in the whole
+  source, with a warning. Where a check turned off would fail, the
+  behaviour is undefined. `pragma` is a keyword (49); a wrong pragma is
+  L0057, a wrong check L0058.
 - An index `x[i]` inside `for var i := low(x) to high(x)` (or down, or
   from `i + c`, or to `j - c`, with `c >= 0` and the variable of an
   outer loop over `x`) is not checked: the variable of a for stays

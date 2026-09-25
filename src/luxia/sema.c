@@ -769,6 +769,8 @@ void limba_lxs_check(limba_lxs *S)
         limba_lx_node *x = lxs_node(S, d);
         if (x->kind == LXN_ROUTINE && S->sym[x->a])
             lxs_routine_body(S, S->sym[x->a]);
+        else if (x->kind == LXN_PRAGMA)
+            lxs_pragma(S, d);
     }
     S->result = 0;
     S->in_routine = false;

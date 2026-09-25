@@ -176,6 +176,7 @@ static void sync_decl(limba_lxp *P)
         case LX_KW_VAR:
         case LX_KW_PROCEDURE:
         case LX_KW_FUNCTION:
+        case LX_KW_PRAGMA:
         case LX_KW_BEGIN:
             return;
         default:
@@ -368,6 +369,22 @@ static uint32_t routine(limba_lxp *P)
     return r;
 }
 
+uint32_t limba_lxp_pragma(limba_lxp *P)
+{
+    limba_loc loc = lxp_loc(P);
+    limba_lxp_next(P);
+    uint32_t name = 0, checks = 0;
+    if (lxp_kind(P) == LX_IDENT)
+        name = limba_lxp_name(P);
+    else
+        limba_lxp_expected(P, "the name of the pragma");
+    if (limba_lxp_expect(P, LX_LPAREN, "after the name of the pragma")) {
+        checks = limba_lxp_names(P);
+        limba_lxp_expect(P, LX_RPAREN, "after the names of the checks");
+    }
+    return lxp_node(P, LXN_PRAGMA, loc, name, checks, 0, 0);
+}
+
 static uint32_t decls(limba_lxp *P, bool top)
 {
     limba_loc loc = lxp_loc(P);
@@ -387,6 +404,11 @@ static uint32_t decls(limba_lxp *P, bool top)
                 if (!limba_lxp_expect(P, LX_SEMI, "after the declaration"))
                     sync_decl(P);
             } while (lxp_kind(P) == LX_IDENT);
+            break;
+        case LX_KW_PRAGMA:
+            limba_lx_list_push(P->t, limba_lxp_pragma(P));
+            if (!limba_lxp_expect(P, LX_SEMI, "after the pragma"))
+                sync_decl(P);
             break;
         case LX_KW_PROCEDURE:
         case LX_KW_FUNCTION:

@@ -33,6 +33,21 @@
 /* modes of a parameter, the op of a PARAM node mapped */
 enum { LXS_IN, LXS_VAR, LXS_OUT };
 
+/* the checks a pragma names (§ 9), bits of the op of a PRAGMA node */
+enum {
+    LXS_CHECK_INDEX = 1,
+    LXS_CHECK_RANGE = 2,
+    LXS_CHECK_OVERFLOW = 4,
+    LXS_CHECK_DIVISION = 8,
+    LXS_CHECK_CONVERSION = 16,
+    LXS_CHECK_SHIFT = 32,
+    LXS_CHECK_NIL = 64,
+    LXS_CHECK_ALL = 127,
+    LXS_UNSUPPRESS = 128 /* the pragma turns them back on */
+};
+/* the bits of a check name (index_check, ..., all_checks), 0 if none */
+unsigned lxs_check_bits(const char *name, size_t len);
+
 /* kinds of scope */
 enum { LXS_UNIVERSE = 1, LXS_PROGRAM, LXS_ROUTINE, LXS_BLOCK };
 
@@ -104,6 +119,9 @@ typedef struct {
     /* canonical spellings of the names of the language, by symbol */
     const char **spelling;
     uint32_t nspelling;
+    /* the checks turned off for the whole file from outside (limba
+       --suppress), LXS_CHECK_* bits; the pragmas add to them */
+    unsigned suppress;
 } limba_lxs;
 
 void limba_lxs_init(limba_lxs *S, limba_lx_ast *t, limba_lx *lx,
@@ -183,6 +201,8 @@ limba_ltype lxs_call_stmt(limba_lxs *S, uint32_t node, uint32_t scope);
 
 /* statements (sema_stmt.c) */
 void lxs_stmts(limba_lxs *S, uint32_t list, uint32_t scope);
+/* a PRAGMA node: its names checked, its op set */
+void lxs_pragma(limba_lxs *S, uint32_t node);
 void lxs_routine_body(limba_lxs *S, limba_sym routine);
 
 #endif

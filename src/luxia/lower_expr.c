@@ -284,6 +284,12 @@ static limba_id arith(lxl *L, uint32_t node, unsigned op, limba_ltype t,
                        : op == LX_MINUS ? LIMBA_OP_SUB
                                         : LIMBA_OP_MUL,
                        it, a, b);
+        if (sg && !lxl_overflow_checked(L))
+            return bin(L,
+                       op == LX_PLUS    ? LIMBA_OP_ADD
+                       : op == LX_MINUS ? LIMBA_OP_SUB
+                                        : LIMBA_OP_MUL,
+                       it, a, b);
         if (sg)
             return bin(L,
                        op == LX_PLUS    ? LIMBA_OP_ADDOV
@@ -727,7 +733,8 @@ static limba_id unary(lxl *L, uint32_t node)
             return un(L, LIMBA_OP_FNEG, it, v);
         if (is_modular(L, t))
             return un(L, LIMBA_OP_NEG, it, v);
-        return bin(L, LIMBA_OP_SUBOV, it, lxl_iconst(L, it, 0), v);
+        return bin(L, lxl_overflow_checked(L) ? LIMBA_OP_SUBOV : LIMBA_OP_SUB,
+                   it, lxl_iconst(L, it, 0), v);
     case LX_KW_NOT:
         return un(L, LIMBA_OP_NOT, it, v);
     case LX_KW_ABS: {
@@ -743,7 +750,9 @@ static limba_id unary(lxl *L, uint32_t node)
                     lxl_iconst(L, bt, f64 ? INT64_MAX : INT32_MAX));
             return un(L, LIMBA_OP_BITCAST, it, b);
         } else {
-            neg = bin(L, LIMBA_OP_SUBOV, it, lxl_iconst(L, it, 0), v);
+            neg =
+                bin(L, lxl_overflow_checked(L) ? LIMBA_OP_SUBOV : LIMBA_OP_SUB,
+                    it, lxl_iconst(L, it, 0), v);
             lt0 = cmp(L, false, LIMBA_CC_SLT, v, lxl_iconst(L, it, 0));
         }
         uint32_t so[3] = {lt0, neg, v};

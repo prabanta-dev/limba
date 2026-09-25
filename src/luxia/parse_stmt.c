@@ -29,6 +29,7 @@ static bool starts_stmt(unsigned k)
     case LX_KW_RETURN:
     case LX_KW_VAR:
     case LX_KW_CONST:
+    case LX_KW_PRAGMA:
         return true;
     }
     return false;
@@ -245,6 +246,8 @@ static uint32_t stmt(limba_lxp *P)
     case LX_KW_CONST:
         limba_lxp_next(P);
         return limba_lxp_constdecl(P);
+    case LX_KW_PRAGMA:
+        return limba_lxp_pragma(P);
     default:
         limba_lxp_expected(P, "a statement");
         return lxp_node(P, LXN_ERROR, loc, 0, 0, 0, 0);

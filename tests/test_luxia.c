@@ -515,6 +515,10 @@ static const sema_case sema_cases[] = {
     {"program p; var n: Int32 := 3; var a: array[Int32 range 1..n] of Int32;"
      " begin end.",
      "L0051@1:44"},
+    /* the pragmas and the names of the checks (§ 9) */
+    {"program p; pragma sopress(range_check); begin end.", "L0057@1:19"},
+    {"program p; pragma suppress(range_chek, index_check); begin end.",
+     "L0058@1:28"},
     /* statements */
     {"program p; type Col = (A, B, D); var c: Col; begin case c of when A: "
      "c := B; end; end.",
@@ -978,6 +982,17 @@ static const run_case run_cases[] = {
      "0\n0\n", "trap 100 at 1:139"},
     {"program p; var a: array[Int32 range 1..3] of Int32; begin for var i := low(a) to high(a) do for var j := i - 1 to high(a) do writeln(a[j]); end; end; end.",
      "", "trap 100 at 1:135"},
+    /* checks turned off (§ 9): in the whole file, in a routine, to the end
+       of a list of statements; unsuppress turns them back on. Where one
+       would fail the behaviour is undefined: here the value goes on */
+    {"program p; pragma suppress(range_check); type P = Int32 range 0..100; var x: P; y: Int32 := 200; begin x := y; writeln(x); end.",
+     "200\n", "ok"},
+    {"program p; type P = Int32 range 0..100; var x: P; y: Int32 := 200; procedure q(); pragma suppress(range_check); var z: P; begin z := y; writeln(z); end q; begin q(); x := y; end.",
+     "200\n", "trap 101 at 1:167"},
+    {"program p; type P = Int32 range 0..100; var x: P; y: Int32 := 200; begin for var i: Int32 := 1 to 2 do pragma suppress(range_check); x := y; writeln(x); end; x := y; end.",
+     "200\n200\n", "trap 101 at 1:159"},
+    {"program p; pragma suppress(all_checks); type P = Int32 range 0..100; var x: P; y: Int32 := 200; a: Int8 := 100; begin a := a + a; writeln(a); if y > 0 then pragma unsuppress(range_check); x := y; end; end.",
+     "-56\n", "trap 101 at 1:189"},
 };
 
 /* run main on the input in (NULL: none); what it printed (malloc'd, *len

@@ -20,8 +20,7 @@ static void usage(FILE *out)
           "\n"
           "Reads the IR in its text (.lit) or binary (.lir) form, verifies\n"
           "it and writes it in the other form. Reads a Luxia source\n"
-          "(.luxia) and reports its errors; the front end stops at the\n"
-          "syntax tree for now.\n"
+          "(.luxia), reports its errors and writes its IR.\n"
           "\n"
           "Options\n"
           "  --emit=lir|lit  the form to write; by default the other one\n"
@@ -35,6 +34,11 @@ static void usage(FILE *out)
           "  --verify-each   verify after every pass (always on in the\n"
           "                  builds that are not release)\n"
           "  --skip=a,b      passes not to run (also LIMBA_OPTSKIP)\n"
+          "  --suppress=a,b  checks off in the whole Luxia source\n"
+          "                  (index_check, range_check, overflow_check,\n"
+          "                  division_check, conversion_check,\n"
+          "                  shift_check, nil_check, all_checks); where\n"
+          "                  one would fail, the behaviour is undefined\n"
           "  -h, --help      this text\n",
           out);
 }
@@ -81,7 +85,7 @@ static char *slurp(const char *path, size_t *len)
 
 int main(int argc, char **argv)
 {
-    const char *in = NULL, *outpath = NULL, *emit = NULL;
+    const char *in = NULL, *outpath = NULL, *emit = NULL, *suppress = NULL;
     bool check = false;
     int level = 0;
     limba_opt_options opt = {false, NULL, NULL};
@@ -100,6 +104,8 @@ int main(int argc, char **argv)
             opt.verify_each = true;
         } else if (!strncmp(a, "--skip=", 7)) {
             opt.skip = a + 7;
+        } else if (!strncmp(a, "--suppress=", 11)) {
+            suppress = a + 11;
         } else if (!strncmp(a, "--emit=", 7)) {
             emit = a + 7;
             if (strcmp(emit, "lir") && strcmp(emit, "lit") &&
@@ -125,7 +131,8 @@ int main(int argc, char **argv)
         return 2;
     }
     if (ends_with(in, ".luxia"))
-        return limba_luxia_main(in, emit, outpath, check, level, &opt);
+        return limba_luxia_main(in, emit, outpath, check, level, &opt,
+                                suppress);
     bool binary_in = ends_with(in, ".lir");
     if (!binary_in && !ends_with(in, ".lit")) {
         fprintf(stderr, "limba: %s: a .lit, .lir or .luxia file is expected\n",

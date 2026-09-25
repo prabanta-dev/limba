@@ -10,6 +10,7 @@
 #include "common/xalloc.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 static void condition(limba_lxs *S, uint32_t node, uint32_t scope)
 {
@@ -284,7 +285,61 @@ static void stmt(limba_lxs *S, uint32_t node, uint32_t scope)
     case LXN_CONST:
         local_const(S, node, scope);
         break;
+    case LXN_PRAGMA:
+        lxs_pragma(S, node);
+        break;
     }
+}
+
+unsigned lxs_check_bits(const char *name, size_t len)
+{
+    static const struct {
+        const char *name;
+        unsigned bits;
+    } checks[] = {
+        {"index_check", LXS_CHECK_INDEX},
+        {"range_check", LXS_CHECK_RANGE},
+        {"overflow_check", LXS_CHECK_OVERFLOW},
+        {"division_check", LXS_CHECK_DIVISION},
+        {"conversion_check", LXS_CHECK_CONVERSION},
+        {"shift_check", LXS_CHECK_SHIFT},
+        {"nil_check", LXS_CHECK_NIL},
+        {"all_checks", LXS_CHECK_ALL},
+    };
+    for (size_t i = 0; i < sizeof(checks) / sizeof(checks[0]); i++)
+        if (strlen(checks[i].name) == len && !memcmp(checks[i].name, name, len))
+            return checks[i].bits;
+    return 0;
+}
+
+void lxs_pragma(limba_lxs *S, uint32_t node)
+{
+    limba_lx_node *x = lxs_node(S, node);
+    unsigned op = 0;
+    if (x->a) {
+        size_t n;
+        const char *s = lxs_name(S, lxs_node(S, x->a)->a, &n);
+        if (n == 10 && !memcmp(s, "unsuppress", 10))
+            op = LXS_UNSUPPRESS;
+        else if (!(n == 8 && !memcmp(s, "suppress", 8)))
+            lxs_error(S, LXE_PRAGMA_NAME, x->a,
+                      "the pragmas are suppress and unsuppress, not '%.*s'",
+                      (int)n, s);
+    }
+    for (uint32_t i = 0; x->b && i < lxs_node(S, x->b)->b; i++) {
+        uint32_t c = limba_lx_list_at(S->t, x->b, i);
+        size_t n;
+        const char *s = lxs_name(S, lxs_node(S, c)->a, &n);
+        unsigned bits = lxs_check_bits(s, n);
+        if (!bits)
+            lxs_error(S, LXE_CHECK_NAME, c,
+                      "'%.*s' is no check: index_check, range_check, "
+                      "overflow_check, division_check, conversion_check, "
+                      "shift_check, nil_check or all_checks",
+                      (int)n, s);
+        op |= bits;
+    }
+    lxs_node(S, node)->op = (uint8_t)op;
 }
 
 void lxs_stmts(limba_lxs *S, uint32_t list, uint32_t scope)
@@ -305,6 +360,11 @@ void lxs_routine_body(limba_lxs *S, limba_sym routine)
     uint32_t locals = lxs_node(S, body)->a, stmts = lxs_node(S, body)->b;
     lxs_declare_all(S, locals, scope, false);
     lxs_resolve_all(S, locals);
+    for (uint32_t i = 0; i < lxs_node(S, locals)->b; i++) {
+        uint32_t d = limba_lx_list_at(S->t, locals, i);
+        if (lxs_node(S, d)->kind == LXN_PRAGMA)
+            lxs_pragma(S, d);
+    }
     S->result = sig ? lxs_ty(S, sig)->elem : S->ts.void_;
     S->in_routine = true;
     S->loops = 0;
