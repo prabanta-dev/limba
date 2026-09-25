@@ -2,7 +2,8 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * opt.h - the optimiser of the Limba IR: one pipeline, the same for every
- * program that optimises (limba, prabanta), run to a fixed point.
+ * program that optimises (limba, prabanta), run to a fixed point on each
+ * function.
  */
 #ifndef LIMBA_OPT_H
 #define LIMBA_OPT_H
@@ -25,6 +26,17 @@ typedef struct {
 
 /* 0, or -1 with d saying which pass broke the module and how */
 int limba_optimize(limba_module *m, const limba_opt_options *o, limba_diag *d);
+
+/* the same a function at a time, as a front end completes them: each is
+   taken to its own fixed point (no pass looks at another function), so
+   the result is the one of limba_optimize. The statistics are written by
+   limba_optimizer_free, for all the functions given */
+typedef struct limba_optimizer limba_optimizer;
+limba_optimizer *limba_optimizer_new(const limba_opt_options *o);
+/* 0, or -1 with d saying which pass broke function fid of m and how */
+int limba_optimizer_func(limba_optimizer *z, limba_module *m, limba_id fid,
+                         limba_diag *d);
+void limba_optimizer_free(limba_optimizer *z);
 
 /* the name of pass i in pipeline order, NULL past the last */
 const char *limba_pass_name(unsigned i);

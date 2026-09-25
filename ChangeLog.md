@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `limba -O1` optimises each function as soon as it is complete, then
+  writes it and frees it, as `-O0` already wrote it: the pipeline runs to
+  a fixed point on each function (no pass looks at another), through the
+  new `limba_optimizer_new`, `limba_optimizer_func` and
+  `limba_optimizer_free`; `limba_optimize` is that loop on a module. The
+  output is the same bytes, the statistics the same numbers; at most 71
+  MB of memory instead of 95 on 108 203 lines. The time barely moves:
+  the passes themselves are the cost.
 - `val` reads a literal of Luxia of the type of its variable, as Ada's
   `'Value`: a sign, spaces and tabs around, `_` between two digits,
   `0x`, `0o` and `0b`, and for a real `inf`, `-inf` and `nan`, what `str`

@@ -72,25 +72,32 @@ static int write_module(const limba_module *m, const char *in, const char *emit,
 #define release(x, call) (call)
 #endif
 
-/* each function as it is complete: verified, written, cleared, while it
-   is still in the cache and before the next one needs the memory */
+/* each function as it is complete: verified, optimised, written, cleared,
+   while it is still in the cache and before the next one needs the
+   memory */
 typedef struct {
     limba_writer *w;
     limba_verifier *v;
+    limba_optimizer *z; /* NULL at -O0 */
     bool verify;
-    bool bad;
+    bool bad;     /* the IR made is not valid */
+    bool opt_bad; /* a pass broke it */
     limba_diag d;
 } stream;
 
 static void stream_func(void *ctx, limba_module *m, limba_id fid)
 {
     stream *st = ctx;
-    if (st->bad)
+    if (st->bad || st->opt_bad)
         return;
     if (st->verify && !st->v)
         st->v = limba_verifier_new(m);
     if (st->verify && limba_verifier_func(st->v, fid, &st->d) != 0) {
         st->bad = true;
+        return;
+    }
+    if (st->z && limba_optimizer_func(st->z, m, fid, &st->d) != 0) {
+        st->opt_bad = true;
         return;
     }
     limba_writer_func(st->w, m, fid);
@@ -184,8 +191,8 @@ int limba_luxia_main(const char *in, const char *emit, const char *outpath,
         /* what was printed is not printed again */
         limba_report_free(&rep);
         limba_report_init(&rep, &src, 'L', MAX_ERRORS);
-        /* at -O0 into a .lir, a function at a time */
-        bool each = level == 0 && !check && !(emit && !strcmp(emit, "lit"));
+        /* into a .lir, a function at a time */
+        bool each = !check && !(emit && !strcmp(emit, "lit"));
         /* the IR a front end makes is verified in the builds for testing,
            and on request: in a release it is left to who reads it (as
            Clang leaves the verifier out), and to the tests */
@@ -193,8 +200,13 @@ int limba_luxia_main(const char *in, const char *emit, const char *outpath,
 #ifndef NDEBUG
         verify = true;
 #endif
-        stream st = {
-            each ? limba_writer_new() : NULL, NULL, verify, false, {{0}, 0}};
+        stream st = {each ? limba_writer_new() : NULL,
+                     NULL,
+                     each && level > 0 ? limba_optimizer_new(opt) : NULL,
+                     verify,
+                     false,
+                     false,
+                     {{0}, 0}};
         limba_module *m = each ? limba_lxl_program_each(&sema, stream_func, &st)
                                : limba_lxl_program(&sema);
         if (m) {
@@ -203,7 +215,7 @@ int limba_luxia_main(const char *in, const char *emit, const char *outpath,
             bool bad = !verify ? false
                        : each  ? st.bad || limba_verify_decls(m, &d) != 0
                                : limba_verify(m, &d) != 0;
-            if (st.bad)
+            if (st.bad || st.opt_bad)
                 d = st.d;
             if (bad) {
                 fprintf(stderr,
@@ -211,7 +223,8 @@ int limba_luxia_main(const char *in, const char *emit, const char *outpath,
                         "not valid: %s\n",
                         in, d.msg);
                 status = 3;
-            } else if (level > 0 && limba_optimize(m, opt, &d) != 0) {
+            } else if (st.opt_bad || (level > 0 && !each &&
+                                      limba_optimize(m, opt, &d) != 0)) {
                 fprintf(stderr, "limba: %s: %s\n", in, d.msg);
                 status = 3;
             } else if (!check) {
@@ -225,6 +238,7 @@ int limba_luxia_main(const char *in, const char *emit, const char *outpath,
         }
         limba_writer_free(st.w);
         limba_verifier_free(st.v);
+        limba_optimizer_free(st.z); /* the statistics, if asked */
     }
 #ifdef NDEBUG
     /* the process ends now and gives the memory back at once, as Clang's

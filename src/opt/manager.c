@@ -3,11 +3,15 @@
 /*
  * manager.c - the pipeline. One table, the only place that says which
  * passes run and in which order (SedaiBasic2 had five hand-made copies that
- * drifted apart). The whole pipeline repeats until a round changes nothing,
- * at most MAX_ROUNDS times.
+ * drifted apart). The whole pipeline repeats on a function until a round
+ * changes nothing in it, at most MAX_ROUNDS times: no pass looks at
+ * another function, so a function at a time gives what the whole module
+ * at a time gave, and a front end can optimise each as it completes it.
  */
 #include "limba/opt.h"
 #include "pass.h"
+
+#include "common/xalloc.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -44,34 +48,46 @@ static bool listed(const char *list, const char *name)
     return false;
 }
 
-int limba_optimize(limba_module *m, const limba_opt_options *o, limba_diag *d)
+struct limba_optimizer {
+    limba_opt_options o;
+    bool verify;
+    bool skip[NPASSES];
+    uint64_t total[NPASSES];
+    unsigned rounds; /* the most a function took */
+    limba_verifier *v;
+};
+
+limba_optimizer *limba_optimizer_new(const limba_opt_options *o)
 {
-    limba_opt_options none = {false, NULL, NULL};
-    if (!o)
-        o = &none;
-    bool verify = o->verify_each;
+    limba_optimizer *z = limba_xcalloc(1, sizeof(*z));
+    if (o)
+        z->o = *o;
+    z->verify = z->o.verify_each;
 #ifndef NDEBUG
-    verify = true;
+    z->verify = true;
 #endif
     const char *env = getenv("LIMBA_OPTSKIP");
-    uint64_t total[NPASSES] = {0};
-    bool skip[NPASSES];
     for (size_t p = 0; p < NPASSES; p++)
-        skip[p] =
-            listed(o->skip, pipeline[p].name) || listed(env, pipeline[p].name);
+        z->skip[p] = listed(z->o.skip, pipeline[p].name) ||
+                     listed(env, pipeline[p].name);
+    return z;
+}
 
+int limba_optimizer_func(limba_optimizer *z, limba_module *m, limba_id fid,
+                         limba_diag *d)
+{
+    if (z->verify && !z->v)
+        z->v = limba_verifier_new(m);
     unsigned round;
     for (round = 0; round < MAX_ROUNDS; round++) {
         uint64_t changed = 0;
         for (size_t p = 0; p < NPASSES; p++) {
-            if (skip[p])
+            if (z->skip[p])
                 continue;
-            for (uint32_t i = 0; i < m->nfuncs; i++) {
-                uint32_t n = pipeline[p].run(m, &m->funcs[i]);
-                total[p] += n;
-                changed += n;
-            }
-            if (verify && limba_verify(m, d) != 0) {
+            uint32_t n = pipeline[p].run(m, &m->funcs[fid]);
+            z->total[p] += n;
+            changed += n;
+            if (z->verify && limba_verifier_func(z->v, fid, d) != 0) {
                 if (d) { /* prefix the pass; a long message is cut */
                     char msg[sizeof(d->msg) + 32];
                     snprintf(msg, sizeof(msg), "after pass %s: %s",
@@ -85,12 +101,33 @@ int limba_optimize(limba_module *m, const limba_opt_options *o, limba_diag *d)
         if (!changed)
             break;
     }
-    if (o->stats) {
-        for (size_t p = 0; p < NPASSES; p++)
-            fprintf(o->stats, "pass %-5s %s%llu changes\n", pipeline[p].name,
-                    skip[p] ? "skipped, " : "", (unsigned long long)total[p]);
-        fprintf(o->stats, "rounds %u\n",
-                round < MAX_ROUNDS ? round + 1 : round);
-    }
+    round = round < MAX_ROUNDS ? round + 1 : round;
+    if (round > z->rounds)
+        z->rounds = round;
     return 0;
+}
+
+void limba_optimizer_free(limba_optimizer *z)
+{
+    if (!z)
+        return;
+    if (z->o.stats) {
+        for (size_t p = 0; p < NPASSES; p++)
+            fprintf(z->o.stats, "pass %-5s %s%llu changes\n", pipeline[p].name,
+                    z->skip[p] ? "skipped, " : "",
+                    (unsigned long long)z->total[p]);
+        fprintf(z->o.stats, "rounds %u\n", z->rounds);
+    }
+    limba_verifier_free(z->v);
+    free(z);
+}
+
+int limba_optimize(limba_module *m, const limba_opt_options *o, limba_diag *d)
+{
+    limba_optimizer *z = limba_optimizer_new(o);
+    int r = 0;
+    for (uint32_t i = 0; i < m->nfuncs && r == 0; i++)
+        r = limba_optimizer_func(z, m, i, d);
+    limba_optimizer_free(z);
+    return r;
 }
