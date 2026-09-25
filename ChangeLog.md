@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The random programs use `Float32` (literals within its range,
+  arithmetic rounded once to float, conversions both ways), the real
+  functions of the library on both real types (`sqrt sin cos tan arctan
+  exp ln trunc round floor ceil`, the rounding ones often on a value with
+  a fraction; the program starts printing all of them on a real global)
+  and `dispose` of a record just made, followed by `p := nil`. A fixed
+  case checks that an integer becomes a `Float32` rounded once, not
+  through a double.
 - Functions may return records and arrays: the caller passes, before the
   arguments, the address of a slot of its own where the result goes
   (L0054 is no longer reported for them). `f(x).field`, `f(x)[i]`,

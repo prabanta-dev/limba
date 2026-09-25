@@ -56,22 +56,24 @@ enum {
     T_B64,
     T_BOOL,
     T_F64,
+    T_F32,
     NTYPES
 };
 
 static const char *const tname[NTYPES] = {
-    "Int8",   "Int16", "Int32",  "Int64",  "UInt8",  "UInt16",  "UInt32",
-    "UInt64", "Bits8", "Bits16", "Bits32", "Bits64", "Boolean", "Float64",
+    "Int8",   "Int16",  "Int32",   "Int64",   "UInt8",
+    "UInt16", "UInt32", "UInt64",  "Bits8",   "Bits16",
+    "Bits32", "Bits64", "Boolean", "Float64", "Float32",
 };
 
 /* S signed, U unsigned, B bits, L Boolean, F real */
 static char fam(unsigned t)
 {
-    return t == T_F64    ? 'F'
-           : t == T_BOOL ? 'L'
-           : t < T_U8    ? 'S'
-           : t < T_B8    ? 'U'
-                         : 'B';
+    return t == T_F64 || t == T_F32 ? 'F'
+           : t == T_BOOL            ? 'L'
+           : t < T_U8               ? 'S'
+           : t < T_B8               ? 'U'
+                                    : 'B';
 }
 
 static bool is_int_base(unsigned t)
@@ -79,7 +81,8 @@ static bool is_int_base(unsigned t)
     return t < T_BOOL;
 }
 
-/* a Float64 value travels in the low 64 bits of a v128 */
+/* a real value travels as a double in the low 64 bits of a v128; a
+   Float32 one is a double that a float holds exactly */
 static v128 fbits(double d)
 {
     uint64_t u;
@@ -93,6 +96,13 @@ static double fval(v128 v)
     double d;
     memcpy(&d, &u, sizeof(d));
     return d;
+}
+
+/* d rounded to real type t: once, to float for a Float32 (+ - * / and
+   sqrt done in double and rounded to float are rounded once) */
+static v128 fres(unsigned t, double d)
+{
+    return fbits(t == T_F32 ? (double)(float)d : d);
 }
 
 static unsigned tbits(unsigned t)
@@ -152,6 +162,25 @@ enum {
     O_FDIV
 };
 
+/* the real functions of the library (§ 9), E_MATH */
+enum {
+    M_SQRT,
+    M_SIN,
+    M_COS,
+    M_TAN,
+    M_ARCTAN,
+    M_EXP,
+    M_LN,
+    M_TRUNC,
+    M_ROUND,
+    M_FLOOR,
+    M_CEIL,
+    NMATH
+};
+static const char *const mtext[NMATH] = {"sqrt",   "sin",   "cos", "tan",
+                                         "arctan", "exp",   "ln",  "trunc",
+                                         "round",  "floor", "ceil"};
+
 static const char *const otext[] = {
     "+", "-",  "*", "div", "mod", "rem", "and", "or",  "xor", "shl", "shr",
     "=", "<>", "<", "<=",  ">",   ">=",  "-",   "abs", "not", "**",  "/",
@@ -177,6 +206,7 @@ enum {
     E_SUCC, /* succ, pred and ord of a */
     E_PRED,
     E_ORD,
+    E_MATH,   /* function op of the library on the real a */
     E_CFIELD, /* field b of the record call a returns */
     E_CINDEX  /* element b of the array call a returns */
 };
@@ -206,8 +236,9 @@ enum {
     S_CONT,
     S_RETURN,
     S_CONST,
-    S_NEW, /* var := new(its record) */
-    S_COPY /* var := the record variable of e */
+    S_NEW,    /* var := new(its record) */
+    S_COPY,   /* var := the record variable of e */
+    S_DISPOSE /* dispose(var) */
 };
 
 typedef struct {
@@ -322,7 +353,9 @@ static unsigned int_type(G *g)
 
 static unsigned any_type(G *g)
 {
-    return chance(g, 15) ? T_BOOL : chance(g, 12) ? T_F64 : int_type(g);
+    return chance(g, 15)   ? T_BOOL
+           : chance(g, 12) ? (chance(g, 50) ? T_F64 : T_F32)
+                           : int_type(g);
 }
 
 static v128 clamp_in(v128 lo, v128 hi, v128 v)
@@ -385,6 +418,16 @@ static v128 rand_value(G *g, unsigned t)
 {
     if (t == T_F64)
         return fbits(rand_real(g));
+    if (t == T_F32) {
+        /* within the range of a float, and not so tiny that it is 0: a
+           literal must fit (§ 4.4) */
+        double d = rand_real(g);
+        if (fabs(d) > 1e38)
+            d = copysign(1e30, d);
+        if (d != 0 && fabs(d) < 1e-37)
+            d = copysign(1e-30, d);
+        return fres(T_F32, d);
+    }
     return t == T_BOOL ? below(g, 2) : rand_in(g, tmin(t), tmax(t));
 }
 
@@ -446,7 +489,7 @@ static unsigned index_base(const G *g, uint32_t at)
 static v128 init_value(G *g, uint32_t t)
 {
     unsigned b = g->ty[t].base;
-    if (b == T_BOOL || b == T_F64)
+    if (b == T_BOOL || fam(b) == 'F')
         return rand_value(g, b);
     return rand_in(g, g->ty[t].lo, g->ty[t].hi);
 }
@@ -1017,6 +1060,18 @@ static uint32_t heap_stmt(G *g, uint32_t *out)
             g->st[w].nargs = 1;
             out[n++] = w;
         }
+        if (chance(g, 40)) {
+            /* given back at once, when nothing else can point to it:
+               dispose(p); p := nil */
+            uint32_t ds = new_s(g, S_DISPOSE);
+            g->st[ds].var = (uint32_t)p;
+            out[n++] = ds;
+            uint32_t z = nil_of(g, pt);
+            uint32_t a = new_s(g, S_ASSIGN);
+            g->st[a].var = (uint32_t)p;
+            g->st[a].e = z;
+            out[n++] = a;
+        }
         return n;
     }
     int q = pick_typed(g, pt, false);
@@ -1292,6 +1347,22 @@ static uint32_t membership(G *g, int d)
     return i;
 }
 
+/* sqrt(a) or another function of the library on the real a of type t */
+static uint32_t math_call(G *g, unsigned t, uint32_t a, unsigned m)
+{
+    if (m >= M_TRUNC && chance(g, 60)) {
+        /* most reals here are whole: a fraction, often a half, where the
+           four roundings differ */
+        static const double frac[] = {0.5, -0.5, 0.25, 0.75, 1.5};
+        uint32_t h = lit(g, t, fbits(frac[below(g, 5)]));
+        a = binop(g, O_ADD, t, a, h);
+    }
+    uint32_t i = new_e(g, E_MATH, t);
+    g->e[i].op = (uint8_t)m;
+    g->e[i].a = a;
+    return i;
+}
+
 static uint32_t expr(G *g, unsigned t, int d, bool need_var)
 {
     if (is_enum(g, t))
@@ -1320,6 +1391,11 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
             g->e[i].op = chance(g, 50) ? O_NEG : O_ABS;
             g->e[i].a = a;
             return i;
+        }
+        if (choice == 8) {
+            /* sqrt(a) and the others: IEEE 754, no error (§ 9) */
+            uint32_t a = expr(g, t, d - 1, true);
+            return math_call(g, t, a, below(g, NMATH));
         }
         return conv(g, t, expr(g, int_type(g), d - 1, true));
     }
@@ -1400,7 +1476,7 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
             to = r;
     return conv(g, to,
                 expr(g,
-                     chance(g, 10)   ? T_F64
+                     chance(g, 10)   ? (chance(g, 50) ? T_F64 : T_F32)
                      : chance(g, 60) ? within(g, t)
                                      : int_type(g),
                      d - 1, true));
@@ -1897,7 +1973,7 @@ static uint32_t block(G *g, int n, uint32_t *count)
     uint32_t *x = NULL, nx = 0, cap = 0;
     g->nesting++;
     for (int i = 0; i < n && g->budget > 0; i++) {
-        uint32_t some[8];
+        uint32_t some[12];
         uint32_t k = stmt(g, some);
         for (uint32_t j = 0; j < k; j++) {
             LIMBA_GROW(x, nx, cap);
@@ -2147,7 +2223,7 @@ static void put_type(text *o, const G *g, uint32_t t)
 
 static void put_value(text *o, unsigned t, v128 v)
 {
-    if (t == T_F64) {
+    if (fam(t) == 'F') {
         /* the shortest form reads back to the same double */
         char buf[LIMBA_FMT_F64_MAX];
         double d = fval(v);
@@ -2242,6 +2318,11 @@ static void pexpr(G *g, text *o, uint32_t i)
         put_name(o, g, x->var);
         here(x, o); /* a nil pointer is reported at the . */
         putf(o, ".f%u", x->b);
+        break;
+    case E_MATH:
+        putf(o, "%s(", mtext[x->op]);
+        pexpr(g, o, g->e[i].a);
+        put(o, ")");
         break;
     case E_CFIELD:
         pexpr(g, o, x->a);
@@ -2489,6 +2570,11 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         put(o, " := ");
         pexpr(g, o, s.e);
         put(o, ";\n");
+        break;
+    case S_DISPOSE:
+        put(o, "dispose(");
+        put_name(o, g, s.var);
+        put(o, ");\n");
         break;
     }
 }
@@ -2793,7 +2879,7 @@ static v128 binary(X *x, uint32_t i)
     v128 r = ev(x, e->b);
     if (x->trap)
         return 0;
-    if (base(x->g, x->g->e[e->a].t) == T_F64) {
+    if (fam(base(x->g, x->g->e[e->a].t)) == 'F') {
         /* IEEE 754: a comparison with NaN is false, except <> */
         double a = fval(l), b = fval(r);
         switch (op) {
@@ -2810,13 +2896,13 @@ static v128 binary(X *x, uint32_t i)
         case O_GE:
             return a >= b;
         case O_ADD:
-            return fbits(a + b);
+            return fres(t, a + b);
         case O_SUB:
-            return fbits(a - b);
+            return fres(t, a - b);
         case O_MUL:
-            return fbits(a * b);
+            return fres(t, a * b);
         default:
-            return fbits(a / b);
+            return fres(t, a / b);
         }
     }
     bool mod = fam(t) == 'B';
@@ -2915,7 +3001,7 @@ static v128 ev(X *x, uint32_t i)
         v128 v = ev(x, e->a);
         if (x->trap)
             return 0;
-        if (t == T_F64) /* the sign bit, as IEEE 754 negate and abs */
+        if (fam(t) == 'F') /* the sign bit, as IEEE 754 negate and abs */
             return e->op == O_NEG ? fbits(-fval(v)) : fbits(fabs(fval(v)));
         if (e->op == O_NOT)
             return t == T_BOOL ? !v : wrap(t, ~v);
@@ -2929,13 +3015,16 @@ static v128 ev(X *x, uint32_t i)
         if (x->trap)
             return 0;
         unsigned from = base(g, g->e[e->a].t);
-        if (t == T_F64) {
-            if (from == T_F64)
-                return v;
+        if (fam(t) == 'F') {
+            if (fam(from) == 'F')
+                return fres(t, fval(v));
+            if (t == T_F32) /* rounded once, to float */
+                return fbits(fam(from) == 'S' ? (double)(float)(int64_t)v
+                                              : (double)(float)(uint64_t)v);
             return fbits(fam(from) == 'S' ? (double)(int64_t)v
                                           : (double)(uint64_t)v);
         }
-        if (from == T_F64) {
+        if (fam(from) == 'F') {
             /* halves away from zero (Ada), then it must fit, Bits too */
             double d = round(fval(v));
             if (!(fabs(d) < 0x1p100))
@@ -2955,6 +3044,47 @@ static v128 ev(X *x, uint32_t i)
         memmove(&x->cell[x->ref[e->var]], &x->cell[(uint32_t)r],
                 ncells(g, e->t) * sizeof(v128));
         return (v128)x->ref[e->var];
+    }
+    case E_MATH: {
+        /* in double, rounded to the type: what Float32 does too */
+        double a = fval(ev(x, e->a)), r;
+        if (x->trap)
+            return 0;
+        switch (e->op) {
+        case M_SQRT:
+            r = sqrt(a);
+            break;
+        case M_SIN:
+            r = sin(a);
+            break;
+        case M_COS:
+            r = cos(a);
+            break;
+        case M_TAN:
+            r = tan(a);
+            break;
+        case M_ARCTAN:
+            r = atan(a);
+            break;
+        case M_EXP:
+            r = exp(a);
+            break;
+        case M_LN:
+            r = log(a);
+            break;
+        case M_TRUNC:
+            r = trunc(a);
+            break;
+        case M_ROUND:
+            r = nearbyint(a); /* half to even */
+            break;
+        case M_FLOOR:
+            r = floor(a);
+            break;
+        default:
+            r = ceil(a);
+        }
+        return fres(t, r);
     }
     case E_CFIELD: {
         v128 c = ev(x, e->a);
@@ -3033,7 +3163,7 @@ static v128 ev(X *x, uint32_t i)
 
 static void print_value(text *o, unsigned t, v128 v)
 {
-    if (t == T_F64) {
+    if (fam(t) == 'F') {
         char buf[LIMBA_FMT_F64_MAX];
         limba_fmt_f64(buf, fval(v));
         put(o, buf);
@@ -3236,6 +3366,9 @@ static int run_stmt(X *x, uint32_t si)
         x->live++;
         return X_NEXT;
     }
+    case S_DISPOSE:
+        x->live--; /* the variable points to a record new made, alone */
+        return X_NEXT;
     case S_COPY: {
         v128 c = ev(x, s->e);
         if (x->trap)
@@ -3335,6 +3468,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         uint32_t t = k == 0       ? int_type(&g)
                      : k == 1     ? T_BOOL
                      : k >= nglob ? arrays[k - nglob]
+                     : k == 2     ? (chance(&g, 50) ? T_F64 : T_F32)
                                   : var_type(&g);
         uint32_t v = new_v(&g, t, V_GLOBAL);
         uint32_t s = new_s(&g, S_VAR);
@@ -3367,6 +3501,23 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         while (g.v[d].t != rt) /* a global of every such type exists */
             d++;
         nfirst += copy_call(&g, r, d, true, first + nfirst);
+    }
+    /* and prints the functions of the library on some real globals */
+    for (uint32_t v = 0; v < nglob && nfirst < 14; v++) {
+        unsigned t = base(&g, g.v[v].t);
+        if (!is_scalar(&g, g.v[v].t) || fam(t) != 'F')
+            continue;
+        uint32_t items[2 * NMATH], k = 0;
+        for (unsigned m = 0; m < NMATH; m++) {
+            if (k)
+                items[k++] = new_e(&g, E_STR, 0);
+            uint32_t a = var_ref(&g, v);
+            items[k++] = math_call(&g, t, a, m);
+        }
+        uint32_t w = new_s(&g, S_WRITE);
+        g.st[w].args = keep_list(&g, items, k);
+        g.st[w].nargs = k;
+        first[nfirst++] = w;
     }
     g.main_blk = block(&g, 4 + (int)below(&g, 12), &g.main_n);
     while (nfirst)

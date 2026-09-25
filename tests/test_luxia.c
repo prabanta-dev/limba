@@ -922,6 +922,12 @@ static const run_case run_cases[] = {
     {"program p; type R = record a: Int32; end; var q: ^R; begin q := "
      "new(R); q.a := 1; end.",
      "", "ok, 1 live, 0 bad frees"},
+    /* an integer to Float32 rounded once: through a double, 2^60 + 2^36
+       + 1 would lose its last bit and tie down to 2^60 */
+    {"program p; var i: Int64 := 1152921573326323713; u: UInt64 := "
+     "9223372586610589697; begin writeln(Float32(i), \" \", Float32(u)); "
+     "end.",
+     "1.1529216420458004e+18 9.223373136366404e+18\n", "ok"},
 };
 
 /* run main on the input in (NULL: none); what it printed (malloc'd, *len
