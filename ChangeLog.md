@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The front end is faster: 108 203 lines of Luxia (the benchmarks copied
+  100 times) go to a `.lir` in 200 ms instead of 257 ms, 1.85 µs a line.
+  A real literal of up to 19 digits between 10^-38 and 10^19 is read in
+  128-bit arithmetic, its common factors with 10^k being only 2 and 5;
+  a rational whose terms are exact in the format rounds with one IEEE
+  754 division; the positions of the nodes are found once; the writer of
+  `.lir` files makes each LEB128 number aside. 2 000 000 random literals
+  round as `strtod` and `strtof` do.
 - A record or an array variable declared without an initial value
   (global, local, with computed bounds too) starts as what `new` gives:
   every scalar of a range narrower than its base holds a value outside

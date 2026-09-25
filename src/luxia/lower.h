@@ -84,6 +84,7 @@ typedef struct {
        its statement list ends and on every jump out of it */
     limba_sym *dyns;
     uint32_t ndyns, capdyns;
+    uint32_t *node_pos; /* per node: its position in the module, plus 1 */
 } lxl;
 
 /* IR types */

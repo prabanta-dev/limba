@@ -152,13 +152,19 @@ void lxl_check(lxl *L, limba_id cond, int64_t code)
 
 void lxl_at(lxl *L, uint32_t node)
 {
-    limba_where w;
-    const limba_source *src = L->S->src;
-    if (!L->ssa || !limba_source_where(src, L->S->t->node[node].loc, &w))
+    if (!L->ssa)
         return;
-    const char *path = src->file[w.file].path;
-    limba_id file = limba_str_intern(L->m, path, strlen(path));
-    limba_ssa_func(L->ssa)->pos_cur = limba_pos_add(L->m, file, w.line, w.col);
+    /* found once per node: the same nodes come back many times */
+    if (!L->node_pos[node]) {
+        limba_where w;
+        const limba_source *src = L->S->src;
+        if (!limba_source_where(src, L->S->t->node[node].loc, &w))
+            return;
+        const char *path = src->file[w.file].path;
+        limba_id file = limba_str_intern(L->m, path, strlen(path));
+        L->node_pos[node] = limba_pos_add(L->m, file, w.line, w.col) + 1;
+    }
+    limba_ssa_func(L->ssa)->pos_cur = L->node_pos[node] - 1;
 }
 
 void lxl_goto_new(lxl *L, limba_id b)
@@ -917,6 +923,7 @@ limba_module *limba_lxl_program(limba_lxs *S)
     L->taken = limba_xcalloc(S->st.nsym + 1, 1);
     L->func_of = limba_xcalloc(S->st.nsym + 1, sizeof(*L->func_of));
     L->tmap = limba_xcalloc(S->ts.n + 1, sizeof(*L->tmap));
+    L->node_pos = limba_xcalloc(S->t->nnode + 1, sizeof(*L->node_pos));
     scan_taken(L);
 
     limba_lx_node *p = nd(L, S->t->root);
@@ -1004,6 +1011,7 @@ limba_module *limba_lxl_program(limba_lxs *S)
     free(L->outs);
     free(L->out_place);
     free(L->dyns);
+    free(L->node_pos);
     if (S->rep->errors) {
         limba_module_free(L->m);
         return NULL;

@@ -74,6 +74,16 @@ void limba_big_set_u64(limba_big *r, uint64_t v)
     trim(r);
 }
 
+static void set_u128(limba_big *r, unsigned __int128 v)
+{
+    reserve(r, 4);
+    for (int k = 0; k < 4; k++)
+        r->w[k] = (uint32_t)(v >> (32 * k));
+    r->n = 4;
+    r->neg = false;
+    trim(r);
+}
+
 void limba_big_set_i64(limba_big *r, int64_t v)
 {
     uint64_t m = v < 0 ? -(uint64_t)v : (uint64_t)v;
@@ -637,6 +647,42 @@ bool limba_rat_parse(limba_rat *r, const char *s, size_t n)
     exp -= frac;
     limba_rat t;
     limba_rat_init(&t);
+    /* the common literal: up to 19 digits and 10^-38..10^19, in 128
+       bits; the only factors 10^k can share with the digits are 2 and 5 */
+    size_t lead = 0;
+    while (lead < nd && digits[lead] == '0')
+        lead++;
+    if (nd - lead <= 19 && exp >= -38 && exp <= 19) {
+        unsigned __int128 v = 0, p10 = 1, den = 1;
+        for (size_t k = lead; k < nd; k++)
+            v = v * 10 + (unsigned)(digits[k] - '0');
+        if (exp >= 0) {
+            for (int64_t k = 0; k < exp; k++)
+                p10 *= 10;
+            set_u128(&r->num, v * p10); /* below 10^19 * 10^19 */
+            limba_big_set_u64(&r->den, 1);
+        } else {
+            unsigned two = (unsigned)-exp, five = (unsigned)-exp;
+            while (v && two && !(v & 1)) {
+                v >>= 1;
+                two--;
+            }
+            while (v && five && v % 5 == 0) {
+                v /= 5;
+                five--;
+            }
+            if (v == 0)
+                two = five = 0;
+            for (unsigned k = 0; k < five; k++)
+                den *= 5;
+            den <<= two; /* at most 10^38 */
+            set_u128(&r->num, v);
+            set_u128(&r->den, den);
+        }
+        free(digits);
+        limba_rat_free(&t);
+        return true;
+    }
     limba_big p, ten;
     limba_big_init(&p);
     limba_big_init(&ten);
@@ -659,11 +705,38 @@ bool limba_rat_parse(limba_rat *r, const char *s, size_t n)
 
 /* round |a| to p bits of precision with exponents from emin (the least
    normal) to emax, into a double through ldexp; sign applied after */
+/* the magnitude of a when below 2^bits, in *v */
+static bool small_mag(const limba_big *a, int bits, uint64_t *v)
+{
+    if (a->n > 2)
+        return false;
+    uint64_t m = a->n ? a->w[0] : 0;
+    if (a->n == 2)
+        m |= (uint64_t)a->w[1] << 32;
+    *v = m;
+    return m < ((uint64_t)1 << bits);
+}
+
 static bool rat_round(const limba_rat *a, int mant, int emin, int emax,
                       double *out)
 {
     if (a->num.n == 0) {
         *out = 0;
+        return true;
+    }
+    /* both exact in the format: one IEEE 754 division rounds the
+       quotient once, to nearest even (the quotient is neither tiny nor
+       huge) */
+    uint64_t n, d;
+    if (small_mag(&a->num, mant, &n) && small_mag(&a->den, mant, &d)) {
+        if (mant == 24) {
+            float q = (float)n / (float)d;
+            *out = q;
+        } else {
+            *out = (double)n / (double)d;
+        }
+        if (a->num.neg)
+            *out = -*out;
         return true;
     }
     limba_big num, den, q, rem, t;

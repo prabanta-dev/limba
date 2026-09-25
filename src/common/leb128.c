@@ -22,28 +22,38 @@ void limba_w_bytes(limba_wbuf *w, const void *p, size_t n)
 
 void limba_w_byte(limba_wbuf *w, uint8_t b)
 {
-    limba_w_bytes(w, &b, 1);
+    if (w->len < w->cap)
+        w->buf[w->len++] = b;
+    else
+        limba_w_bytes(w, &b, 1);
 }
 
+/* a LEB128 number is made aside, then written at once */
 void limba_w_uleb(limba_wbuf *w, uint64_t v)
 {
+    uint8_t b[10];
+    size_t n = 0;
     do {
-        uint8_t b = v & 0x7f;
+        uint8_t x = v & 0x7f;
         v >>= 7;
-        limba_w_byte(w, (uint8_t)(b | (v ? 0x80 : 0)));
+        b[n++] = (uint8_t)(x | (v ? 0x80 : 0));
     } while (v);
+    limba_w_bytes(w, b, n);
 }
 
 void limba_w_sleb(limba_wbuf *w, int64_t v)
 {
+    uint8_t b[10];
+    size_t n = 0;
     for (;;) {
-        uint8_t b = (uint8_t)(v & 0x7f);
+        uint8_t x = (uint8_t)(v & 0x7f);
         v >>= 7; /* arithmetic shift: gcc and clang define it */
-        bool done = (v == 0 && !(b & 0x40)) || (v == -1 && (b & 0x40));
-        limba_w_byte(w, (uint8_t)(b | (done ? 0 : 0x80)));
+        bool done = (v == 0 && !(x & 0x40)) || (v == -1 && (x & 0x40));
+        b[n++] = (uint8_t)(x | (done ? 0 : 0x80));
         if (done)
-            return;
+            break;
     }
+    limba_w_bytes(w, b, n);
 }
 
 void limba_w_u64(limba_wbuf *w, uint64_t v)
