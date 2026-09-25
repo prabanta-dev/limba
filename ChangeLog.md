@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The gvn pass drops a check that a check of the same condition
+  dominates, whatever its code: the first would have stopped the program.
+  Repeated nil checks of one pointer go, among others; on the benchmarks
+  the checks cost +16.1 % of the instructions run instead of +19.3 %
+  (binary-trees +23.4 % to +16.0 %, pidigits +42.2 % to +32.4 %).
 - The front end compiles 108 203 lines of Luxia (the benchmarks copied
   100 times) to a `.lir` in 107 ms, 0.99 µs a line (median of 21 runs),
   from 257 ms (2.4 µs) when first measured: each function is written as

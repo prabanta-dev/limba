@@ -8,6 +8,10 @@
  * blocks it dominates, and forgotten on the way back up. Instructions that
  * may trap, read memory or call are never merged (in SedaiBasic2 the
  * trapping ones were a source of wrong code under ON ERROR).
+ *
+ * A check is the exception that pays: check c dominated by a check of the
+ * same c can never fail, since the first would have stopped the program;
+ * it goes, whatever its code. The key of a check is its condition only.
  */
 #include "pass.h"
 
@@ -34,6 +38,8 @@ typedef struct {
 
 static bool mergeable(const limba_inst *in)
 {
+    if (in->op == LIMBA_OP_CHECK)
+        return true;
     const limba_op_info *op = &limba_ops[in->op];
     return (op->flags & LIMBA_OPF_PURE) && in->op != LIMBA_OP_PARAM &&
            in->op != LIMBA_OP_UNDEF && in->type != LIMBA_T_VOID;
@@ -41,6 +47,8 @@ static bool mergeable(const limba_inst *in)
 
 static int64_t key_imm(const limba_inst *in)
 {
+    if (in->op == LIMBA_OP_CHECK)
+        return 0; /* any code: the first check stops the program */
     return in->op == LIMBA_OP_ICONST ? limba_int_norm(in->imm, in->type)
                                      : in->imm;
 }
@@ -99,6 +107,15 @@ static uint32_t lookup_or_add(gctx *c, uint32_t id)
     return id;
 }
 
+/* id computes what leader does: a value is replaced, a check dropped */
+static void merge(gctx *c, uint32_t id, uint32_t leader)
+{
+    if (c->f->insts[id].op == LIMBA_OP_CHECK)
+        c->e.dead[id] = 1;
+    else
+        limba_edit_replace(&c->e, id, leader);
+}
+
 uint32_t limba_pass_gvn(limba_module *m, limba_func *f)
 {
     (void)m;
@@ -143,7 +160,7 @@ uint32_t limba_pass_gvn(limba_module *m, limba_func *f)
         if (mergeable(&f->insts[id])) {
             uint32_t leader = lookup_or_add(&c, id);
             if (leader != id) {
-                limba_edit_replace(&c.e, id, leader);
+                merge(&c, id, leader);
                 changes++;
             }
         }
@@ -161,7 +178,7 @@ uint32_t limba_pass_gvn(limba_module *m, limba_func *f)
                     continue;
                 uint32_t leader = lookup_or_add(&c, id);
                 if (leader != id) {
-                    limba_edit_replace(&c.e, id, leader);
+                    merge(&c, id, leader);
                     changes++;
                 }
             }

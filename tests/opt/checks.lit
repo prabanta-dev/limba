@@ -1,0 +1,67 @@
+; a check dominated by a check of the same condition cannot fail: it goes,
+; whatever its code; one in a branch the first does not dominate stays
+func @f : fn(ptr, i1) -> i64 {
+b0(v0: ptr, v1: i1):
+  v2 = null ptr
+  v3 = icmp.ne i1 v0, v2
+  check v3, 102
+  v4 = load i64 v0
+  v5 = null ptr
+  v6 = icmp.ne i1 v0, v5
+  check v6, 100
+  v7 = load i64 v0
+  cbr v1, b1, b2
+b1:
+  v8 = icmp.ne i1 v0, v2
+  check v8, 102
+  br b3(v4)
+b2:
+  br b3(v7)
+b3(v9: i64):
+  ret v9
+}
+func @g : fn(ptr, i1) -> void {
+b0(v0: ptr, v1: i1):
+  v2 = null ptr
+  v3 = icmp.ne i1 v0, v2
+  cbr v1, b1, b2
+b1:
+  check v3, 102
+  br b3
+b2:
+  br b3
+b3:
+  check v3, 102
+  ret
+}
+;; expect
+func @f : fn(ptr, i1) -> i64 {
+b0(v0: ptr, v1: i1):
+  v2 = null ptr
+  v3 = icmp.ne i1 v0, v2
+  check v3, 102
+  v4 = load i64 v0
+  v5 = load i64 v0
+  cbr v1, b1, b2
+b1:
+  br b3(v4)
+b2:
+  br b3(v5)
+b3(v6: i64):
+  ret v6
+}
+
+func @g : fn(ptr, i1) -> void {
+b0(v0: ptr, v1: i1):
+  v2 = null ptr
+  v3 = icmp.ne i1 v0, v2
+  cbr v1, b1, b2
+b1:
+  check v3, 102
+  br b3
+b2:
+  br b3
+b3:
+  check v3, 102
+  ret
+}
