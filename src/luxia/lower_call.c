@@ -301,9 +301,21 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         return;
     }
     case LXB_COPY: {
-        uint32_t a[3] = {lxl_value(L, a0), 0, lxl_value(L, arg(L, node, 2))};
-        a[1] = bin(L, LIMBA_OP_SUB, LIMBA_T_I64, lxl_value(L, arg(L, node, 1)),
-                   lxl_iconst(L, LIMBA_T_I64, 1));
+        /* from left to right; from 1 on and a count from 0, past the end
+           cut short (§ 4.5) */
+        limba_id s = lxl_value(L, a0);
+        limba_id from = lxl_value(L, arg(L, node, 1));
+        limba_id n = lxl_value(L, arg(L, node, 2));
+        lxl_at(L, node);
+        limba_id ok =
+            bin(L, LIMBA_OP_AND, LIMBA_T_I1,
+                icmp(L, LIMBA_CC_SGE, from, lxl_iconst(L, LIMBA_T_I64, 1)),
+                icmp(L, LIMBA_CC_SGE, n, lxl_iconst(L, LIMBA_T_I64, 0)));
+        lxl_check(L, ok, LXR_RANGE);
+        uint32_t a[3] = {s,
+                         bin(L, LIMBA_OP_SUB, LIMBA_T_I64, from,
+                             lxl_iconst(L, LIMBA_T_I64, 1)),
+                         n};
         *result = lxl_rt(L, LIMBA_RT_STR_MID, LIMBA_T_STR, a, 3);
         return;
     }

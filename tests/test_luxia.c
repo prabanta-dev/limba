@@ -934,6 +934,21 @@ static const run_case run_cases[] = {
     {"program p; var s: String := \"ab\"; i: Int64 := 3; begin "
      "writeln(s[i]); end.",
      "", "trap 100 at 1:65"},
+    /* copy: from 1 on, a count from 0, cut short past the end; its
+       arguments from left to right */
+    {"program p; var s: String := \"abc\"; begin writeln(copy(s, 3, 5), "
+     "\"|\", copy(s, 5, 1), \"|\", copy(s, 1, 0), \"|\", copy(s, 2, 2)); "
+     "end.",
+     "c|||bc\n", "ok"},
+    {"program p; var s: String := \"abc\"; k: Int64 := 0; begin "
+     "writeln(copy(s, k, 1)); end.",
+     "", "trap 101 at 1:65"},
+    {"program p; var s: String := \"abc\"; k: Int64 := -1; begin "
+     "writeln(copy(s, 1, k)); end.",
+     "", "trap 101 at 1:66"},
+    {"program p; var z: Int64 := 0; m: Int64 := 9223372036854775807; begin "
+     "writeln(copy(\"ab\", 1 div z, m + 1)); end.",
+     "", "trap 11"},
 };
 
 /* run main on the input in (NULL: none); what it printed (malloc'd, *len

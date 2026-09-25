@@ -1502,11 +1502,12 @@ static uint32_t str_expr(G *g, int d, bool need_var)
         return binop(g, O_CAT, T_STR, a, b);
     }
     if (c < 7) {
-        /* from 1 on and a count from 0: what copy does past the end is
-           the same in every reading; before 1 it is not decided yet */
+        /* copy(s, from, count): near the edges, or any Int64 */
         uint32_t a = str_expr(g, d - 1, true);
-        uint32_t b = lit(g, T_I64, 1 + below(g, 6));
-        uint32_t n = lit(g, T_I64, below(g, 6));
+        uint32_t b = chance(g, 80) ? lit(g, T_I64, (v128)below(g, 8) - 1)
+                                   : value_for(g, T_I64, d - 1);
+        uint32_t n = chance(g, 80) ? lit(g, T_I64, (v128)below(g, 7) - 1)
+                                   : value_for(g, T_I64, d - 1);
         uint32_t i = new_e(g, E_COPY, T_STR);
         g->e[i].a = a;
         g->e[i].b = b;
@@ -2602,6 +2603,7 @@ static void pexpr(G *g, text *o, uint32_t i)
         put(o, "]");
         break;
     case E_COPY:
+        here(x, o); /* checked at its name */
         put(o, "copy(");
         pexpr(g, o, x->a);
         put(o, ", ");
@@ -3453,10 +3455,15 @@ static v128 ev(X *x, uint32_t i)
         return (unsigned char)a->b[k - 1];
     }
     case E_COPY: {
+        /* from left to right; from 1 on and a count from 0, past the
+           end cut short (§ 4.5) */
         v128 v = ev(x, e->a);
-        v128 from = ev(x, e->b), n = ev(x, e->c);
+        v128 from = ev(x, e->b);
+        v128 n = ev(x, e->c);
         if (x->trap)
             return 0;
+        if (from < 1 || n < 0)
+            return fail(x, i, 101);
         uint32_t sn = g->str[(uint32_t)v].n;
         v128 at = from - 1 > sn ? sn : from - 1;
         if (n > sn - at)

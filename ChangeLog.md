@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `copy(s, from, count)` takes its arguments from left to right (the
+  count went before), and `from < 1` or `count < 0` is a range error at
+  its name; past the end the result is cut short (`copy("abc", 3, 5)` is
+  `"c"`). Before, `from` below 1 counted as 1, a negative count meant up
+  to the end, and `from - 1` wrapped for the least `Int64`. The random
+  programs call `copy` with any `from` and `count`.
 - `chr` out of range is reported at its name and `s[i]` out of a string
   at the `[`: both took the place of their argument.
 - The random programs use `Char` and `String`: literals with doubled
