@@ -220,6 +220,7 @@ enum {
     E_COPY,   /* copy(a, b, c) */
     E_STRF,   /* str(a) */
     E_CHR,    /* chr(a) */
+    E_FMT,    /* a:b, or a:b:c for a real, an item of writeln */
     E_CFIELD, /* field b of the record call a returns */
     E_CINDEX  /* element b of the array call a returns */
 };
@@ -249,9 +250,10 @@ enum {
     S_CONT,
     S_RETURN,
     S_CONST,
-    S_NEW,    /* var := new(its record) */
-    S_COPY,   /* var := the record variable of e */
-    S_DISPOSE /* dispose(var) */
+    S_NEW,     /* var := new(its record) */
+    S_COPY,    /* var := the record variable of e */
+    S_DISPOSE, /* dispose(var) */
+    S_HALT     /* halt(e) */
 };
 
 typedef struct {
@@ -1552,6 +1554,48 @@ static uint32_t char_expr(G *g, int d, bool need_var)
     return i;
 }
 
+/* halt(0) or halt(k), k in 2..255; or a status at an edge (-1, 0, 1, 2,
+   255, 256) through a variable, which is no constant: 1 and those out of
+   0..255 are a range error at the name. Into out, the count */
+static uint32_t halt_stmt(G *g, uint32_t *out)
+{
+    uint32_t n = 0, e;
+    if (chance(g, 50)) {
+        e = lit(g, T_I32, chance(g, 30) ? 0 : 2 + below(g, 254));
+    } else {
+        static const int edge[] = {-1, 0, 1, 2, 255, 256};
+        uint32_t v = new_v(g, T_I32, V_LOCAL);
+        uint32_t d = new_s(g, S_VAR);
+        uint32_t k = lit(g, T_I32, edge[below(g, 6)]);
+        g->st[d].var = v;
+        g->st[d].e = k;
+        show(g, v);
+        out[n++] = d;
+        e = var_ref(g, v);
+    }
+    uint32_t s = new_s(g, S_HALT);
+    g->st[s].e = e;
+    out[n++] = s;
+    return n;
+}
+
+/* item a of a writeln, sometimes a:width or, for a real, a:width:decimals
+   (widths 0 to 12 and decimals 0 to 10: what lies outside is not decided
+   yet) */
+static uint32_t format(G *g, uint32_t a)
+{
+    if (g->e[a].k == E_STR || !chance(g, 25))
+        return a;
+    bool real = fam(base(g, g->e[a].t)) == 'F';
+    uint32_t w = lit(g, T_I32, below(g, 13));
+    uint32_t d = real && chance(g, 60) ? lit(g, T_I32, below(g, 11)) : 0;
+    uint32_t i = new_e(g, E_FMT, g->e[a].t);
+    g->e[i].a = a;
+    g->e[i].b = w;
+    g->e[i].c = d;
+    return i;
+}
+
 /* sqrt(a) or another function of the library on the real a of type t */
 static uint32_t math_call(G *g, unsigned t, uint32_t a, unsigned m)
 {
@@ -1928,6 +1972,11 @@ static uint32_t stmt(G *g, uint32_t *out)
         if (d >= 0)
             return copy_call(g, (uint32_t)fn, (uint32_t)d, !pure, out);
     }
+    if (!pure && chance(g, 1)) {
+        /* halt(0), halt(k) for k in 2..255, or a computed status that may
+           be outside */
+        return halt_stmt(g, out);
+    }
     int sv = chance(g, 4) ? pick_var(g, T_STR, false, false) : -1;
     if (sv >= 0 && deep) {
         /* for var i: Int64 := 1 to length(s) (or down) printing s[i]; the
@@ -2296,7 +2345,8 @@ static uint32_t stmt(G *g, uint32_t *out)
         if (i)
             items[k++] = new_e(g, E_STR, 0);
         unsigned u = chance(g, 12) ? T_STR : any_type(g);
-        items[k++] = expr(g, u, depth(g), true);
+        uint32_t a = expr(g, u, depth(g), true);
+        items[k++] = format(g, a);
     }
     uint32_t s = new_s(g, S_WRITE);
     g->st[s].args = keep_list(g, items, k);
@@ -2732,6 +2782,15 @@ static void pexpr(G *g, text *o, uint32_t i)
         pexpr(g, o, x->a);
         put(o, ")");
         break;
+    case E_FMT:
+        pexpr(g, o, x->a);
+        put(o, ":");
+        pexpr(g, o, g->e[i].b);
+        if (g->e[i].c) {
+            put(o, ":");
+            pexpr(g, o, g->e[i].c);
+        }
+        break;
     case E_CHR:
         here(x, o); /* checked at its name */
         put(o, "chr(");
@@ -2991,6 +3050,11 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         put_name(o, g, s.var);
         put(o, ");\n");
         break;
+    case S_HALT:
+        put(o, "halt(");
+        pexpr(g, o, s.e);
+        put(o, ");\n");
+        break;
     }
 }
 
@@ -3126,6 +3190,7 @@ typedef struct {
     uint32_t live; /* the records made by new and not disposed of */
     text out;
     bool trap, toolong;
+    bool halt; /* the trap is a halt, code its status */
     int code;
     uint32_t line, col;
     uint64_t steps;
@@ -3866,6 +3931,35 @@ static int run_stmt(X *x, uint32_t si)
                 put(&x->out, " ");
                 continue;
             }
+            if (g->e[a].k == E_FMT) {
+                /* the value, then the width and the decimals; padded on
+                   the left to the width, in characters */
+                const xe *fe = &g->e[a];
+                v128 v = ev(x, fe->a);
+                v128 w = x->trap ? 0 : ev(x, fe->b);
+                v128 d = x->trap || !fe->c ? 0 : ev(x, fe->c);
+                if (x->trap)
+                    return X_RET;
+                text t = {NULL, 0, 0, 1, 1};
+                unsigned b = base(g, g->e[fe->a].t);
+                if (fe->c && isnan(fval(v))) {
+                    put(&t, "nan");
+                } else if (fe->c) {
+                    char buf[512];
+                    snprintf(buf, sizeof(buf), "%.*f", (int)d, fval(v));
+                    put(&t, buf);
+                } else {
+                    print_value(g, &t, b, v);
+                }
+                v128 chars = 0;
+                for (size_t k2 = 0; k2 < t.n; k2++)
+                    chars += ((unsigned char)t.b[k2] & 0xc0) != 0x80;
+                for (; w > chars; w--)
+                    put(&x->out, " ");
+                putn(&x->out, t.b ? t.b : "", t.n);
+                free(t.b);
+                continue;
+            }
             v128 v = ev(x, a);
             if (x->trap)
                 return X_RET;
@@ -3911,6 +4005,19 @@ static int run_stmt(X *x, uint32_t si)
     case S_DISPOSE:
         x->live--; /* the variable points to a record new made, alone */
         return X_NEXT;
+    case S_HALT: {
+        /* 0 or 2..255, checked at the name: 1 is for the errors (§ 9) */
+        v128 v = ev(x, s->e);
+        if (x->trap)
+            return X_RET;
+        if (v == 1 || v < 0 || v > 255) {
+            stop(x, 101, s->line, s->col);
+            return X_RET;
+        }
+        stop(x, (int)v, s->line, s->col);
+        x->halt = true;
+        return X_RET;
+    }
     case S_COPY: {
         v128 c = ev(x, s->e);
         if (x->trap)
@@ -4063,7 +4170,8 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
             if (k)
                 items[k++] = new_e(&g, E_STR, 0);
             uint32_t a = var_ref(&g, v);
-            items[k++] = math_call(&g, t, a, m);
+            uint32_t mc = math_call(&g, t, a, m);
+            items[k++] = format(&g, mc);
         }
         uint32_t w = new_s(&g, S_WRITE);
         g.st[w].args = keep_list(&g, items, k);
@@ -4194,6 +4302,12 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         g.st[s].nargs = k;
         append(&g, &g.main_blk, &g.main_n, s, false);
     }
+    if (chance(&g, 20)) {
+        /* the program ends by halt, after printing its globals */
+        uint32_t hs[2], nh = halt_stmt(&g, hs);
+        for (uint32_t k = 0; k < nh; k++)
+            append(&g, &g.main_blk, &g.main_n, hs[k], false);
+    }
 
     text src = {NULL, 0, 0, 1, 1};
     program(&g, &src, nglob);
@@ -4235,7 +4349,10 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         p->out = x.out.b;
         p->outlen = x.out.n;
         x.out.b = NULL;
-        if (x.trap)
+        if (x.halt)
+            snprintf(p->end, sizeof(p->end), "halt %d at %u:%u", x.code, x.line,
+                     x.col);
+        else if (x.trap)
             snprintf(p->end, sizeof(p->end), "trap %d at %u:%u", x.code, x.line,
                      x.col);
         else if (x.live)

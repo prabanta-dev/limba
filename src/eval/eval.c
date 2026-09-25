@@ -268,6 +268,10 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_STR_FROM_F64_FIXED: {
         int d = (int32_t)a[1];
         d = d < 0 ? 0 : d > 100 ? 100 : d;
+        if (isnan(dv(a[0]))) { /* nan, never -nan, as the short form */
+            *r = sv(str_make(e, "nan", 3));
+            return true;
+        }
         n = snprintf(buf, sizeof(buf), "%.*f", d, dv(a[0]));
         *r = sv(str_make(e, buf,
                          n < (int)sizeof(buf) ? (size_t)n : sizeof(buf) - 1));

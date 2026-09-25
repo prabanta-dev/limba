@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A NaN written with decimals (`x:w:d`) is `nan`, as without them: the
+  reference interpreter wrote `-nan` for 0 / 0, whose sign bit x86 sets.
+- The random programs write items with a width (`x:w`, 0 to 12) and
+  reals with decimals (`x:w:d`, 0 to 10), and call `halt`: with 0 or
+  2..255, or with a status at an edge through a variable (1 and those
+  outside 0..255 are a range error at its name); some end by `halt`.
 - The gvn pass drops a check that a check of the same condition
   dominates, whatever its code: the first would have stopped the program.
   Repeated nil checks of one pointer go, among others; on the benchmarks

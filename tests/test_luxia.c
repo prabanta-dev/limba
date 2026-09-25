@@ -993,6 +993,15 @@ static const run_case run_cases[] = {
      "200\n200\n", "trap 101 at 1:159"},
     {"program p; pragma suppress(all_checks); type P = Int32 range 0..100; var x: P; y: Int32 := 200; a: Int8 := 100; begin a := a + a; writeln(a); if y > 0 then pragma unsuppress(range_check); x := y; end; end.",
      "-56\n", "trap 101 at 1:189"},
+    /* a NaN is nan with decimals too, whatever its sign bit (0 / 0 sets
+       it on x86) */
+    {"program p; var z: Float64 := 0.0; begin writeln((z / z):0:2, \" \", "
+     "(-(z / z)):5:1, \"|\"); end.",
+     "nan   nan|\n", "ok"},
+    /* a width counts characters, not bytes */
+    {"program p; var s: String := \"\xc3\xa8\xe2\x82\xac\"; begin writeln(s:5, "
+     "\"|\", 'x':3, \"|\"); end.",
+     "   \xc3\xa8\xe2\x82\xac|  x|\n", "ok"},
 };
 
 /* run main on the input in (NULL: none); what it printed (malloc'd, *len
