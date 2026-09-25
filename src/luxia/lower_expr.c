@@ -880,6 +880,7 @@ limba_id lxl_value(lxl *L, uint32_t node)
             limba_id s = lxl_value(L, x->a);
             limba_id i = lxl_to_i64(L, lxl_value(L, nd(L, node)->b),
                                     ntype(L, nd(L, node)->b));
+            lxl_at(L, node); /* checked at the [ */
             limba_id len = lxl_rt(L, LIMBA_RT_STR_LEN, LIMBA_T_I64, &s, 1);
             limba_id a =
                 cmp(L, false, LIMBA_CC_SGE, i, lxl_iconst(L, LIMBA_T_I64, 1));

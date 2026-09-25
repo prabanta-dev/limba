@@ -57,23 +57,27 @@ enum {
     T_BOOL,
     T_F64,
     T_F32,
+    T_CHAR,
+    T_STR,
     NTYPES
 };
 
 static const char *const tname[NTYPES] = {
-    "Int8",   "Int16",  "Int32",   "Int64",   "UInt8",
-    "UInt16", "UInt32", "UInt64",  "Bits8",   "Bits16",
-    "Bits32", "Bits64", "Boolean", "Float64", "Float32",
+    "Int8",    "Int16",   "Int32",   "Int64",  "UInt8",  "UInt16",
+    "UInt32",  "UInt64",  "Bits8",   "Bits16", "Bits32", "Bits64",
+    "Boolean", "Float64", "Float32", "Char",   "String",
 };
 
-/* S signed, U unsigned, B bits, L Boolean, F real */
+/* S signed, U unsigned, B bits, L Boolean, F real, C Char, T String */
 static char fam(unsigned t)
 {
-    return t == T_F64 || t == T_F32 ? 'F'
-           : t == T_BOOL            ? 'L'
-           : t < T_U8               ? 'S'
-           : t < T_B8               ? 'U'
-                                    : 'B';
+    return t == T_CHAR                ? 'C'
+           : t == T_STR               ? 'T'
+           : t == T_F64 || t == T_F32 ? 'F'
+           : t == T_BOOL              ? 'L'
+           : t < T_U8                 ? 'S'
+           : t < T_B8                 ? 'U'
+                                      : 'B';
 }
 
 static bool is_int_base(unsigned t)
@@ -161,7 +165,8 @@ enum {
     O_ABS,
     O_NOT,
     O_POW,
-    O_FDIV
+    O_FDIV,
+    O_CAT
 };
 
 /* the real functions of the library (§ 9), E_MATH */
@@ -184,8 +189,9 @@ static const char *const mtext[NMATH] = {"sqrt",   "sin",   "cos", "tan",
                                          "round",  "floor", "ceil"};
 
 static const char *const otext[] = {
-    "+", "-",  "*", "div", "mod", "rem", "and", "or",  "xor", "shl", "shr",
-    "=", "<>", "<", "<=",  ">",   ">=",  "-",   "abs", "not", "**",  "/",
+    "+",   "-",   "*",   "div", "mod", "rem", "and", "or",
+    "xor", "shl", "shr", "=",   "<>",  "<",   "<=",  ">",
+    ">=",  "-",   "abs", "not", "**",  "/",   "&",
 };
 
 /* E_IN: a in type fn, or a in b..c when fn is 0; E_LOW, E_HIGH, E_LEN:
@@ -209,6 +215,11 @@ enum {
     E_PRED,
     E_ORD,
     E_MATH,   /* function op of the library on the real a */
+    E_SLEN,   /* length of the string a */
+    E_SIDX,   /* byte b of the string variable var */
+    E_COPY,   /* copy(a, b, c) */
+    E_STRF,   /* str(a) */
+    E_CHR,    /* chr(a) */
     E_CFIELD, /* field b of the record call a returns */
     E_CINDEX  /* element b of the array call a returns */
 };
@@ -326,7 +337,54 @@ typedef struct {
     uint32_t ngc, capgc;
     uint32_t *fld; /* the types of the fields of the records */
     uint32_t nfld, capfld;
+    /* the strings: a String value is an index here; 0 is "", the literals
+       come first, the run adds what it makes */
+    struct xstr {
+        char *b;
+        uint32_t n;
+    } *str;
+    uint32_t nstr, capstr;
 } G;
+
+static uint32_t new_str(G *g, const char *b, size_t n)
+{
+    LIMBA_GROW(g->str, g->nstr, g->capstr);
+    g->str[g->nstr].b = limba_xmalloc(n + 1);
+    memcpy(g->str[g->nstr].b, b, n);
+    g->str[g->nstr].b[n] = 0;
+    g->str[g->nstr].n = (uint32_t)n;
+    return g->nstr++;
+}
+
+/* the UTF-8 form of code point c into b; its length */
+static unsigned utf8(uint32_t c, char *b)
+{
+    if (c < 0x80) {
+        b[0] = (char)c;
+        return 1;
+    }
+    if (c < 0x800) {
+        b[0] = (char)(0xc0 | c >> 6);
+        b[1] = (char)(0x80 | (c & 0x3f));
+        return 2;
+    }
+    if (c < 0x10000) {
+        b[0] = (char)(0xe0 | c >> 12);
+        b[1] = (char)(0x80 | ((c >> 6) & 0x3f));
+        b[2] = (char)(0x80 | (c & 0x3f));
+        return 3;
+    }
+    b[0] = (char)(0xf0 | c >> 18);
+    b[1] = (char)(0x80 | ((c >> 12) & 0x3f));
+    b[2] = (char)(0x80 | ((c >> 6) & 0x3f));
+    b[3] = (char)(0x80 | (c & 0x3f));
+    return 4;
+}
+
+/* the characters of the literals: ASCII, the quotes, letters of two,
+   three and four bytes, then the control characters, which have names */
+static const uint32_t some_chars[] = {
+    'a', '~', '0', ' ', '\'', '"', 0xe9, 0x20ac, 0x1d11e, 10, 9, 13, 0};
 
 /* ---- randomness ---- */
 
@@ -357,6 +415,7 @@ static unsigned any_type(G *g)
 {
     return chance(g, 15)   ? T_BOOL
            : chance(g, 12) ? (chance(g, 50) ? T_F64 : T_F32)
+           : chance(g, 6)  ? T_CHAR
                            : int_type(g);
 }
 
@@ -420,6 +479,30 @@ static v128 rand_value(G *g, unsigned t)
 {
     if (t == T_F64)
         return fbits(rand_real(g));
+    if (t == T_CHAR)
+        return some_chars[below(g, sizeof(some_chars) / sizeof(some_chars[0]) -
+                                       (chance(g, 70) ? 4 : 0))];
+    if (t == T_STR) {
+        /* up to four pieces: words, quotes, letters of many bytes */
+        static const char *const piece[] = {"a",
+                                            "ciao",
+                                            " ",
+                                            "\"",
+                                            "'",
+                                            "\xc3\xa8",
+                                            "\xe2\x82\xac",
+                                            "\xf0\x9d\x84\x9e",
+                                            "xyz",
+                                            "0"};
+        char b[64];
+        size_t n = 0;
+        for (uint32_t k = 0, m = below(g, 5); k < m; k++) {
+            const char *p = piece[below(g, sizeof(piece) / sizeof(piece[0]))];
+            memcpy(b + n, p, strlen(p));
+            n += strlen(p);
+        }
+        return new_str(g, b, n);
+    }
     if (t == T_F32) {
         /* within the range of a float, and not so tiny that it is 0: a
            literal must fit (§ 4.4) */
@@ -491,7 +574,7 @@ static unsigned index_base(const G *g, uint32_t at)
 static v128 init_value(G *g, uint32_t t)
 {
     unsigned b = g->ty[t].base;
-    if (b == T_BOOL || fam(b) == 'F')
+    if (b == T_BOOL || fam(b) == 'F' || fam(b) == 'C' || fam(b) == 'T')
         return rand_value(g, b);
     return rand_in(g, g->ty[t].lo, g->ty[t].hi);
 }
@@ -531,6 +614,13 @@ static uint32_t var_type(G *g)
         if (g->ty[t].k == K_RANGE && below(g, ++n) == 0)
             chosen = t;
     return n && chance(g, 30) ? chosen : any_type(g);
+}
+
+/* the type of a variable that is no field or element: a String too
+   (a record or an array does not hold one in the random programs) */
+static uint32_t var_type_s(G *g)
+{
+    return chance(g, 10) ? T_STR : var_type(g);
 }
 
 /* ---- the tree ---- */
@@ -1263,6 +1353,9 @@ static uint32_t enum_expr(G *g, uint32_t et, int d, bool need_var)
 
 /* a variable, an element, a literal, or a variable of another type made
    into t */
+static uint32_t str_expr(G *g, int d, bool need_var);
+static uint32_t char_expr(G *g, int d, bool need_var);
+
 static uint32_t leaf(G *g, unsigned t, bool need_var, int d)
 {
     if (!need_var && is_int_base(t) && chance(g, 12))
@@ -1284,6 +1377,36 @@ static uint32_t leaf(G *g, unsigned t, bool need_var, int d)
         uint32_t p = agg_part(g, t, d);
         if (p)
             return p;
+    }
+    if (t == T_I64 && d > 0 && chance(g, 6)) {
+        uint32_t a = str_expr(g, d - 1, true);
+        uint32_t i = new_e(g, E_SLEN, T_I64);
+        g->e[i].a = a;
+        return i;
+    }
+    int sv = t == T_B8 && chance(g, 15) ? pick_var(g, T_STR, false, false) : -1;
+    if (sv >= 0) {
+        /* s[i]: a byte, from 1 to length(s), checked */
+        uint32_t ix;
+        if (chance(g, 50)) {
+            ix = lit(g, T_I64, 1 + below(g, 4));
+        } else if (chance(g, 50)) {
+            uint32_t a = var_ref(g, (uint32_t)sv);
+            ix = new_e(g, E_SLEN, T_I64);
+            g->e[ix].a = a;
+        } else {
+            ix = value_for(g, T_I64, d - 1);
+        }
+        uint32_t i = new_e(g, E_SIDX, T_B8);
+        g->e[i].var = (uint32_t)sv;
+        g->e[i].b = ix;
+        return i;
+    }
+    if (t == T_U32 && d > 0 && chance(g, 8)) {
+        uint32_t a = char_expr(g, d - 1, true);
+        uint32_t i = new_e(g, E_ORD, T_U32);
+        g->e[i].a = a;
+        return i;
     }
     int v = pick_var(g, t, false, false);
     int a = d > 0 && chance(g, 25) ? pick_array(g, t, false) : -1;
@@ -1349,6 +1472,85 @@ static uint32_t membership(G *g, int d)
     return i;
 }
 
+/* a String: a variable, a literal, a & b of strings and characters,
+   copy, str of a number, a Boolean or a character, a call */
+static uint32_t str_expr(G *g, int d, bool need_var)
+{
+    if (d <= 0 || chance(g, 30)) {
+        int v = pick_var(g, T_STR, false, false);
+        if (v >= 0 && (need_var || chance(g, 70)))
+            return var_ref(g, (uint32_t)v);
+        if (!need_var)
+            return lit(g, T_STR, rand_value(g, T_STR));
+        int w = pick_var(g, NTYPES, false, false); /* global 0 is one */
+        uint32_t a = var_ref(g, (uint32_t)w);
+        uint32_t i = new_e(g, E_STRF, T_STR);
+        g->e[i].a = a;
+        return i;
+    }
+    unsigned c = below(g, 10);
+    int fn = c == 9 ? pick_func(g, T_STR) : -1;
+    if (fn >= 0)
+        return call_expr(g, (uint32_t)fn, d);
+    if (c < 5) {
+        /* strings and characters in any mix; not two constants */
+        uint32_t a = chance(g, 25) ? char_expr(g, d - 1, need_var)
+                                   : str_expr(g, d - 1, need_var);
+        bool k = g->e[a].cst || g->e[a].k == E_LIT;
+        uint32_t b =
+            chance(g, 25) ? char_expr(g, d - 1, k) : str_expr(g, d - 1, k);
+        return binop(g, O_CAT, T_STR, a, b);
+    }
+    if (c < 7) {
+        /* from 1 on and a count from 0: what copy does past the end is
+           the same in every reading; before 1 it is not decided yet */
+        uint32_t a = str_expr(g, d - 1, true);
+        uint32_t b = lit(g, T_I64, 1 + below(g, 6));
+        uint32_t n = lit(g, T_I64, below(g, 6));
+        uint32_t i = new_e(g, E_COPY, T_STR);
+        g->e[i].a = a;
+        g->e[i].b = b;
+        g->e[i].c = n;
+        return i;
+    }
+    unsigned u = any_type(g);
+    uint32_t a = is_enum(g, u) ? 0 : expr(g, u, d - 1, true);
+    if (!a)
+        a = var_ref(g, (uint32_t)pick_var(g, NTYPES, false, false));
+    uint32_t i = new_e(g, E_STRF, T_STR);
+    g->e[i].a = a;
+    return i;
+}
+
+/* a Char: a variable, a literal, chr of an integer (checked), often of
+   ord of a character plus a little, a call */
+static uint32_t char_expr(G *g, int d, bool need_var)
+{
+    if (d <= 0 || chance(g, 40)) {
+        int v = pick_var(g, T_CHAR, false, false);
+        if (v >= 0 && (need_var || chance(g, 65)))
+            return var_ref(g, (uint32_t)v);
+        if (!need_var)
+            return lit(g, T_CHAR, rand_value(g, T_CHAR));
+    }
+    int fn = chance(g, 10) ? pick_func(g, T_CHAR) : -1;
+    if (fn >= 0)
+        return call_expr(g, (uint32_t)fn, d);
+    uint32_t a;
+    if (chance(g, 50)) {
+        uint32_t c = char_expr(g, d - 1, true);
+        uint32_t o = new_e(g, E_ORD, T_U32);
+        g->e[o].a = c;
+        uint32_t k = lit(g, T_U32, below(g, 4));
+        a = binop(g, O_ADD, T_U32, o, k);
+    } else {
+        a = expr(g, int_type(g), d - 1, true);
+    }
+    uint32_t i = new_e(g, E_CHR, T_CHAR);
+    g->e[i].a = a;
+    return i;
+}
+
 /* sqrt(a) or another function of the library on the real a of type t */
 static uint32_t math_call(G *g, unsigned t, uint32_t a, unsigned m)
 {
@@ -1369,6 +1571,10 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
 {
     if (is_enum(g, t))
         return enum_expr(g, t, d, need_var);
+    if (t == T_STR)
+        return str_expr(g, d, need_var);
+    if (t == T_CHAR)
+        return char_expr(g, d, need_var);
     if (d <= 0 || chance(g, 20))
         return leaf(g, t, need_var, d);
     unsigned f = fam(t);
@@ -1418,7 +1624,7 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
             return binop(g, O_EQ + below(g, 6), T_BOOL, a, b);
         }
         if (choice < 4) {
-            unsigned u = any_type(g);
+            unsigned u = chance(g, 15) ? T_STR : any_type(g);
             uint32_t a = expr(g, u, d - 1, false);
             uint32_t b = expr(g, u, d - 1, g->e[a].cst);
             return binop(g, O_EQ + below(g, 6), T_BOOL, a, b);
@@ -1666,7 +1872,7 @@ static uint32_t stmt(G *g, uint32_t *out)
         }
     }
     if (c < 14) {
-        out[0] = declare(g, var_type(g));
+        out[0] = declare(g, var_type_s(g));
         return 1;
     }
     if (c < 36 && chance(g, 25)) {
@@ -1696,7 +1902,7 @@ static uint32_t stmt(G *g, uint32_t *out)
             out[0] = s;
             return 1;
         }
-        int v = pick_var(g, any_type(g), true, false);
+        int v = pick_var(g, chance(g, 10) ? T_STR : any_type(g), true, false);
         if (v < 0)
             v = pick_var(g, NTYPES, true, false);
         if (v >= 0) {
@@ -1965,7 +2171,7 @@ static uint32_t stmt(G *g, uint32_t *out)
     }
     if (pure) {
         /* a function has nothing to print: one more variable */
-        out[0] = declare(g, var_type(g));
+        out[0] = declare(g, var_type_s(g));
         return 1;
     }
     uint32_t items[5];
@@ -1973,7 +2179,8 @@ static uint32_t stmt(G *g, uint32_t *out)
     for (uint32_t i = 0; i < n; i++) {
         if (i)
             items[k++] = new_e(g, E_STR, 0);
-        items[k++] = expr(g, any_type(g), depth(g), true);
+        unsigned u = chance(g, 12) ? T_STR : any_type(g);
+        items[k++] = expr(g, u, depth(g), true);
     }
     uint32_t s = new_s(g, S_WRITE);
     g->st[s].args = keep_list(g, items, k);
@@ -2038,7 +2245,7 @@ static void routine(G *g)
     uint32_t id = g->nr++;
     memset(&g->r[id], 0, sizeof(xr));
     g->r[id].func = chance(g, 50);
-    g->r[id].rt = var_type(g);
+    g->r[id].rt = var_type_s(g);
     if (g->r[id].func && chance(g, 45)) {
         /* a record or an array of the program */
         uint32_t n = 0;
@@ -2050,7 +2257,7 @@ static void routine(G *g)
     g->r[id].np = (uint8_t)below(g, 4);
     uint32_t mark = g->nscope;
     for (uint32_t k = 0; k < g->r[id].np; k++) {
-        uint32_t t = var_type(g);
+        uint32_t t = var_type_s(g);
         /* sometimes an open array, made from an array of the program */
         uint32_t n = 0, from = 0;
         for (uint32_t u = NTYPES; u < g->nty; u++)
@@ -2195,18 +2402,24 @@ typedef struct {
     uint32_t line, col;
 } text;
 
-static void put(text *o, const char *s)
+/* n bytes of s; a column is a code point, as the front end counts */
+static void putn(text *o, const char *s, size_t n)
 {
-    for (; *s; s++) {
+    for (size_t i = 0; i < n; i++) {
         LIMBA_GROW(o->b, o->n, o->cap);
-        o->b[o->n++] = *s;
-        if (*s == '\n') {
+        o->b[o->n++] = s[i];
+        if (s[i] == '\n') {
             o->line++;
             o->col = 1;
-        } else {
+        } else if (((unsigned char)s[i] & 0xc0) != 0x80) {
             o->col++;
         }
     }
+}
+
+static void put(text *o, const char *s)
+{
+    putn(o, s, strlen(s));
 }
 
 static void putf(text *o, const char *fmt, ...)
@@ -2283,10 +2496,32 @@ static void here(xe *x, const text *o)
 /* a literal of type t: the name of a value of an enumeration */
 static void put_lit(text *o, const G *g, uint32_t t, v128 v)
 {
-    if (is_enum(g, t))
+    if (is_enum(g, t)) {
         putf(o, "q%ux%u", t, (unsigned)v);
-    else
+    } else if (t == T_CHAR) {
+        /* no control character in a literal: their names (§ 3) */
+        static const char *const ctl[] = {
+            [0] = "NUL", [9] = "TAB", [10] = "LF", [13] = "CR"};
+        char b[4];
+        if (v < 14 && ctl[v]) {
+            put(o, ctl[v]);
+        } else if (v == '\'') {
+            put(o, "'''");
+        } else {
+            put(o, "'");
+            putn(o, b, utf8((uint32_t)v, b));
+            put(o, "'");
+        }
+    } else if (t == T_STR) {
+        /* a quote inside is written twice (§ 3) */
+        const struct xstr *x = &g->str[(uint32_t)v];
+        put(o, "\"");
+        for (uint32_t k = 0; k < x->n; k++)
+            putn(o, x->b[k] == '"' ? "\"\"" : x->b + k, x->b[k] == '"' ? 2 : 1);
+        put(o, "\"");
+    } else {
         put_value(o, base(g, t), v);
+    }
 }
 
 static void pexpr(G *g, text *o, uint32_t i)
@@ -2351,6 +2586,38 @@ static void pexpr(G *g, text *o, uint32_t i)
         break;
     case E_MATH:
         putf(o, "%s(", mtext[x->op]);
+        pexpr(g, o, g->e[i].a);
+        put(o, ")");
+        break;
+    case E_SLEN:
+        put(o, "length(");
+        pexpr(g, o, x->a);
+        put(o, ")");
+        break;
+    case E_SIDX:
+        put_name(o, g, x->var);
+        here(x, o); /* the index is checked at the [ */
+        put(o, "[");
+        pexpr(g, o, g->e[i].b);
+        put(o, "]");
+        break;
+    case E_COPY:
+        put(o, "copy(");
+        pexpr(g, o, x->a);
+        put(o, ", ");
+        pexpr(g, o, g->e[i].b);
+        put(o, ", ");
+        pexpr(g, o, g->e[i].c);
+        put(o, ")");
+        break;
+    case E_STRF:
+        put(o, "str(");
+        pexpr(g, o, x->a);
+        put(o, ")");
+        break;
+    case E_CHR:
+        here(x, o); /* checked at its name */
+        put(o, "chr(");
         pexpr(g, o, g->e[i].a);
         put(o, ")");
         break;
@@ -2899,6 +3166,27 @@ static v128 power(X *x, uint32_t i, unsigned t, v128 l, v128 n)
     return acc;
 }
 
+static void print_value(const G *g, text *o, unsigned t, v128 v);
+
+/* a string made by the run; past 64 KiB the attempt is given up */
+static v128 run_str(X *x, const char *b, size_t n)
+{
+    if (n > 65536) {
+        x->toolong = x->trap = true;
+        return 0;
+    }
+    return (v128)new_str(x->g, b, n);
+}
+
+/* a String or a Char of type t as a string */
+static v128 as_str(X *x, unsigned t, v128 v)
+{
+    if (t == T_STR)
+        return v;
+    char b[4];
+    return run_str(x, b, utf8((uint32_t)v, b));
+}
+
 static v128 binary(X *x, uint32_t i)
 {
     const xe *e = &x->g->e[i];
@@ -2915,6 +3203,30 @@ static v128 binary(X *x, uint32_t i)
     v128 r = ev(x, e->b);
     if (x->trap)
         return 0;
+    if (op == O_CAT) {
+        l = as_str(x, base(x->g, x->g->e[e->a].t), l);
+        r = as_str(x, base(x->g, x->g->e[e->b].t), r);
+        if (x->trap)
+            return 0;
+        const struct xstr *a = &x->g->str[(uint32_t)l],
+                          *b = &x->g->str[(uint32_t)r];
+        char *c = limba_xmalloc((size_t)a->n + b->n + 1);
+        memcpy(c, a->b, a->n);
+        memcpy(c + a->n, b->b, b->n);
+        v128 v = run_str(x, c, (size_t)a->n + b->n);
+        free(c);
+        return v;
+    }
+    if (base(x->g, x->g->e[e->a].t) == T_STR) {
+        /* byte by byte, then the shorter first (§ 6) */
+        const struct xstr *a = &x->g->str[(uint32_t)l],
+                          *b = &x->g->str[(uint32_t)r];
+        int c = memcmp(a->b, b->b, a->n < b->n ? a->n : b->n);
+        if (c == 0)
+            c = a->n < b->n ? -1 : a->n > b->n;
+        l = c;
+        r = 0;
+    }
     if (fam(base(x->g, x->g->e[e->a].t)) == 'F') {
         /* IEEE 754: a comparison with NaN is false, except <> */
         double a = fval(l), b = fval(r);
@@ -3126,6 +3438,49 @@ static v128 ev(X *x, uint32_t i)
         v128 c = ev(x, e->a);
         return x->trap ? 0 : x->cell[(uint32_t)c + e->b];
     }
+    case E_SLEN: {
+        v128 v = ev(x, e->a);
+        return x->trap ? 0 : (v128)g->str[(uint32_t)v].n;
+    }
+    case E_SIDX: {
+        v128 v = x->cell[x->ref[e->var]];
+        v128 k = ev(x, e->b);
+        if (x->trap)
+            return 0;
+        const struct xstr *a = &g->str[(uint32_t)v];
+        if (k < 1 || k > (v128)a->n)
+            return fail(x, i, 100);
+        return (unsigned char)a->b[k - 1];
+    }
+    case E_COPY: {
+        v128 v = ev(x, e->a);
+        v128 from = ev(x, e->b), n = ev(x, e->c);
+        if (x->trap)
+            return 0;
+        uint32_t sn = g->str[(uint32_t)v].n;
+        v128 at = from - 1 > sn ? sn : from - 1;
+        if (n > sn - at)
+            n = sn - at;
+        return run_str(x, g->str[(uint32_t)v].b + at, (size_t)n);
+    }
+    case E_STRF: {
+        v128 v = ev(x, e->a);
+        if (x->trap)
+            return 0;
+        text o = {NULL, 0, 0, 1, 1};
+        print_value(g, &o, base(g, g->e[e->a].t), v);
+        v128 r = run_str(x, o.b ? o.b : "", o.n);
+        free(o.b);
+        return r;
+    }
+    case E_CHR: {
+        v128 v = ev(x, e->a);
+        if (x->trap)
+            return 0;
+        if (v < 0 || v > 0x10ffff || (v >= 0xd800 && v <= 0xdfff))
+            return fail(x, i, 103);
+        return v;
+    }
     case E_CINDEX: {
         v128 c = ev(x, e->a);
         if (x->trap)
@@ -3197,9 +3552,14 @@ static v128 ev(X *x, uint32_t i)
     return 0;
 }
 
-static void print_value(text *o, unsigned t, v128 v)
+static void print_value(const G *g, text *o, unsigned t, v128 v)
 {
-    if (fam(t) == 'F') {
+    if (t == T_STR) {
+        putn(o, g->str[(uint32_t)v].b, g->str[(uint32_t)v].n);
+    } else if (t == T_CHAR) {
+        char b[4];
+        putn(o, b, utf8((uint32_t)v, b));
+    } else if (fam(t) == 'F') {
         char buf[LIMBA_FMT_F64_MAX];
         limba_fmt_f64(buf, fval(v));
         put(o, buf);
@@ -3363,7 +3723,7 @@ static int run_stmt(X *x, uint32_t si)
             v128 v = ev(x, a);
             if (x->trap)
                 return X_RET;
-            print_value(&x->out, base(g, g->e[a].t), v);
+            print_value(g, &x->out, base(g, g->e[a].t), v);
         }
         put(&x->out, "\n");
         return X_NEXT;
@@ -3442,6 +3802,9 @@ static void g_free(G *g)
     free(g->scope);
     free(g->gc);
     free(g->fld);
+    for (uint32_t k = 0; k < g->nstr; k++)
+        free(g->str[k].b);
+    free(g->str);
 }
 
 static bool attempt(uint64_t seed, limba_lxgen *p)
@@ -3451,6 +3814,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     g.s = seed;
     g.cur = -1;
     new_e(&g, E_LIT, 0); /* node 0 stands for none */
+    new_str(&g, "", 0);  /* string 0 is empty */
     for (unsigned t = 0; t < NTYPES; t++)
         new_type(&g, (xt){K_BASE, (uint8_t)t, 0, 0, t == T_BOOL ? 0 : tmin(t),
                           tmax(t), 0, 0});
@@ -3506,7 +3870,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
                      : k == 1     ? T_BOOL
                      : k >= nglob ? arrays[k - nglob]
                      : k == 2     ? (chance(&g, 50) ? T_F64 : T_F32)
-                                  : var_type(&g);
+                                  : var_type_s(&g);
         uint32_t v = new_v(&g, t, V_GLOBAL);
         uint32_t s = new_s(&g, S_VAR);
         g.st[s].var = v;
@@ -3554,6 +3918,30 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
                 items[k++] = new_e(&g, E_STR, 0);
             uint32_t a = var_ref(&g, v);
             items[k++] = math_call(&g, t, a, m);
+        }
+        uint32_t w = new_s(&g, S_WRITE);
+        g.st[w].args = keep_list(&g, items, k);
+        g.st[w].nargs = k;
+        first[nfirst++] = w;
+    }
+    /* and prints its String globals, their length and bytes: the initial
+       value is known here, so each index is inside */
+    for (uint32_t v = 0; v < nglob && nfirst < 15; v++) {
+        if (g.v[v].t != T_STR)
+            continue;
+        uint32_t n = g.str[(uint32_t)g.e[g.st[v].e].lit].n;
+        uint32_t items[12], k = 0;
+        items[k++] = var_ref(&g, v);
+        items[k++] = new_e(&g, E_STR, 0);
+        uint32_t a = var_ref(&g, v);
+        items[k] = new_e(&g, E_SLEN, T_I64);
+        g.e[items[k++]].a = a;
+        for (uint32_t j = 1; j <= n && k < 11; j++) {
+            items[k++] = new_e(&g, E_STR, 0);
+            uint32_t ix = lit(&g, T_I64, j);
+            items[k] = new_e(&g, E_SIDX, T_B8);
+            g.e[items[k]].var = v;
+            g.e[items[k++]].b = ix;
         }
         uint32_t w = new_s(&g, S_WRITE);
         g.st[w].args = keep_list(&g, items, k);

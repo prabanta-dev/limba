@@ -928,6 +928,12 @@ static const run_case run_cases[] = {
      "9223372586610589697; begin writeln(Float32(i), \" \", Float32(u)); "
      "end.",
      "1.1529216420458004e+18 9.223373136366404e+18\n", "ok"},
+    /* chr is checked at its name, s[i] at the [ */
+    {"program p; var n: Int32 := 1114112; begin writeln(chr(n)); end.", "",
+     "trap 103 at 1:51"},
+    {"program p; var s: String := \"ab\"; i: Int64 := 3; begin "
+     "writeln(s[i]); end.",
+     "", "trap 100 at 1:65"},
 };
 
 /* run main on the input in (NULL: none); what it printed (malloc'd, *len

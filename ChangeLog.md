@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `chr` out of range is reported at its name and `s[i]` out of a string
+  at the `[`: both took the place of their argument.
+- The random programs use `Char` and `String`: literals with doubled
+  quotes, letters of two to four bytes in UTF-8 and the names `LF`,
+  `TAB`, `CR`, `NUL`; `&` of strings and characters in any mix,
+  comparisons byte by byte, `length`, `s[i]`, `copy` from 1 on, `str` of
+  numbers, Booleans and characters, `chr` (checked) and `ord`; strings as
+  variables, parameters of every mode and results. The program starts
+  printing each String global with its length and bytes.
 - The random programs declare ranges whose bounds are exact constant
   expressions of the global constants without a type
   (`Int8 range (-9)..((k10 - k10) * (-(10)))`), for the variables of

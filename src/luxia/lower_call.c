@@ -309,6 +309,7 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
     }
     case LXB_CHR: {
         limba_id w = lxl_to_i64(L, lxl_value(L, a0), t0);
+        lxl_at(L, node); /* checked at its name */
         limba_id ok =
             icmp(L, LIMBA_CC_ULE, w, lxl_iconst(L, LIMBA_T_I64, 0x10ffff));
         limba_id sur =

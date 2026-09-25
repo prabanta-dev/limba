@@ -5,9 +5,12 @@
  * grows a well-typed program, prints its source and runs it itself with
  * the rules of the specification, written again here and shared with no
  * part of the front end: that run is the oracle for the whole chain from
- * the source to the IR. Integers of every family, Boolean, routines with
- * in and var parameters, the statements of Luxia 0; the run-time errors
- * of arithmetic stop the program where they happen. Not public.
+ * the source to the IR. Integers of every family, ranges, enumerations,
+ * Boolean, Float32 and Float64, Char and String, arrays (open and with
+ * computed bounds too), records, pointers, exact constants, routines
+ * with in, var and out parameters and results of every kind, the
+ * statements of Luxia 0 and much of its library; the run-time errors
+ * stop the program where they happen. Not public.
  */
 #ifndef LIMBA_LUXIA_GEN_H
 #define LIMBA_LUXIA_GEN_H
