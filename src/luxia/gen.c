@@ -135,6 +135,8 @@ typedef struct {
     uint8_t k, base;      /* base: the scalar type of a range or of itself */
     uint32_t index, elem; /* of an open array, the index is a scalar */
     v128 lo, hi;          /* of a range; of the index of an array */
+    uint32_t elo, ehi;    /* of a range: its bounds written as constant
+                             expressions, 0 for literals */
 } xt;
 
 enum {
@@ -518,7 +520,7 @@ static uint32_t new_range(G *g, bool short_range)
             hi = x;
         }
     }
-    return new_type(g, (xt){K_RANGE, (uint8_t)b, 0, 0, lo, hi});
+    return new_type(g, (xt){K_RANGE, (uint8_t)b, 0, 0, lo, hi, 0, 0});
 }
 
 /* the type of a variable: a scalar, sometimes a range of the program */
@@ -1482,6 +1484,33 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
                      d - 1, true));
 }
 
+/* a range whose bounds are exact constant expressions (§ 4.4) of the
+   constants without a type in scope, computed by the front end; none if
+   they do not fit a base */
+static void const_range(G *g)
+{
+    for (int k = 0; k < 4; k++) {
+        unsigned b = below(g, T_B8);
+        uint32_t lo = cexpr(g, 2);
+        uint32_t hi = cexpr(g, 2);
+        v128 l = g->e[lo].lit, h = g->e[hi].lit;
+        if (l > h) {
+            uint32_t x = lo;
+            lo = hi;
+            hi = x;
+            v128 y = l;
+            l = h;
+            h = y;
+        }
+        if (l < tmin(b) || h > tmax(b))
+            continue;
+        uint32_t t = new_type(g, (xt){K_RANGE, (uint8_t)b, 0, 0, l, h, 0, 0});
+        g->ty[t].elo = lo;
+        g->ty[t].ehi = hi;
+        return;
+    }
+}
+
 /* ---- statements ---- */
 
 static uint32_t block(G *g, int n, uint32_t *count);
@@ -1572,7 +1601,8 @@ static uint32_t declare_dyn(G *g)
        element never assigned holds is not decided for the variables yet */
     if (g->ty[el].k == K_RANGE && (g->ty[el].lo > 0 || g->ty[el].hi < 0))
         el = base(g, el);
-    uint32_t t = new_type(g, (xt){K_DYN, (uint8_t)base(g, el), b, el, 0, 3});
+    uint32_t t =
+        new_type(g, (xt){K_DYN, (uint8_t)base(g, el), b, el, 0, 3, 0, 0});
     uint32_t v = new_v(g, t, V_LOCAL);
     uint32_t s = new_s(g, S_VAR);
     g->st[s].var = v;
@@ -2029,7 +2059,7 @@ static void routine(G *g)
                 from = u;
         if (n && chance(g, 30))
             t = new_type(g, (xt){K_OPEN, g->ty[from].base, index_base(g, from),
-                                 g->ty[from].elem, 0, 0});
+                                 g->ty[from].elem, 0, 0, 0, 0});
         /* or a record (var in a procedure, in in a function: a function
            writes nothing) or a pointer (in) */
         uint32_t nr = 0, rec = 0;
@@ -2607,7 +2637,13 @@ static void program(G *g, text *o, uint32_t nglob)
             put(o, "  ");
             put_type(o, g, t);
             put(o, " = ");
-            if (x->k == K_RANGE) {
+            if (x->k == K_RANGE && x->elo) {
+                put(o, tname[x->base]);
+                put(o, " range ");
+                pexpr(g, o, x->elo);
+                put(o, "..");
+                pexpr(g, o, g->ty[t].ehi);
+            } else if (x->k == K_RANGE) {
                 put(o, tname[x->base]);
                 put(o, " range ");
                 put_value(o, x->base, x->lo);
@@ -3417,7 +3453,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     new_e(&g, E_LIT, 0); /* node 0 stands for none */
     for (unsigned t = 0; t < NTYPES; t++)
         new_type(&g, (xt){K_BASE, (uint8_t)t, 0, 0, t == T_BOOL ? 0 : tmin(t),
-                          tmax(t)});
+                          tmax(t), 0, 0});
 
     /* the ranges, then the arrays, each indexed by a short range of its
        own */
@@ -3428,7 +3464,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     for (uint32_t k = 0, n = below(&g, 3); k < n; k++) {
         uint32_t et = g.nty;
         uint32_t nv = 2 + below(&g, 4);
-        new_type(&g, (xt){K_ENUM, (uint8_t)et, 0, nv, 0, (v128)nv - 1});
+        new_type(&g, (xt){K_ENUM, (uint8_t)et, 0, nv, 0, (v128)nv - 1, 0, 0});
         arrays[narrays++] = et;
         arrays[narrays++] = et;
     }
@@ -3439,7 +3475,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         uint32_t el = var_type(&g);
         arrays[narrays++] =
             new_type(&g, (xt){K_ARRAY, (uint8_t)base(&g, el), ix, el,
-                              lo_of(&g, ix), hi_of(&g, ix)});
+                              lo_of(&g, ix), hi_of(&g, ix), 0, 0});
     }
     /* records of 1 to 4 scalar fields, some with a pointer type; two
        global variables of each type, so that copies show */
@@ -3450,11 +3486,12 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
             LIMBA_GROW(g.fld, g.nfld, g.capfld);
             g.fld[g.nfld++] = ft;
         }
-        uint32_t rt = new_type(&g, (xt){K_RECORD, T_BOOL, first, nf, 0, 0});
+        uint32_t rt =
+            new_type(&g, (xt){K_RECORD, T_BOOL, first, nf, 0, 0, 0, 0});
         arrays[narrays++] = rt;
         arrays[narrays++] = rt;
         if (chance(&g, 60)) {
-            uint32_t pt = new_type(&g, (xt){K_PTR, T_BOOL, 0, rt, 0, 0});
+            uint32_t pt = new_type(&g, (xt){K_PTR, T_BOOL, 0, rt, 0, 0, 0, 0});
             arrays[narrays++] = pt;
             arrays[narrays++] = pt;
         }
@@ -3487,6 +3524,10 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         LIMBA_GROW(g.gc, g.ngc, g.capgc);
         g.gc[g.ngc++] = c;
     }
+    /* ranges whose bounds are constant expressions of those constants,
+       for the variables of the routines and of main */
+    for (uint32_t k = 0, n = below(&g, 3); k < n; k++)
+        const_range(&g);
     g.budget = 30 + (int)below(&g, 60);
     for (uint32_t k = 0, nr = below(&g, 5); k < nr && g.budget > 10; k++)
         routine(&g);

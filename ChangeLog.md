@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The random programs declare ranges whose bounds are exact constant
+  expressions of the global constants without a type
+  (`Int8 range (-9)..((k10 - k10) * (-(10)))`), for the variables of
+  the routines and of the program.
 - The random programs use `Float32` (literals within its range,
   arithmetic rounded once to float, conversions both ways), the real
   functions of the library on both real types (`sqrt sin cos tan arctan
