@@ -25,13 +25,9 @@ typedef struct {
     limba_loc base; /* the position of text[0]; text[len] is base + len */
     uint32_t *line; /* offsets of the line starts, line[0] = 0 */
     uint32_t nlines;
+    uint8_t *ascii; /* per line: 1 when it is all ASCII, and a column is a
+                       byte */
 } limba_srcfile;
-
-typedef struct {
-    limba_srcfile *file; /* in order of base */
-    uint32_t count, cap;
-    limba_loc next; /* the base of the next file */
-} limba_source;
 
 typedef struct {
     uint32_t file; /* index in limba_source.file */
@@ -39,6 +35,16 @@ typedef struct {
     uint32_t line; /* from 1 */
     uint32_t col;  /* from 1, in UTF-8 characters */
 } limba_where;
+
+typedef struct {
+    limba_srcfile *file; /* in order of base */
+    uint32_t count, cap;
+    limba_loc next; /* the base of the next file */
+    /* the last answer of limba_source_where, a memo that changes no
+       answer: the next position is often further on the same line */
+    limba_loc memo_loc;
+    limba_where memo;
+} limba_source;
 
 void limba_source_init(limba_source *s);
 void limba_source_free(limba_source *s);

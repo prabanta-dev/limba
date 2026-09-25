@@ -6,6 +6,8 @@
  */
 #include "lex.h"
 
+#include "common/hash.h"
+#include "common/strtab.h"
 #include "common/xalloc.h"
 
 #include <math.h>
@@ -84,6 +86,14 @@ static limba_lx_token *emit(lexer *L, unsigned kind, uint32_t start,
     t->kind = (uint8_t)kind;
     t->flags = L->line_start ? LX_F_LINE : 0;
     t->spare = 0;
+    if (L->line_start) {
+        /* its column, in characters, as limba_source_where counts */
+        uint32_t col = 1;
+        for (uint32_t i = start; i > 0 && L->text[i - 1] != '\n'; i--)
+            if (((unsigned char)L->text[i - 1] & 0xc0) != 0x80)
+                col++;
+        t->spare = col <= UINT16_MAX ? (uint16_t)col : 0;
+    }
     t->loc = L->base + start;
     t->len = L->pos - start;
     t->val = val;
@@ -116,17 +126,25 @@ static void name(lexer *L)
     uint32_t start = L->pos;
     while (is_alnum(at(L, L->pos)))
         L->pos++;
+    /* the name folded to lowercase, in one pass */
+    uint32_t n = L->pos - start;
     L->nbuf = 0;
+    if (n > L->capbuf)
+        buf_put(L, L->text + start, n);
     bool folded = false;
-    for (uint32_t i = start; i < L->pos; i++) {
-        char c = L->text[i];
+    uint64_t h = LIMBA_FNV_SEED; /* limba_fnv, on the way */
+    for (uint32_t i = 0; i < n; i++) {
+        char c = L->text[start + i];
         if (c >= 'A' && c <= 'Z') {
             c = (char)(c - 'A' + 'a');
             folded = true;
         }
-        buf_put(L, &c, 1);
+        L->buf[i] = c;
+        h ^= (unsigned char)c;
+        h *= 0x100000001b3ull;
     }
-    uint32_t id = limba_strtab_intern(L->lx->names, L->buf, L->nbuf);
+    L->nbuf = n;
+    uint32_t id = limba_strtab_intern_hashed(L->lx->names, L->buf, L->nbuf, h);
     if (id < LX_NKEYWORDS) {
         if (folded)
             error(L, LXE_KEYWORD_CASE, start, L->pos - start,
@@ -375,7 +393,12 @@ static void token(lexer *L)
     case ' ':
     case '\t':
     case '\r':
-        L->pos++;
+        /* the blanks at once: indentation is most of them */
+        do
+            L->pos++;
+        while (L->pos < L->len &&
+               (L->text[L->pos] == ' ' || L->text[L->pos] == '\t' ||
+                L->text[L->pos] == '\r'));
         return;
     case '\n':
         L->pos++;
@@ -492,6 +515,12 @@ void limba_lx_run(limba_lx *lx, const limba_source *src, uint32_t file,
 {
     const limba_srcfile *f = &src->file[file];
     lexer L = {lx, rep, f->text, f->len, f->base, 0, true, NULL, 0, 0};
+    /* room for a token every 4 bytes, about what programs have: the
+       array of tokens is not copied as it grows */
+    if (lx->captok < f->len / 4 + 16) {
+        lx->captok = f->len / 4 + 16;
+        lx->tok = limba_xrealloc(lx->tok, lx->captok, sizeof(*lx->tok));
+    }
     size_t bad = limba_utf8_check(f->text, f->len);
     if (bad < f->len) {
         error(&L, LXE_BAD_UTF8, (uint32_t)bad, 1, "%s",

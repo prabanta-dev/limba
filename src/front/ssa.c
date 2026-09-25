@@ -358,6 +358,9 @@ typedef struct {
     uint8_t *reach;
     limba_id *rep;  /* per parameter: its replacement, or LIMBA_NONE */
     uint8_t *state; /* may_undef: 0 unknown, 1 visiting, 2 no, 3 yes */
+    /* the parameters of each block, in order: those of block b are
+       bparam[bfirst[b] .. bfirst[b + 1]) */
+    uint32_t *bfirst, *bparam;
 } fin;
 
 static limba_id resolve(fin *F, limba_id v)
@@ -442,9 +445,10 @@ static void push_target(fin *F, uint32_t **ops, uint32_t *n, uint32_t *cap,
     LIMBA_GROW(*ops, *n, *cap);
     (*ops)[(*n)++] = 0;
     uint32_t count = 0;
-    for (uint32_t i = 0; i < F->s->nparams; i++) {
+    for (uint32_t k = F->bfirst[to]; k < F->bfirst[to + 1]; k++) {
+        uint32_t i = F->bparam[k];
         const pinfo *p = &F->s->params[i];
-        if (p->block != to || F->rep[i] != LIMBA_NONE)
+        if (F->rep[i] != LIMBA_NONE)
             continue;
         LIMBA_GROW(*ops, *n, *cap);
         (*ops)[(*n)++] = p->pos < e->nargs ? resolve(F, e->args[p->pos]) : 0;
@@ -456,12 +460,28 @@ static void push_target(fin *F, uint32_t **ops, uint32_t *n, uint32_t *cap,
 void limba_ssa_finish(limba_ssa *s, void (*undefined)(void *ctx, uint32_t tag),
                       void *ctx)
 {
-    fin F = {s, limba_xcalloc(s->nb + 1, 1),
+    fin F = {s,
+             limba_xcalloc(s->nb + 1, 1),
              limba_xmalloc((s->nparams + 1) * sizeof(limba_id)),
-             limba_xcalloc(s->nparams + 1, 1)};
+             limba_xcalloc(s->nparams + 1, 1),
+             NULL,
+             NULL};
     reachability(s, F.reach);
     for (uint32_t i = 0; i < s->nparams; i++)
         F.rep[i] = LIMBA_NONE;
+    F.bfirst = limba_xcalloc((size_t)s->nb + 2, sizeof(uint32_t));
+    F.bparam = limba_xmalloc(((size_t)s->nparams + 1) * sizeof(uint32_t));
+    for (uint32_t i = 0; i < s->nparams; i++)
+        F.bfirst[s->params[i].block + 1]++;
+    for (uint32_t b = 0; b < s->nb; b++)
+        F.bfirst[b + 1] += F.bfirst[b];
+    {
+        uint32_t *fill = limba_xmalloc(((size_t)s->nb + 1) * sizeof(uint32_t));
+        memcpy(fill, F.bfirst, (size_t)s->nb * sizeof(uint32_t));
+        for (uint32_t i = 0; i < s->nparams; i++)
+            F.bparam[fill[s->params[i].block]++] = i;
+        free(fill);
+    }
 
     /* trivial parameters: every live argument is the same value, or the
        parameter itself */
@@ -572,9 +592,13 @@ void limba_ssa_finish(limba_ssa *s, void (*undefined)(void *ctx, uint32_t tag),
 
     /* parameters first in their blocks, in their order */
     limba_func *f = limba_ssa_func(s);
+    uint32_t most = 0;
+    for (limba_id b = 0; b < f->nblocks; b++)
+        if (f->blocks[b].ninsts > most)
+            most = f->blocks[b].ninsts;
+    uint32_t *order = limba_xmalloc(((size_t)most + 1) * sizeof(*order));
     for (limba_id b = 0; b < f->nblocks; b++) {
         limba_block *bl = &f->blocks[b];
-        uint32_t *order = limba_xmalloc((bl->ninsts + 1) * sizeof(*order));
         uint32_t n = 0;
         for (uint32_t k = 0; k < bl->ninsts; k++)
             if (f->insts[bl->insts[k]].op == LIMBA_OP_PARAM)
@@ -584,8 +608,8 @@ void limba_ssa_finish(limba_ssa *s, void (*undefined)(void *ctx, uint32_t tag),
                 order[n++] = bl->insts[k];
         if (n)
             memcpy(bl->insts, order, n * sizeof(*order));
-        free(order);
     }
+    free(order);
 
     limba_edit ed;
     limba_edit_begin(&ed, f);
@@ -600,4 +624,6 @@ void limba_ssa_finish(limba_ssa *s, void (*undefined)(void *ctx, uint32_t tag),
     free(F.reach);
     free(F.rep);
     free(F.state);
+    free(F.bfirst);
+    free(F.bparam);
 }

@@ -503,6 +503,28 @@ void limba_rat_set_big(limba_rat *r, const limba_big *a)
     limba_big_set_u64(&r->den, 1);
 }
 
+/* the magnitude of a when it fits 128 bits */
+static bool mag128(const limba_big *a, unsigned __int128 *v)
+{
+    if (a->n > 4)
+        return false;
+    unsigned __int128 m = 0;
+    for (uint32_t k = a->n; k-- > 0;)
+        m = m << 32 | a->w[k];
+    *v = m;
+    return true;
+}
+
+static unsigned __int128 gcd128(unsigned __int128 a, unsigned __int128 b)
+{
+    while (b) {
+        unsigned __int128 t = a % b;
+        a = b;
+        b = t;
+    }
+    return a;
+}
+
 static void normalise(limba_rat *r)
 {
     if (r->den.neg) {
@@ -511,6 +533,18 @@ static void normalise(limba_rat *r)
     }
     if (r->num.n == 0) {
         limba_big_set_u64(&r->den, 1);
+        return;
+    }
+    unsigned __int128 n, d;
+    if (mag128(&r->num, &n) && mag128(&r->den, &d)) {
+        /* both in 128 bits: no division of big integers */
+        unsigned __int128 g = gcd128(n, d);
+        if (g != 1) {
+            bool neg = r->num.neg;
+            set_u128(&r->num, n / g);
+            r->num.neg = neg;
+            set_u128(&r->den, d / g);
+        }
         return;
     }
     limba_big g;
@@ -717,11 +751,76 @@ static bool small_mag(const limba_big *a, int bits, uint64_t *v)
     return m < ((uint64_t)1 << bits);
 }
 
+static int bits128(unsigned __int128 v)
+{
+    int b = 0;
+    while (v) {
+        v >>= 1;
+        b++;
+    }
+    return b;
+}
+
+/* n / d rounded to mant bits, to nearest even, into *out, when both are
+   below 2^126 and the result is normal: the bits of the quotient one by
+   one, then the rest for the rounding; false to go the long way */
+static bool round128(unsigned __int128 n, unsigned __int128 d, int mant,
+                     int emin, int emax, double *out)
+{
+    int bn = bits128(n), bd = bits128(d);
+    if (!n || !d || bn > 126 || bd > 126)
+        return false;
+    int k = bn - bd; /* n / d is in [2^(k-1), 2^(k+1)) */
+    unsigned __int128 r = k >= 0 ? n : n << -k;
+    unsigned __int128 dd = k >= 0 ? d << k : d;
+    if (r < dd) {
+        r <<= 1;
+        k--;
+    }
+    /* now dd <= r < 2 dd and n / d = r / dd * 2^k: mant + 2 bits of the
+       quotient, then the rest */
+    uint64_t q = 0;
+    if (dd >> 64 == 0 && r >> 64 == 0) {
+        /* one division: r * 2^(mant + 1) fits 128 bits */
+        unsigned __int128 big = r << (mant + 1);
+        q = (uint64_t)(big / dd);
+        r = (big % dd) << 1; /* compared with dd below, as the loop */
+    } else {
+        for (int i = 0; i < mant + 2; i++) {
+            q <<= 1;
+            if (r >= dd) {
+                r -= dd;
+                q |= 1;
+            }
+            r <<= 1;
+        }
+    }
+    uint64_t m = q >> 2;
+    bool half = (q >> 1) & 1, rest = (q & 1) || r;
+    if (half && (rest || (m & 1)))
+        m++;
+    if (m >> mant) {
+        m >>= 1;
+        k++;
+    }
+    if (k < emin || k > emax)
+        return false; /* subnormal, zero or past the largest */
+    *out = ldexp((double)m, k - (mant - 1));
+    return true;
+}
+
 static bool rat_round(const limba_rat *a, int mant, int emin, int emax,
                       double *out)
 {
     if (a->num.n == 0) {
         *out = 0;
+        return true;
+    }
+    unsigned __int128 n128, d128;
+    if (mag128(&a->num, &n128) && mag128(&a->den, &d128) &&
+        round128(n128, d128, mant, emin, emax, out)) {
+        if (a->num.neg)
+            *out = -*out;
         return true;
     }
     /* both exact in the format: one IEEE 754 division rounds the

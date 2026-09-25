@@ -7,6 +7,8 @@
 
 #include "common/xalloc.h"
 
+#define LIMBA_SYM_MEMO 8192 /* entries of the memo, a power of two */
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -14,6 +16,7 @@ void limba_symtab_init(limba_symtab *st)
 {
     memset(st, 0, sizeof(*st));
     st->index = limba_hash_new();
+    st->memo = limba_xcalloc(LIMBA_SYM_MEMO, sizeof(*st->memo));
     LIMBA_GROW(st->sym, st->nsym, st->capsym);
     memset(&st->sym[st->nsym++], 0, sizeof(*st->sym));
     LIMBA_GROW(st->scope, st->nscope, st->capscope);
@@ -24,6 +27,8 @@ void limba_symtab_free(limba_symtab *st)
 {
     free(st->sym);
     free(st->scope);
+    free(st->memo);
+    free(st->gen);
     limba_hash_free(st->index);
     memset(st, 0, sizeof(*st));
 }
@@ -31,7 +36,7 @@ void limba_symtab_free(limba_symtab *st)
 uint32_t limba_scope_new(limba_symtab *st, uint32_t parent, uint32_t kind)
 {
     LIMBA_GROW(st->scope, st->nscope, st->capscope);
-    st->scope[st->nscope] = (limba_scope){parent, kind};
+    st->scope[st->nscope] = (limba_scope){parent, kind, 0};
     return st->nscope++;
 }
 
@@ -59,15 +64,27 @@ limba_sym limba_sym_local(const limba_symtab *st, uint32_t scope, uint32_t name)
     return id == UINT32_MAX ? 0 : id;
 }
 
+static uint32_t gen_of(const limba_symtab *st, uint32_t name)
+{
+    return name < st->ngen ? st->gen[name] : 0;
+}
+
 limba_sym limba_sym_lookup(const limba_symtab *st, uint32_t scope,
                            uint32_t name)
 {
-    for (; scope; scope = st->scope[scope].parent) {
-        limba_sym s = limba_sym_local(st, scope, name);
-        if (s)
-            return s;
-    }
-    return 0;
+    uint32_t h = (uint32_t)(((uint64_t)scope * 0x9e3779b1u) ^
+                            ((uint64_t)name * 0x85ebca6bu)) &
+                 (LIMBA_SYM_MEMO - 1);
+    struct limba_sym_memo *e = &st->memo[h];
+    uint32_t g = gen_of(st, name);
+    if (e->scope == scope && e->name == name && e->gen == g && scope)
+        return e->sym;
+    limba_sym found = 0;
+    for (uint32_t s = scope; s && !found; s = st->scope[s].parent)
+        if (st->scope[s].count)
+            found = limba_sym_local(st, s, name);
+    *e = (struct limba_sym_memo){scope, name, g, found};
+    return found;
 }
 
 limba_sym limba_sym_declare(limba_symtab *st, uint32_t scope, uint32_t name,
@@ -89,5 +106,15 @@ limba_sym limba_sym_declare(limba_symtab *st, uint32_t scope, uint32_t name,
     y->loc = loc;
     y->len = len;
     limba_hash_put(st->index, key(scope, name), s);
+    st->scope[scope].count++;
+    if (name >= st->ngen) {
+        uint32_t n = st->ngen ? st->ngen : 256;
+        while (n <= name)
+            n *= 2;
+        st->gen = limba_xrealloc(st->gen, n, sizeof(*st->gen));
+        memset(st->gen + st->ngen, 0, (n - st->ngen) * sizeof(*st->gen));
+        st->ngen = n;
+    }
+    st->gen[name]++; /* the answers about name are old */
     return s;
 }

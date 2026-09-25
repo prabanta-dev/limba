@@ -6,6 +6,8 @@
  */
 #include "parse.h"
 
+#include "common/xalloc.h"
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -152,6 +154,13 @@ void limba_lxp_end(limba_lxp *P, uint32_t opener)
     }
     limba_where we, wo;
     uint32_t first = line_start(P, opener);
+    const limba_lx_token *te = &P->lx->tok[P->pos], *tf = &P->lx->tok[first];
+    if ((te->flags & LX_F_LINE) && te->spare && tf->spare &&
+        te->spare == tf->spare) {
+        /* both start their lines, in the same column: aligned */
+        limba_lxp_next(P);
+        return;
+    }
     if (limba_source_where(P->src, lxp_loc(P), &we) &&
         limba_source_where(P->src, P->lx->tok[first].loc, &wo) &&
         we.line != wo.line && we.col != wo.col)
@@ -459,6 +468,16 @@ void limba_lx_parse(limba_lx_ast *t, const limba_lx *lx,
                     const limba_source *src, limba_report *rep)
 {
     limba_lxp P = {lx, t, rep, src, 0, UINT32_MAX};
+    /* room for a node a token and as many list members: no copies as the
+       tree grows */
+    if (t->capnode < lx->ntok + 16) {
+        t->capnode = lx->ntok + 16;
+        t->node = limba_xrealloc(t->node, t->capnode, sizeof(*t->node));
+    }
+    if (t->cappool < lx->ntok + 16) {
+        t->cappool = lx->ntok + 16;
+        t->pool = limba_xrealloc(t->pool, t->cappool, sizeof(*t->pool));
+    }
     program(&P);
 }
 

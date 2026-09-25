@@ -24,6 +24,7 @@ void limba_source_free(limba_source *s)
         free(s->file[i].path);
         free(s->file[i].text);
         free(s->file[i].line);
+        free(s->file[i].ascii);
     }
     free(s->file);
     limba_source_init(s);
@@ -58,6 +59,15 @@ static uint32_t adopt(limba_source *s, const char *path, char *text, size_t len)
         p++;
         LIMBA_GROW(f->line, f->nlines, cap);
         f->line[f->nlines++] = (uint32_t)(p - text);
+    }
+    f->ascii = limba_xmalloc(f->nlines + 1);
+    for (uint32_t l = 0; l < f->nlines; l++) {
+        uint32_t a = f->line[l],
+                 b = l + 1 < f->nlines ? f->line[l + 1] : f->len;
+        uint8_t high = 0;
+        for (uint32_t i = a; i < b; i++)
+            high |= (uint8_t)text[i];
+        f->ascii[l] = !(high & 0x80);
     }
     return s->count++;
 }
@@ -116,6 +126,41 @@ bool limba_source_where(const limba_source *s, limba_loc loc, limba_where *w)
 {
     if (loc == LIMBA_NOLOC || s->count == 0)
         return false;
+    limba_source *ms = (limba_source *)s; /* the memo only */
+    if (ms->memo_loc != LIMBA_NOLOC) {
+        const limba_srcfile *f = &s->file[ms->memo.file];
+        uint32_t off = loc - f->base, line = ms->memo.line;
+        /* a few lines back, or further on */
+        for (int k = 0;
+             k < 64 && line > 1 && loc >= f->base && off < f->line[line - 1];
+             k++)
+            line--;
+        for (int k = 0; k < 64 && line < f->nlines && f->line[line] <= off &&
+                        loc >= f->base && off <= f->len;
+             k++)
+            line++;
+        uint32_t start = f->line[line - 1];
+        uint32_t end = line < f->nlines ? f->line[line] : f->len + 1;
+        if (loc >= f->base && off <= f->len && off >= start && off < end) {
+            /* on the line: a byte a column if it is ASCII, or on from the
+               memo, or from its start */
+            bool on = line == ms->memo.line && off >= ms->memo.off;
+            uint32_t col = on ? ms->memo.col : 1;
+            if (f->ascii[line - 1])
+                col = off - start + 1;
+            else
+                for (uint32_t i = on ? ms->memo.off : start; i < off; i++)
+                    if (((unsigned char)f->text[i] & 0xc0) != 0x80)
+                        col++;
+            *w = ms->memo;
+            w->off = off;
+            w->line = line;
+            w->col = col;
+            ms->memo = *w;
+            ms->memo_loc = loc;
+            return true;
+        }
+    }
     /* the last file whose base is <= loc */
     uint32_t lo = 0, hi = s->count;
     while (hi - lo > 1) {
@@ -139,13 +184,18 @@ bool limba_source_where(const limba_source *s, limba_loc loc, limba_where *w)
             b = mid;
     }
     uint32_t col = 1;
-    for (uint32_t i = f->line[a]; i < off; i++)
-        if (((unsigned char)f->text[i] & 0xc0) != 0x80)
-            col++;
+    if (f->ascii[a])
+        col = off - f->line[a] + 1;
+    else
+        for (uint32_t i = f->line[a]; i < off; i++)
+            if (((unsigned char)f->text[i] & 0xc0) != 0x80)
+                col++;
     w->file = lo;
     w->off = off;
     w->line = a + 1;
     w->col = col;
+    ms->memo = *w;
+    ms->memo_loc = loc;
     return true;
 }
 

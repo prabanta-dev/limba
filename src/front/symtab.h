@@ -45,6 +45,7 @@ typedef struct {
 typedef struct {
     uint32_t parent; /* 0 for the outermost */
     uint32_t kind;   /* the language's */
+    uint32_t count;  /* the names declared in it: a lookup skips it at 0 */
 } limba_scope;
 
 typedef struct {
@@ -53,6 +54,15 @@ typedef struct {
     limba_scope *scope; /* scope[0] unused */
     uint32_t nscope, capscope;
     limba_hash *index;
+    /* the answers of limba_sym_lookup, by (scope, name), a memo that
+       changes no answer: an answer holds while its name gets no new
+       declaration, which gen counts, by name */
+    struct limba_sym_memo {
+        uint32_t scope, name, gen;
+        limba_sym sym;
+    } *memo;
+    uint32_t *gen;
+    uint32_t ngen;
 } limba_symtab;
 
 void limba_symtab_init(limba_symtab *st);

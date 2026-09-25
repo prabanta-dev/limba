@@ -967,6 +967,8 @@ static void end_function(lxl *L, uint32_t node, bool function)
     limba_ssa_finish(L->ssa, undefined, L);
     limba_ssa_free(L->ssa);
     L->ssa = NULL;
+    if (L->done && !L->S->rep->errors)
+        L->done(L->ctx, L->m, L->fid);
 }
 
 static void routine_body(lxl *L, limba_sym s)
@@ -1047,10 +1049,20 @@ static void routine_body(lxl *L, limba_sym s)
 
 limba_module *limba_lxl_program(limba_lxs *S)
 {
+    return limba_lxl_program_each(S, NULL, NULL);
+}
+
+limba_module *limba_lxl_program_each(limba_lxs *S,
+                                     void (*done)(void *ctx, limba_module *m,
+                                                  limba_id fid),
+                                     void *ctx)
+{
     if (S->rep->errors)
         return NULL;
     lxl L_ = {0}, *L = &L_;
     L->S = S;
+    L->done = done;
+    L->ctx = ctx;
     L->m = limba_module_new();
     L->store = limba_xcalloc(S->st.nsym + 1, sizeof(*L->store));
     L->taken = limba_xcalloc(S->st.nsym + 1, 1);

@@ -42,7 +42,8 @@ enum {
 typedef struct {
     uint8_t kind;
     uint8_t flags;
-    uint16_t spare;
+    uint16_t spare; /* a token that starts its line: its column, from 1,
+                       0 past 65535 */
     limba_loc loc;
     uint32_t len; /* bytes of source */
     /* IDENT and keywords: the name id; INT: index in ints; REAL: index in

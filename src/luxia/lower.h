@@ -37,6 +37,12 @@ enum {
 
 /* the module of a checked program; NULL if errors were reported */
 limba_module *limba_lxl_program(limba_lxs *S);
+/* the same, calling done as each function is complete, which may write
+   it and clear it (limba_func_clear) */
+limba_module *limba_lxl_program_each(limba_lxs *S,
+                                     void (*done)(void *ctx, limba_module *m,
+                                                  limba_id fid),
+                                     void *ctx);
 
 /* ---- inside the generator ---- */
 
@@ -93,6 +99,8 @@ typedef struct {
     uint32_t ndyns, capdyns;
     uint32_t *node_pos; /* per node: its position in the module, plus 1 */
     unsigned suppress;  /* the checks turned off here, LXS_CHECK_* */
+    void (*done)(void *ctx, limba_module *m, limba_id fid);
+    void *ctx;
 } lxl;
 
 /* IR types */
