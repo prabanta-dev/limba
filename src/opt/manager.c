@@ -28,10 +28,9 @@ static const struct {
     limba_pass_fn run;
     bool wakes;
 } pipeline[] = {
-    {"cfg", limba_pass_cfg, true},   /* constant branches, unreachable blocks */
-    {"fold", limba_pass_fold, true}, /* constants and identities */
-    {"gvn", limba_pass_gvn, true},   /* equal pure values, one computation */
-    {"dce", limba_pass_dce, false},  /* values nobody uses */
+    {"cfg", limba_pass_cfg, true},  /* constant branches, unreachable blocks */
+    {"gvn", limba_pass_gvn, true},  /* folding, then equal values once */
+    {"dce", limba_pass_dce, false}, /* values nobody uses */
 };
 #define NPASSES (sizeof(pipeline) / sizeof(pipeline[0]))
 
@@ -58,6 +57,7 @@ struct limba_optimizer {
     limba_opt_options o;
     bool verify;
     bool skip[NPASSES];
+    bool no_fold; /* "fold" skipped: gvn does not fold */
     uint64_t total[NPASSES];
     unsigned rounds; /* the most a function took */
     limba_verifier *v;
@@ -76,6 +76,7 @@ limba_optimizer *limba_optimizer_new(const limba_opt_options *o)
     for (size_t p = 0; p < NPASSES; p++)
         z->skip[p] = listed(z->o.skip, pipeline[p].name) ||
                      listed(env, pipeline[p].name);
+    z->no_fold = listed(z->o.skip, "fold") || listed(env, "fold");
     return z;
 }
 
@@ -124,7 +125,7 @@ void limba_pass_cfg_drop(limba_pass_ctx *x)
 int limba_optimizer_func(limba_optimizer *z, limba_module *m, limba_id fid,
                          limba_diag *d)
 {
-    limba_pass_ctx x = {.m = m};
+    limba_pass_ctx x = {.m = m, .fold = !z->no_fold};
     int r = 0;
     if (z->verify && !z->v)
         z->v = limba_verifier_new(m);

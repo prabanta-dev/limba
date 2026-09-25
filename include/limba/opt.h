@@ -17,8 +17,9 @@ typedef struct {
     /* verify the module after every pass and stop at the first pass that
        breaks it; always on in the builds that are not release */
     bool verify_each;
-    /* names of passes not to run, separated by commas; NULL for none. The
-       environment variable LIMBA_OPTSKIP adds to it. */
+    /* names of passes not to run, separated by commas; NULL for none;
+       "fold" turns off the folding gvn does. The environment variable
+       LIMBA_OPTSKIP adds to it. */
     const char *skip;
     /* where to write what each pass changed, NULL for nowhere */
     FILE *stats;

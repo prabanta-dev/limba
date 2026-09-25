@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- gvn folds each instruction before it looks for an equal value, in the
+  same walk and with the same edit: the fold pass is gone as a pass of
+  its own (`LIMBA_OPTSKIP=fold` still turns the folding off). The
+  function is rebuilt once where it was rebuilt twice: `-O1` takes 157
+  ms instead of 168 on 108 203 lines (1.45 µs a line), and the code has
+  the same number of instructions on every program tried (730 655 on
+  the benchmarks, the large file and 500 random programs); two random
+  programs keep a constant in another block.
 - `-O1` takes 168 ms instead of 191 on 108 203 lines (1.55 µs a line
   from 1.77, median of 21 runs on one core), the output the same bytes:
   the passes share the CFG of a function, built once and dropped only

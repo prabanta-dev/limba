@@ -15,6 +15,7 @@ typedef struct {
     limba_module *m;
     limba_cfg cfg;
     bool have_cfg;
+    bool fold; /* gvn folds too; not when "fold" is skipped */
 } limba_pass_ctx;
 
 /* the CFG of f, built if the context has none */
@@ -30,8 +31,11 @@ void limba_pass_cfg_drop(limba_pass_ctx *x);
 typedef uint32_t (*limba_pass_fn)(limba_pass_ctx *x, limba_func *f);
 
 uint32_t limba_pass_cfg(limba_pass_ctx *x, limba_func *f);
-uint32_t limba_pass_fold(limba_pass_ctx *x, limba_func *f);
 uint32_t limba_pass_gvn(limba_pass_ctx *x, limba_func *f);
 uint32_t limba_pass_dce(limba_pass_ctx *x, limba_func *f);
+
+/* fold instruction id of f, recording in e: true if it changed; gvn
+   calls it on each instruction (fold.c) */
+bool limba_fold_inst(limba_func *f, limba_edit *e, uint32_t id);
 
 #endif

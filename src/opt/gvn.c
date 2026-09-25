@@ -1,9 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * gvn.c - the "gvn" pass: two pure instructions with the same operation,
- * type and operands compute the same value, so the one that dominates
- * stays and the other is replaced by it. The walk follows the dominator
+ * gvn.c - the "gvn" pass: each instruction is folded first (fold.c), then
+ * two pure instructions with the same operation, type and operands
+ * compute the same value, so the one that dominates stays and the other
+ * is replaced by it. Folding and merging in one walk, with one edit, cost
+ * one rebuild of the function where two passes cost two, and give the
+ * same code. The walk follows the dominator
  * tree with a table scoped to it: what a block computes is visible in the
  * blocks it dominates, and forgotten on the way back up. Instructions that
  * may trap, read memory or call are never merged (in SedaiBasic2 the
@@ -29,6 +32,7 @@ typedef struct {
 
 typedef struct {
     limba_func *f;
+    bool fold;
     limba_edit e;
     uint32_t *heads; /* bucket -> last entry, UINT32_MAX when empty */
     uint32_t mask;
@@ -115,9 +119,33 @@ static void merge(gctx *c, uint32_t id, uint32_t leader)
         limba_edit_replace(&c->e, id, leader);
 }
 
+/* the instructions of block b: each folded, then merged with an equal
+   value in scope, or put in scope */
+static uint32_t visit(gctx *c, uint32_t b)
+{
+    const limba_block *bl = &c->f->blocks[b];
+    uint32_t changes = 0;
+    for (uint32_t k = 0; k < bl->ninsts; k++) {
+        uint32_t id = bl->insts[k];
+        if (c->fold && k >= bl->nparams && limba_fold_inst(c->f, &c->e, id)) {
+            changes++;
+            if (c->e.map[id] != id)
+                continue; /* it is another value now */
+        }
+        if (!mergeable(&c->f->insts[id]))
+            continue;
+        uint32_t leader = lookup_or_add(c, id);
+        if (leader != id) {
+            merge(c, id, leader);
+            changes++;
+        }
+    }
+    return changes;
+}
+
 uint32_t limba_pass_gvn(limba_pass_ctx *x, limba_func *f)
 {
-    gctx c = {.f = f};
+    gctx c = {.f = f, .fold = x->fold};
     const limba_cfg *cfg = limba_pass_cfg_of(x, f); /* no branch changes */
     limba_edit_begin(&c.e, f);
 
@@ -151,34 +179,14 @@ uint32_t limba_pass_gvn(limba_pass_ctx *x, limba_func *f)
     uint32_t sp = 0, changes = 0;
     stack[sp++] = 0;
     mark[0] = c.nents;
-    const limba_block *bl = &f->blocks[0];
-    for (uint32_t k = 0; k < bl->ninsts; k++) {
-        uint32_t id = bl->insts[k];
-        if (mergeable(&f->insts[id])) {
-            uint32_t leader = lookup_or_add(&c, id);
-            if (leader != id) {
-                merge(&c, id, leader);
-                changes++;
-            }
-        }
-    }
+    changes += visit(&c, 0);
     while (sp) {
         uint32_t b = stack[sp - 1];
         if (cfirst[b] + next[b] < cfirst[b + 1]) {
             uint32_t s = child[cfirst[b] + next[b]++];
             mark[s] = c.nents;
             stack[sp++] = s;
-            bl = &f->blocks[s];
-            for (uint32_t k = 0; k < bl->ninsts; k++) {
-                uint32_t id = bl->insts[k];
-                if (!mergeable(&f->insts[id]))
-                    continue;
-                uint32_t leader = lookup_or_add(&c, id);
-                if (leader != id) {
-                    merge(&c, id, leader);
-                    changes++;
-                }
-            }
+            changes += visit(&c, s);
         } else {
             while (c.nents > mark[b]) { /* entries go in reverse order */
                 entry *en = &c.ents[--c.nents];

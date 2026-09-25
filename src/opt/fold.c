@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * fold.c - the "fold" pass: operations on constants become constants, and
+ * fold.c - folding, done by the gvn pass on each instruction before it
+ * looks for an equal value: operations on constants become constants, and
  * integer identities (x + 0, x * 1, x - x, ...) become the value they are.
  *
  * Folding must give exactly what the machine would: nothing that may trap
@@ -11,8 +12,8 @@
  * saturate, as the IR defines them. No float identities: x + 0.0 is not x when
  * x is -0.0, and a NaN has no identity at all.
  *
- * Blocks are visited in dominator-tree order, so an operand is folded
- * before its uses; the pipeline repeats for what is left.
+ * gvn visits the blocks in dominator-tree order, so an operand is folded
+ * (and merged) before its uses; the pipeline repeats for what is left.
  */
 #define _GNU_SOURCE /* roundeven */
 #include "pass.h"
@@ -25,12 +26,12 @@
 
 typedef struct {
     limba_func *f;
-    limba_edit e;
+    limba_edit *e;
 } fctx;
 
 static const limba_inst *def(fctx *c, uint32_t x)
 {
-    return &c->f->insts[limba_edit_resolve(&c->e, x)];
+    return &c->f->insts[limba_edit_resolve(c->e, x)];
 }
 
 static bool ival(fctx *c, uint32_t x, int64_t *v)
@@ -425,7 +426,7 @@ static bool identity(fctx *c, limba_inst *in, uint32_t id, uint32_t x,
     int64_t ones = limba_int_norm(-1, t);
     if (!kx)
         ky = ival(c, y, &k);
-    bool same = limba_edit_resolve(&c->e, x) == limba_edit_resolve(&c->e, y);
+    bool same = limba_edit_resolve(c->e, x) == limba_edit_resolve(c->e, y);
     uint32_t other = kx ? y : x; /* the operand that is not constant */
     bool comm = limba_ops[in->op].flags & LIMBA_OPF_COMMUTATIVE;
 
@@ -434,7 +435,7 @@ static bool identity(fctx *c, limba_inst *in, uint32_t id, uint32_t x,
     case LIMBA_OP_OR:
     case LIMBA_OP_XOR:
         if ((ky || (kx && comm)) && k == 0) {
-            limba_edit_replace(&c->e, id, other);
+            limba_edit_replace(c->e, id, other);
             return true;
         }
         break;
@@ -443,13 +444,13 @@ static bool identity(fctx *c, limba_inst *in, uint32_t id, uint32_t x,
     case LIMBA_OP_LSHR:
     case LIMBA_OP_ASHR:
         if (ky && k == 0) {
-            limba_edit_replace(&c->e, id, x);
+            limba_edit_replace(c->e, id, x);
             return true;
         }
         break;
     case LIMBA_OP_MUL:
         if ((kx || ky) && k == 1) {
-            limba_edit_replace(&c->e, id, other);
+            limba_edit_replace(c->e, id, other);
             return true;
         }
         if ((kx || ky) && k == 0) {
@@ -463,14 +464,14 @@ static bool identity(fctx *c, limba_inst *in, uint32_t id, uint32_t x,
             return true;
         }
         if ((kx || ky) && k == ones) {
-            limba_edit_replace(&c->e, id, other);
+            limba_edit_replace(c->e, id, other);
             return true;
         }
         break;
     case LIMBA_OP_UDIV:
     case LIMBA_OP_SDIV:
         if (ky && k == 1) {
-            limba_edit_replace(&c->e, id, x);
+            limba_edit_replace(c->e, id, x);
             return true;
         }
         break;
@@ -492,7 +493,7 @@ static bool identity(fctx *c, limba_inst *in, uint32_t id, uint32_t x,
         return true;
     case LIMBA_OP_AND:
     case LIMBA_OP_OR:
-        limba_edit_replace(&c->e, id, x);
+        limba_edit_replace(c->e, id, x);
         return true;
     }
     return false;
@@ -545,8 +546,8 @@ static bool fold_inst(fctx *c, uint32_t id)
                 return true;
             }
             /* x == x, x <= x ...: integers have no NaN */
-            if (limba_edit_resolve(&c->e, o[0]) ==
-                limba_edit_resolve(&c->e, o[1])) {
+            if (limba_edit_resolve(c->e, o[0]) ==
+                limba_edit_resolve(c->e, o[1])) {
                 bool eq = in->cc == LIMBA_CC_EQ || in->cc == LIMBA_CC_SLE ||
                           in->cc == LIMBA_CC_SGE || in->cc == LIMBA_CC_ULE ||
                           in->cc == LIMBA_CC_UGE;
@@ -565,12 +566,12 @@ static bool fold_inst(fctx *c, uint32_t id)
     case LIMBA_F_TERN:
         if (in->op == LIMBA_OP_SELECT) {
             if (ival(c, o[0], &a)) {
-                limba_edit_replace(&c->e, id, a ? o[1] : o[2]);
+                limba_edit_replace(c->e, id, a ? o[1] : o[2]);
                 return true;
             }
-            if (limba_edit_resolve(&c->e, o[1]) ==
-                limba_edit_resolve(&c->e, o[2])) {
-                limba_edit_replace(&c->e, id, o[1]);
+            if (limba_edit_resolve(c->e, o[1]) ==
+                limba_edit_resolve(c->e, o[2])) {
+                limba_edit_replace(c->e, id, o[1]);
                 return true;
             }
             return false;
@@ -586,36 +587,9 @@ static bool fold_inst(fctx *c, uint32_t id)
     return false;
 }
 
-uint32_t limba_pass_fold(limba_pass_ctx *x, limba_func *f)
+/* fold instruction id, recording in e: true if it changed */
+bool limba_fold_inst(limba_func *f, limba_edit *e, uint32_t id)
 {
-    fctx c = {.f = f};
-    const limba_cfg *cfg = limba_pass_cfg_of(x, f); /* no branch changes */
-    /* blocks in dominator-tree pre-order, definitions before uses: the
-       pre numbers are distinct and below 2 * nblocks, so a table sorts */
-    uint32_t *order = limba_xmalloc(((size_t)f->nblocks + 1) * sizeof(*order));
-    uint32_t *at = limba_xmalloc((2 * (size_t)f->nblocks + 2) * sizeof(*at));
-    uint32_t n = 0;
-    for (uint32_t k = 0; k < 2 * f->nblocks + 2; k++)
-        at[k] = LIMBA_NONE;
-    for (uint32_t b = 0; b < f->nblocks; b++)
-        if (limba_cfg_reachable(cfg, b))
-            at[cfg->pre[b]] = b;
-    for (uint32_t k = 0; k < 2 * f->nblocks + 2; k++)
-        if (at[k] != LIMBA_NONE)
-            order[n++] = at[k];
-    free(at);
-
-    limba_edit_begin(&c.e, f);
-    uint32_t changes = 0;
-    for (uint32_t i = 0; i < n; i++) {
-        const limba_block *bl = &f->blocks[order[i]];
-        for (uint32_t k = bl->nparams; k < bl->ninsts; k++)
-            changes += fold_inst(&c, bl->insts[k]);
-    }
-    if (changes)
-        limba_edit_end(&c.e);
-    else
-        limba_edit_cancel(&c.e);
-    free(order);
-    return changes;
+    fctx c = {f, e};
+    return fold_inst(&c, id);
 }
