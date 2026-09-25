@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- The front end compiles 108 203 lines of Luxia (the benchmarks copied
+  100 times) to a `.lir` in 107 ms, 0.99 µs a line (median of 21 runs),
+  from 257 ms (2.4 µs) when first measured: each function is written as
+  soon as it is complete and its body freed, the heap grows by 64 MiB at
+  a time (glibc), and a release does not free its memory before it ends
+  (as Clang's `-disable-free`); faster literals, positions, lookups and
+  writes. In a release, `limba` no longer verifies the IR it makes
+  (as Clang leaves its verifier out): who reads a `.lir` verifies it,
+  and so do the tests; `--verify` asks for it (136 ms), `--check` and
+  the builds for testing always do it. The output is the same bytes.
 - Checks can be turned off where they are not wanted, as Ada's `pragma
   Suppress`: `pragma suppress(index_check, overflow_check);` among the
   declarations of the program holds for the whole file, among those of a

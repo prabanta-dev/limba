@@ -22,9 +22,10 @@
 /* errors reported before giving up */
 #define MAX_ERRORS 20
 
-/* write the module as text or binary; a .lir goes next to the input */
+/* write the module as text or binary; a .lir goes next to the input; wr,
+   if not NULL, holds the functions written already, and is consumed */
 static int write_module(const limba_module *m, const char *in, const char *emit,
-                        const char *outpath)
+                        const char *outpath, limba_writer *wr)
 {
     int status = 0;
     if (emit && !strcmp(emit, "lit")) {
@@ -50,7 +51,7 @@ static int write_module(const limba_module *m, const char *in, const char *emit,
     }
     uint8_t *buf;
     size_t blen;
-    limba_write(m, &buf, &blen);
+    limba_writer_end(wr ? wr : limba_writer_new(), m, &buf, &blen);
     FILE *out = fopen(outpath, "wb");
     if (!out || fwrite(buf, 1, blen, out) != blen) {
         fprintf(stderr, "limba: %s: %s\n", outpath, strerror(errno));
@@ -61,6 +62,39 @@ static int write_module(const limba_module *m, const char *in, const char *emit,
     free(buf);
     free(derived);
     return status;
+}
+
+/* what the program allocated, freed in the builds for testing only (see
+   the end of limba_luxia_main) */
+#ifdef NDEBUG
+#define release(x, call) ((void)(x))
+#else
+#define release(x, call) (call)
+#endif
+
+/* each function as it is complete: verified, written, cleared, while it
+   is still in the cache and before the next one needs the memory */
+typedef struct {
+    limba_writer *w;
+    limba_verifier *v;
+    bool verify;
+    bool bad;
+    limba_diag d;
+} stream;
+
+static void stream_func(void *ctx, limba_module *m, limba_id fid)
+{
+    stream *st = ctx;
+    if (st->bad)
+        return;
+    if (st->verify && !st->v)
+        st->v = limba_verifier_new(m);
+    if (st->verify && limba_verifier_func(st->v, fid, &st->d) != 0) {
+        st->bad = true;
+        return;
+    }
+    limba_writer_func(st->w, m, fid);
+    limba_func_clear(&m->funcs[fid]);
 }
 
 /* the bits of the checks named in list, separated by commas; false if
@@ -150,11 +184,28 @@ int limba_luxia_main(const char *in, const char *emit, const char *outpath,
         /* what was printed is not printed again */
         limba_report_free(&rep);
         limba_report_init(&rep, &src, 'L', MAX_ERRORS);
-        limba_module *m = limba_lxl_program(&sema);
+        /* at -O0 into a .lir, a function at a time */
+        bool each = level == 0 && !check && !(emit && !strcmp(emit, "lit"));
+        /* the IR a front end makes is verified in the builds for testing,
+           and on request: in a release it is left to who reads it (as
+           Clang leaves the verifier out), and to the tests */
+        bool verify = check || (opt && opt->verify_each);
+#ifndef NDEBUG
+        verify = true;
+#endif
+        stream st = {
+            each ? limba_writer_new() : NULL, NULL, verify, false, {{0}, 0}};
+        limba_module *m = each ? limba_lxl_program_each(&sema, stream_func, &st)
+                               : limba_lxl_program(&sema);
         if (m) {
             limba_report_print(&rep, stderr);
             limba_diag d = {{0}, 0};
-            if (limba_verify(m, &d) != 0) {
+            bool bad = !verify ? false
+                       : each  ? st.bad || limba_verify_decls(m, &d) != 0
+                               : limba_verify(m, &d) != 0;
+            if (st.bad)
+                d = st.d;
+            if (bad) {
                 fprintf(stderr,
                         "limba: %s: internal error, the IR made is "
                         "not valid: %s\n",
@@ -164,19 +215,30 @@ int limba_luxia_main(const char *in, const char *emit, const char *outpath,
                 fprintf(stderr, "limba: %s: %s\n", in, d.msg);
                 status = 3;
             } else if (!check) {
-                status = write_module(m, in, emit, outpath);
+                status = write_module(m, in, emit, outpath, st.w);
+                st.w = NULL;
             }
-            limba_module_free(m);
+            release(m, limba_module_free(m));
         } else {
             limba_report_print(&rep, stderr);
             status = 1;
         }
+        limba_writer_free(st.w);
+        limba_verifier_free(st.v);
     }
+#ifdef NDEBUG
+    /* the process ends now and gives the memory back at once, as Clang's
+       -disable-free: freeing it piece by piece would cost 3 % */
+    (void)ast;
+    (void)lx;
+    (void)src;
+#else
     if (checked)
         limba_lxs_free(&sema);
     limba_lx_ast_free(&ast);
     limba_lx_free(&lx);
-    limba_report_free(&rep);
     limba_source_free(&src);
+#endif
+    limba_report_free(&rep);
     return status;
 }

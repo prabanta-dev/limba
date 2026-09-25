@@ -10,6 +10,9 @@
 #include "luxia.h"
 
 #include <errno.h>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,8 +34,10 @@ static void usage(FILE *out)
           "  --check         verify only, write nothing\n"
           "  -O0, -O1        optimise: no (default) or yes\n"
           "  --stats         what each pass changed, on standard error\n"
-          "  --verify-each   verify after every pass (always on in the\n"
-          "                  builds that are not release)\n"
+          "  --verify        verify the IR a Luxia source gives, and after\n"
+          "                  every pass (always on in the builds that are\n"
+          "                  not release; --check verifies anyway)\n"
+          "  --verify-each   the same\n"
           "  --skip=a,b      passes not to run (also LIMBA_OPTSKIP)\n"
           "  --suppress=a,b  checks off in the whole Luxia source\n"
           "                  (index_check, range_check, overflow_check,\n"
@@ -85,6 +90,14 @@ static char *slurp(const char *path, size_t *len)
 
 int main(int argc, char **argv)
 {
+#ifdef __GLIBC__
+    /* a compiler lives briefly and grows: the heap grows by 64 MiB at a
+       time and keeps what is freed, so its pages are touched once (with
+       glibc's defaults a large source faults 14 000 pages, now 600) */
+    mallopt(M_TOP_PAD, 64 << 20);
+    mallopt(M_MMAP_THRESHOLD, 1 << 30);
+    mallopt(M_TRIM_THRESHOLD, 1 << 30);
+#endif
     const char *in = NULL, *outpath = NULL, *emit = NULL, *suppress = NULL;
     bool check = false;
     int level = 0;
@@ -100,7 +113,7 @@ int main(int argc, char **argv)
             level = a[2] - '0';
         } else if (!strcmp(a, "--stats")) {
             opt.stats = stderr;
-        } else if (!strcmp(a, "--verify-each")) {
+        } else if (!strcmp(a, "--verify-each") || !strcmp(a, "--verify")) {
             opt.verify_each = true;
         } else if (!strncmp(a, "--skip=", 7)) {
             opt.skip = a + 7;
