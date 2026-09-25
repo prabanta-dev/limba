@@ -123,6 +123,11 @@ limba_id lxl_conv(lxl *L, limba_id v, limba_ltype from, limba_ltype to);
 void lxl_array_parts(lxl *L, uint32_t base, uint32_t at, limba_id *p,
                      limba_id *len, limba_id *lo, limba_id *hi);
 limba_id lxl_to_i64(lxl *L, limba_id v, limba_ltype t);
+/* an object without an initial value (§ 4.5): every scalar of a range
+   narrower than its base, in the object of type t at p + off, gets a
+   value outside it; the rest stays 0 */
+bool lxl_has_narrow(lxl *L, limba_ltype t);
+void lxl_invalidate(lxl *L, limba_id p, uint64_t off, limba_ltype t);
 bool lxl_signed(const lxl *L, limba_ltype t);
 
 #endif

@@ -772,7 +772,9 @@ static limba_id membership(lxl *L, uint32_t node)
     return bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b);
 }
 
-/* ---- what new gives (luxia_0.md § 4.5, the bounded error of Ada) ---- */
+/* ---- an object without an initial value: a variable of a record or an
+   array, or what new gives (luxia_0.md § 4.5, the bounded error of Ada)
+   ---- */
 
 /* a scalar type whose range is narrower than its base: it has values
    that are not valid, and its reads through a pointer are checked */
@@ -786,31 +788,29 @@ static bool narrow(lxl *L, limba_ltype t)
 }
 
 /* does an object of type t hold a narrow scalar somewhere */
-static bool has_narrow(lxl *L, limba_ltype t)
+bool lxl_has_narrow(lxl *L, limba_ltype t)
 {
     const limba_typeinfo *x = ti(L, t);
     if (x->kind == LIMBA_LTK_RECORD) {
         for (uint32_t i = 0; i < x->count; i++)
-            if (has_narrow(L, L->S->ts.field[x->first + i].type))
+            if (lxl_has_narrow(L, L->S->ts.field[x->first + i].type))
                 return true;
         return false;
     }
     if (x->kind == LIMBA_LTK_ARRAY)
-        return !(x->flags & LIMBA_TF_DYNAMIC) && has_narrow(L, x->elem);
+        return !(x->flags & LIMBA_TF_DYNAMIC) && lxl_has_narrow(L, x->elem);
     return narrow(L, t);
 }
 
-/* store a value outside its range in every narrow scalar of the object
-   of type t at p + off (the rest is already 0) */
-static void invalidate(lxl *L, limba_id p, uint64_t off, limba_ltype t)
+void lxl_invalidate(lxl *L, limba_id p, uint64_t off, limba_ltype t)
 {
     const limba_typeinfo *x = ti(L, t);
-    if (!has_narrow(L, t))
+    if (!lxl_has_narrow(L, t))
         return;
     if (x->kind == LIMBA_LTK_RECORD) {
         for (uint32_t i = 0; i < x->count; i++) {
             const limba_field *f = &L->S->ts.field[x->first + i];
-            invalidate(L, p, off + f->offset, f->type);
+            lxl_invalidate(L, p, off + f->offset, f->type);
         }
         return;
     }
@@ -821,7 +821,7 @@ static void invalidate(lxl *L, limba_id p, uint64_t off, limba_ltype t)
         uint64_t n = ix->hi < ix->lo ? 0 : (uint64_t)(ix->hi - ix->lo + 1);
         if (!n)
             return;
-        invalidate(L, p, off, x->elem);
+        lxl_invalidate(L, p, off, x->elem);
         uint64_t done = esize, total = n * esize;
         while (done < total) {
             uint64_t chunk = done < total - done ? done : total - done;
@@ -839,21 +839,6 @@ static void invalidate(lxl *L, limba_id p, uint64_t off, limba_ltype t)
     __int128 bad = x->lo > b->lo ? x->lo - 1 : x->hi + 1;
     store(L, lxl_iconst(L, lxl_type(L, t), (int64_t)(uint64_t)bad),
           addr(L, p, lxl_iconst(L, LIMBA_T_I64, 0), 0, (int64_t)off));
-}
-
-/* is the object node names reached through a pointer (on the heap) */
-static bool through_pointer(lxl *L, uint32_t node)
-{
-    for (;;) {
-        const limba_lx_node *x = nd(L, node);
-        if (x->kind == LXN_DEREF)
-            return true;
-        if (x->kind != LXN_SEL && x->kind != LXN_INDEX)
-            return false;
-        if (ti(L, ntype(L, x->a))->kind == LIMBA_LTK_POINTER)
-            return true;
-        node = x->a;
-    }
 }
 
 limba_id lxl_value(lxl *L, uint32_t node)
@@ -890,8 +875,9 @@ limba_id lxl_value(lxl *L, uint32_t node)
             return load(L, t, addr(L, p, i, 1, -1));
         }
         limba_id v = load(L, t, lxl_addr(L, node));
-        if (narrow(L, t) && through_pointer(L, node)) {
-            /* a value new gave and nobody assigned is caught here */
+        if (narrow(L, t)) {
+            /* a value no one assigned, in a variable or from new, is
+               caught here */
             const limba_typeinfo *x = ti(L, t);
             lxl_at(L, node);
             check_range(L, v, t, x->lo, x->hi, LXR_RANGE);
@@ -916,7 +902,7 @@ limba_id lxl_value(lxl *L, uint32_t node)
         limba_id p = lxl_rt(L, LIMBA_RT_MEM_ALLOC, LIMBA_T_PTR, &n, 1);
         uint32_t o[3] = {p, lxl_iconst(L, LIMBA_T_I8, 0), n};
         lxl_emit(L, LIMBA_OP_MEMSET, LIMBA_T_VOID, 0, 0, 0, o, 3);
-        invalidate(L, p, 0, target);
+        lxl_invalidate(L, p, 0, target);
         return p;
     }
     }

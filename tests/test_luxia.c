@@ -799,13 +799,14 @@ static const run_case run_cases[] = {
      "w.b); end t.",
      "1 5 2\n", "ok"},
     /* new gives values outside a narrow range, caught when read through
-       a pointer; a copy is not checked (§ 4.5) */
+       a pointer; a copy carries them, and its reads are checked too
+       (§ 4.5) */
     {"program n; type Small = Int32 range 4..9; Tiny = UInt8 range 0..3; "
      "Rec = record a: Small; b: Int32; c: Tiny; v: array[Int32 range 1..5] "
      "of Small; end; Ptr = ^Rec; var p: Ptr := nil; r: Rec; begin p := "
      "new(Rec); writeln(p.b); p.a := 5; writeln(p.a); r := p^; "
      "writeln(r.c, \" \", r.v[3]);\n  writeln(p.c); end n.",
-     "0\n5\n4 3\n", "trap 101 at 2:12"},
+     "0\n5\n", "trap 101 at 1:268"},
     {"program n; type Small = Int32 range 4..9; Rec = record v: "
      "array[Int32 range 1..5] of Small; end; Ptr = ^Rec; var p: Ptr := nil; "
      "begin p := new(Rec); p.v[2] := 7; writeln(p.v[2]);\n  "
@@ -949,6 +950,20 @@ static const run_case run_cases[] = {
     {"program p; var z: Int64 := 0; m: Int64 := 9223372036854775807; begin "
      "writeln(copy(\"ab\", 1 div z, m + 1)); end.",
      "", "trap 11"},
+    /* a record or an array variable without a value (§ 4.5): its narrow
+       scalars are not valid, even where 0 would be, and a read of one is
+       caught at the . or the [ */
+    {"program p; type S = Int32 range -5..5; R = record a: Int32; b: S; "
+     "end; var g: R; begin writeln(g.a); writeln(g.b); end.",
+     "0\n", "trap 101 at 1:111"},
+    {"program p; type S = Int32 range -5..5; procedure q(); var a: "
+     "array[Int32 range 1..3] of S; begin a[2] := 0; writeln(a[2]); "
+     "writeln(a[3]); end q; begin q(); end.",
+     "0\n", "trap 101 at 1:133"},
+    {"program p; type S = Int32 range -5..5; procedure q(n: Int32); var a: "
+     "array[Int32 range 1..n] of S; begin a[1] := 1; writeln(a[1]); "
+     "writeln(a[n]); end q; begin q(1); q(9); end.",
+     "1\n1\n1\n", "trap 101 at 1:141"},
 };
 
 /* run main on the input in (NULL: none); what it printed (malloc'd, *len

@@ -1804,10 +1804,6 @@ static uint32_t declare_dyn(G *g)
     uint32_t n = lit(g, b, k < 0 ? 1 : k);
     uint32_t hi = binop(g, k < 0 ? O_SUB : O_ADD, b, x, n);
     uint32_t el = var_type(g);
-    /* its elements start at 0, which must be a value of theirs: what an
-       element never assigned holds is not decided for the variables yet */
-    if (g->ty[el].k == K_RANGE && (g->ty[el].lo > 0 || g->ty[el].hi < 0))
-        el = base(g, el);
     uint32_t t =
         new_type(g, (xt){K_DYN, (uint8_t)base(g, el), b, el, 0, 3, 0, 0});
     uint32_t v = new_v(g, t, V_LOCAL);
@@ -2625,6 +2621,7 @@ static void pexpr(G *g, text *o, uint32_t i)
         break;
     case E_CFIELD:
         pexpr(g, o, x->a);
+        here(&g->e[i], o); /* a field no one assigned is caught at the . */
         putf(o, ".f%u", g->e[i].b);
         break;
     case E_CINDEX:
@@ -3118,6 +3115,29 @@ static v128 call(X *x, uint32_t fn, uint32_t args, uint32_t nargs,
     return x->ret;
 }
 
+/* the value v of a field or an element of type t, read at node i: one
+   that no one assigned is caught (§ 4.5) */
+static v128 valid(X *x, uint32_t i, uint32_t t, v128 v)
+{
+    v128 bad;
+    if (narrow_bad(x->g, t, &bad) && (v < lo_of(x->g, t) || v > hi_of(x->g, t)))
+        return fail(x, i, 101);
+    return v;
+}
+
+/* the cells of a record or an array of type t without a value (§ 4.5):
+   what new gives */
+static void unassigned(const G *g, v128 *cell, uint32_t t)
+{
+    uint32_t n = ncells(g, t);
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t ct = is_record(g, t) ? field_type(g, t, k) : g->ty[t].elem;
+        v128 bad = 0;
+        narrow_bad(g, ct, &bad);
+        cell[k] = bad;
+    }
+}
+
 /* the cells a value of type t takes */
 static uint32_t ncells(const G *g, uint32_t t)
 {
@@ -3438,7 +3458,7 @@ static v128 ev(X *x, uint32_t i)
     }
     case E_CFIELD: {
         v128 c = ev(x, e->a);
-        return x->trap ? 0 : x->cell[(uint32_t)c + e->b];
+        return x->trap ? 0 : valid(x, i, e->t, x->cell[(uint32_t)c + e->b]);
     }
     case E_SLEN: {
         v128 v = ev(x, e->a);
@@ -3498,7 +3518,7 @@ static v128 ev(X *x, uint32_t i)
         const xt *at = &g->ty[g->e[e->a].t];
         if (k < at->lo || k > at->hi)
             return fail(x, i, 100);
-        return x->cell[(uint32_t)c + (uint32_t)(k - at->lo)];
+        return valid(x, i, e->t, x->cell[(uint32_t)c + (uint32_t)(k - at->lo)]);
     }
     case E_INDEX: {
         v128 k = ev(x, e->a);
@@ -3507,12 +3527,12 @@ static v128 ev(X *x, uint32_t i)
             return 0;
         if (!element_cell(x, e->var, k, &c))
             return fail(x, i, 100);
-        return x->cell[c];
+        return valid(x, i, e->t, x->cell[c]);
     }
     case E_FIELD: {
         uint32_t vt = g->v[e->var].t;
         if (is_record(g, vt))
-            return x->cell[x->ref[e->var] + e->b];
+            return valid(x, i, e->t, x->cell[x->ref[e->var] + e->b]);
         v128 pv = x->cell[x->ref[e->var]];
         if (pv == 0)
             return fail(x, i, 102);
@@ -3599,7 +3619,7 @@ static int run_stmt(X *x, uint32_t si)
                 return X_RET;
             x->alo[s->var] = v;
             x->ahi[s->var] = hi;
-            memset(&x->cell[x->ref[s->var]], 0, ncells(g, vt) * sizeof(v128));
+            unassigned(g, &x->cell[x->ref[s->var]], vt);
             return X_NEXT;
         }
         if (!x->trap && (is_record(g, vt) || is_array(g, vt))) {
@@ -3975,6 +3995,8 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
             }
             uint32_t rt = record_of(&g, t);
             for (uint32_t f = 0; f < g.ty[rt].elem; f++) {
+                if (is_record(&g, t) && chance(&g, 10))
+                    continue; /* without a value: a read is caught */
                 uint32_t ft = field_type(&g, rt, f);
                 uint32_t e = lit(&g, ft, init_value(&g, ft));
                 uint32_t s = new_s(&g, S_ASSIGN);
@@ -3997,6 +4019,8 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         if (!is_array(&g, at))
             continue;
         for (v128 k = g.ty[at].hi; k >= g.ty[at].lo; k--) {
+            if (chance(&g, 8))
+                continue; /* without a value: a read is caught */
             uint32_t s = new_s(&g, S_ASSIGN);
             uint32_t el = g.ty[at].elem;
             g.st[s].var = v;
@@ -4053,6 +4077,9 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
                                     : 1;
     }
     x.cell = limba_xcalloc(ncell ? ncell : 1, sizeof(v128));
+    for (uint32_t v = 0; v < g.nv; v++)
+        if (is_record(&g, g.v[v].t) || g.ty[g.v[v].t].k == K_ARRAY)
+            unassigned(&g, &x.cell[x.ref[v]], g.v[v].t);
     x.alo = limba_xcalloc(g.nv ? g.nv : 1, sizeof(v128));
     x.ahi = limba_xcalloc(g.nv ? g.nv : 1, sizeof(v128));
     for (uint32_t v = 0; v < g.nv; v++)
@@ -4062,7 +4089,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         }
     x.out.line = x.out.col = 1;
     for (uint32_t v = 0; v < nglob; v++)
-        if (!is_array(&g, g.v[v].t))
+        if (!is_array(&g, g.v[v].t) && !is_record(&g, g.v[v].t))
             x.cell[x.ref[v]] = g.e[g.st[v].e].lit;
     run_block(&x, g.main_blk, g.main_n);
     bool ok = !x.toolong;

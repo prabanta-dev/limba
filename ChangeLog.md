@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- A record or an array variable declared without an initial value
+  (global, local, with computed bounds too) starts as what `new` gives:
+  every scalar of a range narrower than its base holds a value outside
+  it, even where 0 would be valid; and every read of such a field or
+  element, of a variable, through a pointer or of a function result, is
+  checked (a range error at the `.` or the `[`). Before, a variable held
+  0 and was never checked, and only reads through a pointer were: Ada
+  treats variables and allocators alike. The random programs leave some
+  fields and elements of their globals without a value and read them.
 - `copy(s, from, count)` takes its arguments from left to right (the
   count went before), and `from < 1` or `count < 0` is a range error at
   its name; past the end the result is cut short (`copy("abc", 3, 5)` is

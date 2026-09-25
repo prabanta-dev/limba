@@ -236,6 +236,51 @@ static void free_dyns(lxl *L, uint32_t n)
     }
 }
 
+/* the elements of type et in the bytes at p, none assigned: the first
+   made invalid (§ 4.5), then copies that double what is done */
+static void fill_dyn(lxl *L, limba_id p, limba_id bytes, limba_ltype et)
+{
+    int64_t esize = (int64_t)ti(L, et)->size;
+    limba_id first = limba_ssa_block(L->ssa), head = limba_ssa_block(L->ssa),
+             body = limba_ssa_block(L->ssa), out = limba_ssa_block(L->ssa);
+    uint32_t c[2] = {bytes, lxl_iconst(L, LIMBA_T_I64, 0)};
+    limba_id some =
+        lxl_emit(L, LIMBA_OP_ICMP, LIMBA_T_I1, LIMBA_CC_NE, 0, 0, c, 2);
+    limba_ssa_cbr(L->ssa, L->cur, some, first, out);
+    limba_ssa_seal(L->ssa, first);
+    L->cur = first;
+    lxl_invalidate(L, p, 0, et);
+    uint32_t done = limba_ssa_var(L->ssa, LIMBA_T_I64);
+    limba_ssa_def(L->ssa, done, first, lxl_iconst(L, LIMBA_T_I64, esize));
+    limba_ssa_br(L->ssa, first, head);
+    L->cur = head;
+    limba_id d = limba_ssa_use(L->ssa, done, head, UINT32_MAX);
+    uint32_t c2[2] = {d, bytes};
+    limba_id more =
+        lxl_emit(L, LIMBA_OP_ICMP, LIMBA_T_I1, LIMBA_CC_ULT, 0, 0, c2, 2);
+    limba_ssa_cbr(L->ssa, head, more, body, out);
+    limba_ssa_seal(L->ssa, body);
+    L->cur = body;
+    uint32_t r[2] = {bytes, d};
+    limba_id rest = lxl_emit(L, LIMBA_OP_SUB, LIMBA_T_I64, 0, 0, 0, r, 2);
+    uint32_t lt[2] = {d, rest};
+    uint32_t sel[3] = {
+        lxl_emit(L, LIMBA_OP_ICMP, LIMBA_T_I1, LIMBA_CC_ULT, 0, 0, lt, 2), d,
+        rest};
+    limba_id chunk = lxl_emit(L, LIMBA_OP_SELECT, LIMBA_T_I64, 0, 0, 0, sel, 3);
+    uint32_t a[2] = {p, d};
+    uint32_t m[3] = {lxl_emit(L, LIMBA_OP_ADDR, LIMBA_T_PTR, 0, 1, 0, a, 2), p,
+                     chunk};
+    lxl_emit(L, LIMBA_OP_MEMCPY, LIMBA_T_VOID, 0, 0, 0, m, 3);
+    uint32_t nx[2] = {d, chunk};
+    limba_ssa_def(L->ssa, done, body,
+                  lxl_emit(L, LIMBA_OP_ADD, LIMBA_T_I64, 0, 0, 0, nx, 2));
+    limba_ssa_br(L->ssa, body, head);
+    limba_ssa_seal(L->ssa, head);
+    limba_ssa_seal(L->ssa, out);
+    L->cur = out;
+}
+
 /* an array whose bounds are computed: on the heap */
 static void dynamic(lxl *L, limba_sym s, uint32_t tnode)
 {
@@ -264,6 +309,8 @@ static void dynamic(lxl *L, limba_sym s, uint32_t tnode)
     st->addr = lxl_rt(L, LIMBA_RT_MEM_ALLOC, LIMBA_T_PTR, &bytes, 1);
     uint32_t o5[3] = {st->addr, lxl_iconst(L, LIMBA_T_I8, 0), bytes};
     lxl_emit(L, LIMBA_OP_MEMSET, LIMBA_T_VOID, 0, 0, 0, o5, 3);
+    if (lxl_has_narrow(L, x->elem))
+        fill_dyn(L, st->addr, bytes, x->elem);
     LIMBA_GROW(L->dyns, L->ndyns, L->capdyns);
     L->dyns[L->ndyns++] = s;
 }
@@ -282,6 +329,9 @@ static void var_decl(lxl *L, uint32_t d)
             dynamic(L, s, tnode);
         else if (L->store[s].kind == LXL_NONE)
             local(L, s);
+        if (!init && t && !lxl_scalar(L, t) &&
+            !(ti(L, t)->flags & LIMBA_TF_DYNAMIC) && lxl_has_narrow(L, t))
+            lxl_invalidate(L, lxl_var_addr(L, s), 0, t); /* § 4.5 */
         if (init) {
             uint32_t tmp = list_at(L, names, k);
             /* a REF-like assignment to the name just declared */
@@ -921,9 +971,22 @@ limba_module *limba_lxl_program(limba_lxs *S)
         if (x->kind == LXN_ROUTINE && S->sym[x->a])
             routine_body(L, S->sym[x->a]);
     }
-    /* main: the initial values of the globals, then the body */
+    /* main: the records and arrays without a value (§ 4.5), the initial
+       values of the globals, then the body */
     L->result = 0;
     begin_function(L, main_fid);
+    for (uint32_t i = 0; i < list_n(L, decls); i++) {
+        uint32_t d = list_at(L, decls, i);
+        const limba_lx_node *x = nd(L, d);
+        if (x->kind != LXN_VAR || x->c)
+            continue;
+        for (uint32_t k = 0; k < list_n(L, x->a); k++) {
+            limba_sym s = S->sym[list_at(L, x->a, k)];
+            limba_ltype t = s ? S->st.sym[s].type : 0;
+            if (t && !lxl_scalar(L, t) && lxl_has_narrow(L, t))
+                lxl_invalidate(L, lxl_var_addr(L, s), 0, t);
+        }
+    }
     for (uint32_t i = 0; i < list_n(L, decls); i++) {
         uint32_t d = list_at(L, decls, i);
         const limba_lx_node *x = nd(L, d);
