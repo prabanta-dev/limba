@@ -88,7 +88,12 @@ int main(int argc, char **argv)
     }
     if (r.status == LIMBA_EVAL_OK)
         fprintf(stderr, " %" PRId64, (int64_t)r.ret);
-    fprintf(stderr, ", %" PRIu64 " steps\n", r.steps);
+    fprintf(stderr, ", %" PRIu64 " steps", r.steps);
+    if (r.live)
+        fprintf(stderr, ", %zu blocks never freed", r.live);
+    if (r.bad_frees)
+        fprintf(stderr, ", %zu bad frees", r.bad_frees);
+    fputc('\n', stderr);
     int status = r.status == LIMBA_EVAL_OK     ? 0
                  : r.status == LIMBA_EVAL_HALT ? (int)r.code
                                                : 1;

@@ -120,6 +120,14 @@ static void routine(lxl *L, uint32_t node, limba_sym s, limba_id *result)
     const limba_typeinfo *sig = ti(L, S->st.sym[s].type);
     uint32_t first = sig->first, count = sig->count;
     uint32_t *ops = NULL, n = 0, cap = 0;
+    bool agg = sig->elem != S->ts.void_ && !lxl_scalar(L, sig->elem);
+    limba_id slot = LIMBA_NONE;
+    if (agg) {
+        /* a record or an array result: a slot of the caller, first */
+        slot = lxl_temp(L, sig->elem, node);
+        LIMBA_GROW(ops, n, cap);
+        ops[n++] = slot;
+    }
     for (uint32_t i = 0; i < count && i < nargs(L, node); i++) {
         limba_param p = S->ts.param[first + i];
         uint32_t a = arg(L, node, i);
@@ -142,10 +150,10 @@ static void routine(lxl *L, uint32_t node, limba_sym s, limba_id *result)
     }
     lxl_at(L, node);
     limba_id rt =
-        sig->elem == S->ts.void_ ? LIMBA_T_VOID : lxl_type(L, sig->elem);
+        sig->elem == S->ts.void_ || agg ? LIMBA_T_VOID : lxl_type(L, sig->elem);
     limba_id r = lxl_emit(L, LIMBA_OP_CALL, rt, 0, L->func_of[s], 0, ops, n);
     free(ops);
-    *result = rt == LIMBA_T_VOID ? LIMBA_NONE : r;
+    *result = agg ? slot : rt == LIMBA_T_VOID ? LIMBA_NONE : r;
 }
 
 /* a value as a string, for write with a width and for str */

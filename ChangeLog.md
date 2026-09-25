@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Functions may return records and arrays: the caller passes, before the
+  arguments, the address of a slot of its own where the result goes
+  (L0054 is no longer reported for them). `f(x).field`, `f(x)[i]`,
+  `r := f(x)`, a call as the argument of a record parameter and
+  `return f(x)` all work; a path without `return` is still L0052.
+- Arrays with computed bounds are freed: where their statement list
+  ends and on every `return`, `exit` and `continue` that leaves it (they
+  were never freed, one more block at every turn of a loop).
+- The reference interpreter counts the blocks of `mem_alloc` never
+  freed and the frees of what is not a live block; `lir_run` prints
+  them, and a Luxia test that ends with blocks alive says how many.
+- The random programs have functions returning records and arrays,
+  called at the start of the program and printed whole, and local
+  arrays with computed bounds (`array[T range x..x + k]`, 0 to 4
+  elements) at the start of routines and loop bodies; the oracle counts
+  the records `new` made, so a block the compiler leaks shows. The
+  array types of the random programs are named `Y<n>` (a parameter
+  `a<n>` is the same name).
 - `out` parameters as Ada has them: a scalar one is copied back at every
   return, not before; reading it before giving it a value is L0053, and
   leaving on a path without one is the new L0056. A record or an array

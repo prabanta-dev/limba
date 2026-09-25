@@ -11,6 +11,11 @@
  * by zero, conversion) become check instructions with the codes below;
  * definite assignment and the return on every path are checked here, on
  * the SSA form.
+ *
+ * A function whose result is a record or an array takes, before its
+ * parameters, the address where the result goes: a slot of the caller.
+ * An array with computed bounds lives on the heap and is freed where its
+ * statement list ends, and on every return, exit or continue out of it.
  */
 #ifndef LIMBA_LUXIA_LOWER_H
 #define LIMBA_LUXIA_LOWER_H
@@ -49,6 +54,7 @@ typedef struct {
 
 typedef struct {
     limba_id exit, cont;
+    uint32_t ndyn; /* the computed arrays alive when the loop began */
 } lxl_loop;
 
 typedef struct {
@@ -62,6 +68,7 @@ typedef struct {
     limba_ssa *ssa;
     limba_id fid, cur;
     limba_ltype result; /* 0 for a procedure or the program */
+    limba_id ret_ptr;   /* a record or an array result: where it goes */
     uint32_t ret_var;   /* never defined: a use of it at the end of a
                            function is a missing return */
     lxl_loop *loops;
@@ -73,6 +80,10 @@ typedef struct {
     uint32_t *out_place; /* per check: the symbol, then the node */
     uint32_t nout_place, capout_place;
     uint32_t routine_node;
+    /* the computed arrays alive here, innermost last: each is freed when
+       its statement list ends and on every jump out of it */
+    limba_sym *dyns;
+    uint32_t ndyns, capdyns;
 } lxl;
 
 /* IR types */
@@ -86,6 +97,9 @@ limba_id lxl_iconst(lxl *L, limba_id type, int64_t v);
 limba_id lxl_rt(lxl *L, unsigned rt, limba_id type, const uint32_t *args,
                 uint32_t n);
 void lxl_check(lxl *L, limba_id cond, int64_t code);
+/* a slot for a value of type t, made in the entry block; node is where
+   a type too large for the stack is reported */
+limba_id lxl_temp(lxl *L, limba_ltype t, uint32_t node);
 /* a new block that is where the code goes now */
 void lxl_goto_new(lxl *L, limba_id b);
 /* the instructions made from now on come from node */

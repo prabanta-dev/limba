@@ -884,6 +884,44 @@ static const run_case run_cases[] = {
     {"program p; function f(x: Int32): Int32; begin if x > 0 then return 1; "
      "end; end; begin writeln(f(1)); end.",
      "", "errors L0052@1:21"},
+    /* records and arrays as results: into a slot of the caller */
+    {"program p;\ntype V = record x, y: Int32; end;\n"
+     "type A = array[Int32 range 1..4] of Int64;\n"
+     "function mk(a, b: Int32): V; var r: V; begin r.x := a; r.y := b; "
+     "return r; end mk;\n"
+     "function sq(n: Int64): A; var r: A;\nbegin\n"
+     "  for var i: Int32 := 1 to 4 do r[i] := n * Int64(i); end;\n"
+     "  if n > 100 then return sq(n div 2); end;\n  return r;\nend sq;\n"
+     "function sw(v: V): V; begin return mk(v.y, v.x); end sw;\n"
+     "var g: V; h: A;\nbegin\n  g := sw(mk(3, 4));\n"
+     "  writeln(g.x, \" \", g.y, \" \", mk(7, 8).y, \" \", sq(5)[3], \" \", "
+     "sq(300)[4]);\n"
+     "  h := sq(2); var w := sw(sw(mk(9, 10)));\n"
+     "  writeln(h[1] + h[4], \" \", w.x);\nend.",
+     "4 3 8 15 300\n10 9\n", "ok"},
+    {"program p; type V = record x: Int32; end; function f(b: Boolean): V; "
+     "var r: V; begin if b then return r; end; end; begin end.",
+     "", "errors L0052@1:52"},
+    /* computed arrays: freed at the end of their list, and on exit,
+       continue and return */
+    {"program p;\nfunction f(k: Int32): Int64;\n"
+     "var a: array[Int32 range 1..k] of Int64;\nbegin\n  a[k] := 7;\n"
+     "  for var i := 1 to k do\n"
+     "    var b: array[Int32 range 0..i] of Int64;\n"
+     "    if i = 2 then continue; end;\n"
+     "    var c: array[Int32 range 0..i] of Int64;\n"
+     "    exit when i = 4;\n"
+     "    loop var d: array[Int32 range 0..i] of Int8; exit; end;\n"
+     "    continue when i = 1;\n"
+     "    if i = 5 then return a[k]; end;\n  end;\n"
+     "  return a[k] + 1;\nend f;\n"
+     "begin\n  writeln(f(3), \" \", f(6));\n"
+     "  for var j: Int32 := 1 to 3 do var e: array[Int32 range 1..j] of "
+     "Int32; e[j] := j; write(e[j]); end;\n  writeln();\nend.",
+     "8 8\n123\n", "ok"},
+    {"program p; type R = record a: Int32; end; var q: ^R; begin q := "
+     "new(R); q.a := 1; end.",
+     "", "ok, 1 live, 0 bad frees"},
 };
 
 /* run main on the input in (NULL: none); what it printed (malloc'd, *len
@@ -905,6 +943,8 @@ static char *run_module(limba_module *m, const char *in, size_t inlen,
         snprintf(end, size, "halt %lld", (long long)r.code);
     else if (r.status != LIMBA_EVAL_OK)
         snprintf(end, size, "status %d", r.status);
+    else if (r.live || r.bad_frees)
+        snprintf(end, size, "ok, %zu live, %zu bad frees", r.live, r.bad_frees);
     if (r.pos && r.pos <= m->npos) {
         size_t n = strlen(end);
         snprintf(end + n, size - n, " at %u:%u", m->pos[r.pos - 1].line,
@@ -1154,7 +1194,7 @@ static int test_random(void)
             failures++;
         }
         unsigned code;
-        if (!strcmp(p.end, "ok"))
+        if (!strncmp(p.end, "ok", 2))
             ok++;
         else if (sscanf(p.end, "trap %u", &code) == 1 && code < 128)
             trap[code]++;

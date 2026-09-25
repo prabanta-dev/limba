@@ -209,6 +209,33 @@ static void local(lxl *L, limba_sym s)
     lxl_emit(L, LIMBA_OP_MEMSET, LIMBA_T_VOID, 0, 0, 0, o, 3);
 }
 
+limba_id lxl_temp(lxl *L, limba_ltype t, uint32_t node)
+{
+    const limba_typeinfo *x = ti(L, t);
+    uint64_t size = x->size ? x->size : 8;
+    if (size > UINT32_MAX) {
+        lxs_error(L->S, LXE_UNSUPPORTED, node,
+                  "a value too large for the stack is not translated yet");
+        size = 8;
+    }
+    limba_id slot = limba_slot_add(limba_ssa_func(L->ssa), (uint32_t)size,
+                                   x->align ? x->align : 1);
+    limba_id cur = L->cur;
+    L->cur = 0;
+    limba_id a = lxl_emit(L, LIMBA_OP_SLOT, LIMBA_T_PTR, 0, slot, 0, NULL, 0);
+    L->cur = cur;
+    return a;
+}
+
+/* free the computed arrays alive from the n-th on, innermost first */
+static void free_dyns(lxl *L, uint32_t n)
+{
+    for (uint32_t i = L->ndyns; i-- > n;) {
+        limba_id a = L->store[L->dyns[i]].addr;
+        lxl_rt(L, LIMBA_RT_MEM_FREE, LIMBA_T_VOID, &a, 1);
+    }
+}
+
 /* an array whose bounds are computed: on the heap */
 static void dynamic(lxl *L, limba_sym s, uint32_t tnode)
 {
@@ -237,6 +264,8 @@ static void dynamic(lxl *L, limba_sym s, uint32_t tnode)
     st->addr = lxl_rt(L, LIMBA_RT_MEM_ALLOC, LIMBA_T_PTR, &bytes, 1);
     uint32_t o5[3] = {st->addr, lxl_iconst(L, LIMBA_T_I8, 0), bytes};
     lxl_emit(L, LIMBA_OP_MEMSET, LIMBA_T_VOID, 0, 0, 0, o5, 3);
+    LIMBA_GROW(L->dyns, L->ndyns, L->capdyns);
+    L->dyns[L->ndyns++] = s;
 }
 
 /* the names of a VAR node: storage, then the initial value */
@@ -286,7 +315,7 @@ static void stmts(lxl *L, uint32_t list);
 static void push_loop(lxl *L, limba_id exit, limba_id cont)
 {
     LIMBA_GROW(L->loops, L->nloops, L->caploops);
-    L->loops[L->nloops++] = (lxl_loop){exit, cont};
+    L->loops[L->nloops++] = (lxl_loop){exit, cont, L->ndyns};
 }
 
 static void if_stmt(lxl *L, uint32_t node)
@@ -485,15 +514,27 @@ static void exit_stmt(lxl *L, uint32_t node, bool exit)
     uint32_t cond = nd(L, node)->a;
     if (!L->nloops)
         return;
-    limba_id target =
-        exit ? L->loops[L->nloops - 1].exit : L->loops[L->nloops - 1].cont;
+    const lxl_loop *lp = &L->loops[L->nloops - 1];
+    limba_id target = exit ? lp->exit : lp->cont;
+    uint32_t keep = lp->ndyn;
     if (!cond) {
+        free_dyns(L, keep);
         limba_ssa_br(L->ssa, L->cur, target);
         dead_end(L);
         return;
     }
     limba_id go_on = limba_ssa_block(L->ssa);
-    lxl_branch(L, cond, target, go_on);
+    if (L->ndyns > keep) {
+        /* the arrays of the loop body are freed on the way out */
+        limba_id leave = limba_ssa_block(L->ssa);
+        lxl_branch(L, cond, leave, go_on);
+        limba_ssa_seal(L->ssa, leave);
+        L->cur = leave;
+        free_dyns(L, keep);
+        limba_ssa_br(L->ssa, leave, target);
+    } else {
+        lxl_branch(L, cond, target, go_on);
+    }
     limba_ssa_seal(L->ssa, go_on);
     L->cur = go_on;
 }
@@ -504,12 +545,19 @@ static void return_stmt(lxl *L, uint32_t node)
 {
     uint32_t e = nd(L, node)->a;
     limba_id v = LIMBA_NONE;
-    if (e) {
+    if (e && L->ret_ptr != LIMBA_NONE) {
+        /* a record or an array: into the slot of the caller */
+        uint32_t o[3] = {
+            L->ret_ptr, lxl_addr(L, e),
+            lxl_iconst(L, LIMBA_T_I64, (int64_t)ti(L, L->result)->size)};
+        lxl_emit(L, LIMBA_OP_MEMCPY, LIMBA_T_VOID, 0, 0, 0, o, 3);
+    } else if (e) {
         v = lxl_value(L, e);
         lxl_at(L, node); /* a range is checked at the return */
         v = lxl_coerce(L, v, L->S->type[e], L->result);
     }
     store_outs(L, node);
+    free_dyns(L, 0);
     limba_ssa_ret(L->ssa, L->cur, v);
     dead_end(L);
 }
@@ -570,8 +618,14 @@ static void stmt(lxl *L, uint32_t node)
 
 static void stmts(lxl *L, uint32_t list)
 {
+    uint32_t keep = L->ndyns;
     for (uint32_t i = 0; i < list_n(L, list); i++)
         stmt(L, list_at(L, list, i));
+    if (L->ndyns > keep) {
+        if (!limba_ssa_terminated(L->ssa, L->cur))
+            free_dyns(L, keep);
+        L->ndyns = keep;
+    }
 }
 
 /* ---- address taken: var and out arguments, readline, val ---- */
@@ -640,8 +694,11 @@ static void undefined(void *ctx, uint32_t tag)
 static limba_id func_type(lxl *L, limba_sym s)
 {
     const limba_typeinfo *sig = ti(L, L->S->st.sym[s].type);
-    limba_id *ps = limba_xmalloc((3 * sig->count + 1) * sizeof(*ps));
+    limba_id *ps = limba_xmalloc((3 * sig->count + 2) * sizeof(*ps));
     uint32_t n = 0;
+    bool agg = sig->elem != L->S->ts.void_ && !lxl_scalar(L, sig->elem);
+    if (agg)
+        ps[n++] = LIMBA_T_PTR; /* where the result goes */
     for (uint32_t i = 0; i < sig->count; i++) {
         limba_param p = L->S->ts.param[sig->first + i];
         if (ti(L, p.type)->kind == LIMBA_LTK_OPEN) {
@@ -654,8 +711,8 @@ static limba_id func_type(lxl *L, limba_sym s)
             ps[n++] = lxl_type(L, p.type);
         }
     }
-    limba_id ret =
-        sig->elem == L->S->ts.void_ ? LIMBA_T_VOID : lxl_type(L, sig->elem);
+    limba_id ret = sig->elem == L->S->ts.void_ || agg ? LIMBA_T_VOID
+                                                      : lxl_type(L, sig->elem);
     limba_id ft = limba_type_func(L->m, ret, ps, n, false);
     free(ps);
     return ft;
@@ -674,6 +731,8 @@ static void begin_function(lxl *L, limba_id fid)
     L->nloops = 0;
     L->nouts = 0;
     L->nout_place = 0;
+    L->ndyns = 0;
+    L->ret_ptr = LIMBA_NONE;
 }
 
 /* before a return: every out parameter goes back to its argument, and
@@ -705,11 +764,14 @@ static void end_function(lxl *L, uint32_t node, bool function)
 {
     if (!limba_ssa_terminated(L->ssa, L->cur)) {
         store_outs(L, node);
+        free_dyns(L, 0);
         if (function) {
             /* a use that no definition reaches is a missing return */
-            uint32_t var = limba_ssa_var(L->ssa, lxl_type(L, L->result));
+            bool agg = L->ret_ptr != LIMBA_NONE;
+            uint32_t var = limba_ssa_var(L->ssa, agg ? LIMBA_T_I1
+                                                     : lxl_type(L, L->result));
             limba_id v = limba_ssa_use(L->ssa, var, L->cur, node | 0x80000000u);
-            limba_ssa_ret(L->ssa, L->cur, v);
+            limba_ssa_ret(L->ssa, L->cur, agg ? LIMBA_NONE : v);
         } else {
             limba_ssa_ret(L->ssa, L->cur, LIMBA_NONE);
         }
@@ -730,18 +792,12 @@ static void routine_body(lxl *L, limba_sym s)
     uint32_t locals = nd(L, body)->a, list = nd(L, body)->b;
     const limba_typeinfo *sig = ti(L, y->type);
     L->result = sig->elem == S->ts.void_ ? 0 : sig->elem;
-    if (L->result && !lxl_scalar(L, L->result)) {
-        lxs_error(S, LXE_UNSUPPORTED, r->a,
-                  "a function returning a record or an array is not "
-                  "translated yet");
-        return;
-    }
     begin_function(L, L->func_of[s]);
-    limba_func *f;
-    uint32_t k;
+    limba_func *f = limba_ssa_func(L->ssa);
+    uint32_t k = 0, v = 0;
+    if (L->result && !lxl_scalar(L, L->result))
+        L->ret_ptr = f->blocks[0].insts[v++];
     /* assign the entry parameters to the storage, in order */
-    k = 0;
-    uint32_t v = 0;
     for (uint32_t i = 0; i < list_n(L, params); i++) {
         uint32_t p = list_at(L, params, i);
         uint32_t names = nd(L, p)->a;
@@ -884,6 +940,7 @@ limba_module *limba_lxl_program(limba_lxs *S)
     free(L->loops);
     free(L->outs);
     free(L->out_place);
+    free(L->dyns);
     if (S->rep->errors) {
         limba_module_free(L->m);
         return NULL;

@@ -20,7 +20,8 @@ typedef struct {
     char *src; /* the program, NUL-terminated */
     char *out; /* what it prints, NUL-terminated */
     size_t outlen;
-    char end[64]; /* "ok" or "trap CODE at LINE:COLUMN" */
+    char end[64]; /* "ok", "ok, N live, 0 bad frees" (N records made by
+                     new never freed) or "trap CODE at LINE:COLUMN" */
 } limba_lxgen;
 
 /* the program of a seed; false if no attempt ran within the limits */

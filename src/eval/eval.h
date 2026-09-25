@@ -45,9 +45,11 @@ typedef struct {
     uint64_t ret; /* the returned value, in its bits; 0 for void */
     char *out;    /* what the program printed, malloc'd, NUL-terminated */
     size_t outlen;
-    uint64_t steps; /* instructions executed */
-    uint32_t pos;   /* a trap or a halt: the position of the instruction
-                       in m->pos, 0 if it has none */
+    uint64_t steps;   /* instructions executed */
+    size_t live;      /* blocks of mem_alloc never freed */
+    size_t bad_frees; /* mem_free of what is not a live block */
+    uint32_t pos;     /* a trap or a halt: the position of the instruction
+                         in m->pos, 0 if it has none */
 } limba_eval_result;
 
 /* run function entry of a verified module; the result owns r->out */

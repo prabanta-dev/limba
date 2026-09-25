@@ -41,6 +41,10 @@ typedef struct {
     void **arena; /* everything allocated, freed at the end */
     size_t narena, caparena;
     void **globals;
+    /* the blocks of mem_alloc not yet freed: a set of addresses, open
+       addressing, 1 marks a removed entry */
+    uintptr_t *heap;
+    size_t capheap, usedheap, live, bad_frees;
     int status;
     int64_t code;
     uint32_t pos; /* where the run stopped, innermost call first */
@@ -51,6 +55,57 @@ static void *keep(E *e, void *p)
     LIMBA_GROW(e->arena, e->narena, e->caparena);
     e->arena[e->narena++] = p;
     return p;
+}
+
+static size_t heap_slot(uintptr_t p, size_t cap)
+{
+    return (size_t)((p >> 4) * 0x9e3779b97f4a7c15ull) & (cap - 1);
+}
+
+static void heap_add(E *e, uintptr_t p)
+{
+    if (2 * (e->usedheap + 1) > e->capheap) {
+        /* rehash the live entries, without the removed ones */
+        size_t cap = e->capheap ? e->capheap : 64;
+        while (4 * (e->live + 1) > cap)
+            cap *= 2;
+        uintptr_t *h = limba_xcalloc(cap, sizeof(*h));
+        for (size_t i = 0; i < e->capheap; i++) {
+            if (e->heap[i] <= 1)
+                continue;
+            size_t k = heap_slot(e->heap[i], cap);
+            while (h[k])
+                k = (k + 1) & (cap - 1);
+            h[k] = e->heap[i];
+        }
+        free(e->heap);
+        e->heap = h;
+        e->capheap = cap;
+        e->usedheap = e->live;
+    }
+    size_t k = heap_slot(p, e->capheap);
+    while (e->heap[k] > 1)
+        k = (k + 1) & (e->capheap - 1);
+    if (!e->heap[k])
+        e->usedheap++;
+    e->heap[k] = p;
+    e->live++;
+}
+
+/* false if p is not a block of mem_alloc still alive */
+static bool heap_remove(E *e, uintptr_t p)
+{
+    if (!e->capheap)
+        return false;
+    for (size_t k = heap_slot(p, e->capheap); e->heap[k];
+         k = (k + 1) & (e->capheap - 1)) {
+        if (e->heap[k] == p) {
+            e->heap[k] = 1;
+            e->live--;
+            return true;
+        }
+    }
+    return false;
 }
 
 /* a string of n bytes, its contents to be written by the caller */
@@ -386,11 +441,16 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_MEM_ALLOC: {
         if ((int64_t)a[0] < 0 || a[0] > (1u << 30))
             return trap(e, LIMBA_TRAP_NOMEM);
-        *r = (uint64_t)(uintptr_t)keep(e, limba_xcalloc(a[0] ? a[0] : 1, 1));
+        void *p = keep(e, limba_xcalloc(a[0] ? a[0] : 1, 1));
+        heap_add(e, (uintptr_t)p);
+        *r = (uint64_t)(uintptr_t)p;
         return true;
     }
     case LIMBA_RT_MEM_FREE:
-        return true; /* the arena frees everything at the end */
+        /* the arena frees everything at the end: here only the count */
+        if (a[0] && !heap_remove(e, (uintptr_t)a[0]))
+            e->bad_frees++;
+        return true;
     case LIMBA_RT_MATH_SQRT:
         *r = fbits(sqrt(dv(a[0])), LIMBA_T_F64);
         return true;
@@ -1057,6 +1117,8 @@ void limba_eval(const limba_module *m, const char *entry,
     r->pos = e.pos;
     r->ret = e.status == LIMBA_EVAL_OK ? ret : 0;
     r->steps = e.steps;
+    r->live = e.live;
+    r->bad_frees = e.bad_frees;
     limba_w_byte(&e.out, 0);
     r->out = (char *)e.out.buf;
     r->outlen = e.out.len - 1;
@@ -1064,6 +1126,7 @@ void limba_eval(const limba_module *m, const char *entry,
     for (size_t i = 0; i < e.narena; i++)
         free(e.arena[i]);
     free(e.arena);
+    free(e.heap);
     free(e.globals);
 }
 

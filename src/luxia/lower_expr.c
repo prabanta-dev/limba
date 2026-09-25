@@ -656,7 +656,7 @@ limba_id lxl_addr(lxl *L, uint32_t node)
         return nil_checked(L, p);
     }
     case LXN_CALL: {
-        /* a function result in memory: not in Luxia 0 */
+        /* a record or an array result: the slot the call filled */
         limba_id r;
         lxl_call(L, node, &r);
         return r;
