@@ -85,20 +85,31 @@ limba_module *limba_module_new(void)
     return m;
 }
 
+void limba_func_clear(limba_func *f)
+{
+    for (uint32_t b = 0; b < f->nblocks; b++)
+        free(f->blocks[b].insts);
+    free(f->blocks);
+    free(f->insts);
+    free(f->operands);
+    free(f->slots);
+    free(f->locs);
+    f->blocks = NULL;
+    f->insts = NULL;
+    f->operands = NULL;
+    f->slots = NULL;
+    f->locs = NULL;
+    f->nblocks = f->capblocks = f->ninsts = f->capinsts = 0;
+    f->noperands = f->capoperands = f->nslots = f->capslots = 0;
+    f->caplocs = f->pos_cur = 0;
+}
+
 void limba_module_free(limba_module *m)
 {
     if (!m)
         return;
-    for (uint32_t i = 0; i < m->nfuncs; i++) {
-        limba_func *f = &m->funcs[i];
-        for (uint32_t b = 0; b < f->nblocks; b++)
-            free(f->blocks[b].insts);
-        free(f->blocks);
-        free(f->insts);
-        free(f->operands);
-        free(f->slots);
-        free(f->locs);
-    }
+    for (uint32_t i = 0; i < m->nfuncs; i++)
+        limba_func_clear(&m->funcs[i]);
     free(m->funcs);
     free(m->pos);
     free(m->globals);

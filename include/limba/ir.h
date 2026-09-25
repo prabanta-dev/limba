@@ -349,6 +349,10 @@ limba_id limba_func_find(const limba_module *m, limba_id name);
 limba_id limba_global_find(const limba_module *m, limba_id name);
 limba_id limba_extern_find(const limba_module *m, limba_id name);
 
+/* free the body of a function (blocks, instructions, slots, positions):
+   it keeps its name and type, once written somewhere else */
+void limba_func_clear(limba_func *f);
+
 limba_id limba_block_add(limba_func *f);
 limba_id limba_slot_add(limba_func *f, uint32_t size, uint32_t align);
 /* append an instruction to block b; its value id is the return */
@@ -384,6 +388,14 @@ typedef struct {
 
 /* 0 if the module is well formed; otherwise -1 and the first defect */
 int limba_verify(const limba_module *m, limba_diag *d);
+/* the same in parts: the types, globals, externs, the declarations of the
+   functions and the positions; then the function bodies one by one, with
+   a verifier that keeps its memory from one to the next */
+int limba_verify_decls(const limba_module *m, limba_diag *d);
+typedef struct limba_verifier limba_verifier;
+limba_verifier *limba_verifier_new(const limba_module *m);
+int limba_verifier_func(limba_verifier *v, limba_id fid, limba_diag *d);
+void limba_verifier_free(limba_verifier *v);
 
 /* the text form (.lit) */
 void limba_print(const limba_module *m, FILE *out);
@@ -392,6 +404,17 @@ limba_module *limba_parse(const char *text, size_t len, limba_diag *d);
 
 /* the binary form (.lir), in memory: *buf is malloc'd, the caller frees */
 int limba_write(const limba_module *m, uint8_t **buf, size_t *len);
+/* the same a function at a time, for a front end that frees each body
+   once written: limba_writer_func encodes one (it may then be cleared),
+   limba_writer_end encodes the rest of m, the functions not given too,
+   frees the writer and gives the bytes of limba_write(m) */
+typedef struct limba_writer limba_writer;
+limba_writer *limba_writer_new(void);
+void limba_writer_func(limba_writer *w, const limba_module *m, limba_id fid);
+int limba_writer_end(limba_writer *w, const limba_module *m, uint8_t **buf,
+                     size_t *len);
+/* a writer given up before its end */
+void limba_writer_free(limba_writer *w);
 limba_module *limba_read(const uint8_t *buf, size_t len, limba_diag *d);
 
 #endif

@@ -71,7 +71,9 @@ void limba_edit_end(limba_edit *e)
     limba_inst *insts = limba_xmalloc(((size_t)next + 1) * sizeof(*insts));
     uint32_t *locs =
         f->locs ? limba_xcalloc((size_t)next + 1, sizeof(*locs)) : NULL;
-    uint32_t *ops = NULL, nops = 0, capops = 0;
+    /* no more operands than there were */
+    uint32_t capops = f->noperands, nops = 0;
+    uint32_t *ops = limba_xmalloc(((size_t)capops + 1) * sizeof(*ops));
     limba_block *blocks = limba_xcalloc((size_t)nextb + 1, sizeof(*blocks));
     uint8_t *kinds = NULL;
     uint32_t capkinds = 0;
@@ -94,20 +96,21 @@ void limba_edit_end(limba_edit *e)
             if (locs)
                 locs[newid[id]] = limba_inst_pos(f, id);
             out->first = nops;
+            bool values = limba_only_values(in);
             if (in->nops > capkinds) {
                 capkinds = in->nops;
                 kinds = limba_xrealloc(kinds, capkinds, 1);
             }
-            limba_operand_kinds(f, in, kinds);
+            if (!values)
+                limba_operand_kinds(f, in, kinds);
             for (uint32_t i = 0; i < in->nops; i++) {
                 uint32_t o = f->operands[in->first + i];
-                if (kinds[i] == LIMBA_OK_VALUE) {
+                if (values || kinds[i] == LIMBA_OK_VALUE) {
                     o = limba_edit_resolve(e, o);
                     o = o < n ? newid[o] : UINT32_MAX;
                 } else if (kinds[i] == LIMBA_OK_BLOCK) {
                     o = o < nb ? newblock[o] : UINT32_MAX;
                 }
-                LIMBA_GROW(ops, nops, capops);
                 ops[nops++] = o;
             }
             nbl->insts[nbl->ninsts++] = newid[id];

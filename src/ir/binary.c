@@ -67,28 +67,93 @@ static void w_func(limba_wbuf *w, const limba_func *f)
         limba_w_uleb(w, bl->ninsts - bl->nparams);
         for (uint32_t k = bl->nparams; k < bl->ninsts; k++) {
             const limba_inst *in = &f->insts[bl->insts[k]];
-            limba_w_uleb(w, in->op);
-            limba_w_uleb(w, in->type);
-            limba_w_byte(w, in->cc);
-            limba_w_sleb(w, in->imm);
-            limba_w_sleb(w, in->imm2);
-            limba_w_uleb(w, in->nops);
+            const uint32_t *o = f->operands + in->first;
+            /* room for all of it, then no more checks */
+            limba_w_reserve(w, 60 + 10 * (size_t)in->nops);
+            uint8_t *p = w->buf + w->len;
+            p = limba_put_uleb(p, in->op);
+            p = limba_put_uleb(p, in->type);
+            *p++ = in->cc;
+            p = limba_put_sleb(p, in->imm);
+            p = limba_put_sleb(p, in->imm2);
+            p = limba_put_uleb(p, in->nops);
+            if (limba_only_values(in)) {
+                for (uint32_t i = 0; i < in->nops; i++)
+                    p = limba_put_uleb(p, num[o[i]]);
+                w->len = (size_t)(p - w->buf);
+                continue;
+            }
+            w->len = (size_t)(p - w->buf);
             if (in->nops > cap) {
                 cap = in->nops;
                 kinds = limba_xrealloc(kinds, cap, 1);
             }
             limba_operand_kinds(f, in, kinds);
-            for (uint32_t i = 0; i < in->nops; i++) {
-                uint32_t o = f->operands[in->first + i];
-                limba_w_uleb(w, kinds[i] == LIMBA_OK_VALUE ? num[o] : o);
-            }
+            for (uint32_t i = 0; i < in->nops; i++)
+                limba_w_uleb(w, kinds[i] == LIMBA_OK_VALUE ? num[o[i]] : o[i]);
         }
     }
     free(num);
     free(kinds);
 }
 
+/* the positions of the instructions of f, in canonical order, after a
+   flag: whether it has any */
+static void w_locs(limba_wbuf *w, const limba_func *f)
+{
+    limba_w_byte(w, f->locs != NULL);
+    if (!f->locs)
+        return;
+    for (uint32_t b = 0; b < f->nblocks; b++)
+        for (uint32_t k = 0; k < f->blocks[b].ninsts; k++)
+            limba_w_uleb(w, limba_inst_pos(f, f->blocks[b].insts[k]));
+}
+
+/* the bytes of the functions given one at a time: body and positions,
+   where each begins and ends, by function id */
+struct limba_writer {
+    limba_wbuf body, locs;
+    size_t *bat, *bend, *lat, *lend;
+    uint8_t *done;
+    uint32_t cap;
+};
+
+limba_writer *limba_writer_new(void)
+{
+    return limba_xcalloc(1, sizeof(limba_writer));
+}
+
+void limba_writer_func(limba_writer *w, const limba_module *m, limba_id fid)
+{
+    if (fid >= w->cap) {
+        uint32_t cap = w->cap ? w->cap : 16;
+        while (cap <= fid || cap < m->nfuncs)
+            cap *= 2;
+        w->bat = limba_xrealloc(w->bat, cap, sizeof(size_t));
+        w->bend = limba_xrealloc(w->bend, cap, sizeof(size_t));
+        w->lat = limba_xrealloc(w->lat, cap, sizeof(size_t));
+        w->lend = limba_xrealloc(w->lend, cap, sizeof(size_t));
+        w->done = limba_xrealloc(w->done, cap, 1);
+        memset(w->done + w->cap, 0, cap - w->cap);
+        w->cap = cap;
+    }
+    const limba_func *f = &m->funcs[fid];
+    w->bat[fid] = w->body.len;
+    w_func(&w->body, f);
+    w->bend[fid] = w->body.len;
+    w->lat[fid] = w->locs.len;
+    w_locs(&w->locs, f);
+    w->lend[fid] = w->locs.len;
+    w->done[fid] = 1;
+}
+
 int limba_write(const limba_module *m, uint8_t **buf, size_t *len)
+{
+    return limba_writer_end(limba_writer_new(), m, buf, len);
+}
+
+int limba_writer_end(limba_writer *wr, const limba_module *m, uint8_t **buf,
+                     size_t *len)
 {
     limba_wbuf w = {0};
     limba_w_bytes(&w, magic, sizeof(magic));
@@ -157,8 +222,13 @@ int limba_write(const limba_module *m, uint8_t **buf, size_t *len)
     }
 
     limba_w_uleb(&w, m->nfuncs);
-    for (uint32_t i = 0; i < m->nfuncs; i++)
-        w_func(&w, &m->funcs[i]);
+    for (uint32_t i = 0; i < m->nfuncs; i++) {
+        if (i < wr->cap && wr->done[i])
+            limba_w_bytes(&w, wr->body.buf + wr->bat[i],
+                          wr->bend[i] - wr->bat[i]);
+        else
+            w_func(&w, &m->funcs[i]);
+    }
 
     /* positions in the source: the table, then for each function a flag
        and, if set, the position of every instruction in canonical order */
@@ -169,18 +239,31 @@ int limba_write(const limba_module *m, uint8_t **buf, size_t *len)
         limba_w_uleb(&w, m->pos[k].col);
     }
     for (uint32_t i = 0; i < m->nfuncs; i++) {
-        const limba_func *f = &m->funcs[i];
-        limba_w_byte(&w, f->locs != NULL);
-        if (!f->locs)
-            continue;
-        for (uint32_t b = 0; b < f->nblocks; b++)
-            for (uint32_t k = 0; k < f->blocks[b].ninsts; k++)
-                limba_w_uleb(&w, limba_inst_pos(f, f->blocks[b].insts[k]));
+        if (i < wr->cap && wr->done[i])
+            limba_w_bytes(&w, wr->locs.buf + wr->lat[i],
+                          wr->lend[i] - wr->lat[i]);
+        else
+            w_locs(&w, &m->funcs[i]);
     }
 
     *buf = w.buf;
     *len = w.len;
+    limba_writer_free(wr);
     return 0;
+}
+
+void limba_writer_free(limba_writer *w)
+{
+    if (!w)
+        return;
+    free(w->body.buf);
+    free(w->locs.buf);
+    free(w->bat);
+    free(w->bend);
+    free(w->lat);
+    free(w->lend);
+    free(w->done);
+    free(w);
 }
 
 /* ---- reading ---- */

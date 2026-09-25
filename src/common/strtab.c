@@ -61,7 +61,15 @@ uint32_t limba_strtab_find(const limba_strtab *t, const char *s, size_t len)
 
 uint32_t limba_strtab_intern(limba_strtab *t, const char *s, size_t len)
 {
-    uint32_t id = limba_strtab_find(t, s, len);
+    return limba_strtab_intern_hashed(t, s, len,
+                                      limba_fnv(s, len, LIMBA_FNV_SEED));
+}
+
+uint32_t limba_strtab_intern_hashed(limba_strtab *t, const char *s, size_t len,
+                                    uint64_t hash)
+{
+    struct probe p = {t, s, len};
+    uint32_t id = limba_hash_find(t->index, hash, same, &p);
     if (id != UINT32_MAX)
         return id;
     if (len > UINT32_MAX - 1 || t->nbytes + len + 1 > UINT32_MAX) {
@@ -84,7 +92,7 @@ uint32_t limba_strtab_intern(limba_strtab *t, const char *s, size_t len)
         memcpy(t->bytes + t->nbytes, s, len);
     t->bytes[t->nbytes + len] = 0;
     t->nbytes += len + 1;
-    limba_hash_put(t->index, limba_fnv(s, len, LIMBA_FNV_SEED), id);
+    limba_hash_put(t->index, hash, id);
     return id;
 }
 

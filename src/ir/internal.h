@@ -72,6 +72,13 @@ bool limba_cfg_dominates(const limba_cfg *c, limba_id a, limba_id b);
 
 enum { LIMBA_OK_VALUE, LIMBA_OK_BLOCK, LIMBA_OK_RAW };
 
+/* every operand of in is a value: all but the branches */
+static inline bool limba_only_values(const limba_inst *in)
+{
+    unsigned fmt = limba_ops[in->op].format;
+    return fmt != LIMBA_F_BR && fmt != LIMBA_F_CBR && fmt != LIMBA_F_SWITCH;
+}
+
 /* the kind of every operand of in, into kinds[nops]; false if the operand
    list does not have the shape its format asks for */
 bool limba_operand_kinds(const limba_func *f, const limba_inst *in,

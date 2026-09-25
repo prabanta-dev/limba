@@ -9,51 +9,20 @@
 
 #include <string.h>
 
-void limba_w_bytes(limba_wbuf *w, const void *p, size_t n)
+void limba_w_reserve(limba_wbuf *w, size_t n)
 {
     while (w->len + n > w->cap) {
         w->cap = w->cap ? 2 * w->cap : 4096;
         w->buf = limba_xrealloc(w->buf, w->cap, 1);
     }
+}
+
+void limba_w_bytes(limba_wbuf *w, const void *p, size_t n)
+{
+    limba_w_reserve(w, n);
     if (n)
         memcpy(w->buf + w->len, p, n);
     w->len += n;
-}
-
-void limba_w_byte(limba_wbuf *w, uint8_t b)
-{
-    if (w->len < w->cap)
-        w->buf[w->len++] = b;
-    else
-        limba_w_bytes(w, &b, 1);
-}
-
-/* a LEB128 number is made aside, then written at once */
-void limba_w_uleb(limba_wbuf *w, uint64_t v)
-{
-    uint8_t b[10];
-    size_t n = 0;
-    do {
-        uint8_t x = v & 0x7f;
-        v >>= 7;
-        b[n++] = (uint8_t)(x | (v ? 0x80 : 0));
-    } while (v);
-    limba_w_bytes(w, b, n);
-}
-
-void limba_w_sleb(limba_wbuf *w, int64_t v)
-{
-    uint8_t b[10];
-    size_t n = 0;
-    for (;;) {
-        uint8_t x = (uint8_t)(v & 0x7f);
-        v >>= 7; /* arithmetic shift: gcc and clang define it */
-        bool done = (v == 0 && !(x & 0x40)) || (v == -1 && (x & 0x40));
-        b[n++] = (uint8_t)(x | (done ? 0 : 0x80));
-        if (done)
-            break;
-    }
-    limba_w_bytes(w, b, n);
 }
 
 void limba_w_u64(limba_wbuf *w, uint64_t v)

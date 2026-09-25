@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
+typedef struct limba_verifier {
     const limba_module *m;
     limba_diag *d;
     /* the function being checked */
@@ -616,7 +616,7 @@ static bool check_func(vctx *v)
     return true;
 }
 
-int limba_verify(const limba_module *m, limba_diag *d)
+int limba_verify_decls(const limba_module *m, limba_diag *d)
 {
     vctx v = {.m = m, .d = d};
     bool ok = check_types(&v) && check_symbols(&v);
@@ -624,16 +624,47 @@ int limba_verify(const limba_module *m, limba_diag *d)
         if (m->pos[k].file >= limba_str_count(m)) {
             limba_diag_set(d, 0, "position %" PRIu32 ": no such file string",
                            k + 1);
-            free(v.pos);
-            return -1;
+            ok = false;
         }
-    for (uint32_t i = 0; ok && i < m->nfuncs; i++) {
-        v.f = &m->funcs[i];
-        v.fid = i;
-        ok = check_func(&v);
-    }
     limba_cfg_free(&v.cfg);
     free(v.pos);
     free(v.kinds);
     return ok ? 0 : -1;
+}
+
+limba_verifier *limba_verifier_new(const limba_module *m)
+{
+    vctx *v = limba_xcalloc(1, sizeof(*v));
+    v->m = m;
+    return v;
+}
+
+int limba_verifier_func(limba_verifier *v, limba_id fid, limba_diag *d)
+{
+    v->d = d;
+    v->f = &v->m->funcs[fid];
+    v->fid = fid;
+    return check_func(v) ? 0 : -1;
+}
+
+void limba_verifier_free(limba_verifier *v)
+{
+    if (!v)
+        return;
+    limba_cfg_free(&v->cfg);
+    free(v->pos);
+    free(v->kinds);
+    free(v);
+}
+
+int limba_verify(const limba_module *m, limba_diag *d)
+{
+    if (limba_verify_decls(m, d) != 0)
+        return -1;
+    limba_verifier *v = limba_verifier_new(m);
+    int r = 0;
+    for (uint32_t i = 0; r == 0 && i < m->nfuncs; i++)
+        r = limba_verifier_func(v, i, d);
+    limba_verifier_free(v);
+    return r;
 }
