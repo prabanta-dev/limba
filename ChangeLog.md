@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- An index `x[i]` inside `for var i := low(x) to high(x)` (or down, or
+  from `i + c`, or to `j - c`, with `c >= 0` and the variable of an
+  outer loop over `x`) is not checked: the variable of a for stays
+  within its bounds and an array keeps its own for all its life. A
+  string keeps its bounds when nothing assigns it, takes its address or
+  can reach it from a routine (no global): `for var i := 1 to length(s)`
+  and `length(s) downto 1` then leave out the check of `s[i]`. On the
+  benchmarks the checks cost +19.3 % of the instructions run instead of
+  +30.6 % (geometric mean; n-body from +36.4 % to 0). The random programs
+  loop over their arrays and strings, index other arrays with the same
+  variable, run inner loops from `i + c`, `i - c` and `i + (-c)`, and
+  shorten strings inside the loop.
 - The front end is faster: 108 203 lines of Luxia (the benchmarks copied
   100 times) go to a `.lir` in 200 ms instead of 257 ms, 1.85 µs a line.
   A real literal of up to 19 digits between 10^-38 and 10^19 is read in

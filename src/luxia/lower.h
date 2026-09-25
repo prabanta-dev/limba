@@ -50,7 +50,13 @@ typedef struct {
                         those of the argument, i64 values */
     limba_id global; /* GLOBAL */
     limba_id back;   /* an out parameter: where its value goes back */
+    /* the variable of a for: the array (or string) whose bounds hold it,
+       below and above, all through the body; LXL_ONE for a lower bound
+       of 1 and more, the first index of every string */
+    limba_sym lo_of, hi_of;
 } lxl_store;
+
+#define LXL_ONE UINT32_MAX
 
 typedef struct {
     limba_id exit, cont;
@@ -62,6 +68,7 @@ typedef struct {
     limba_module *m;
     lxl_store *store;  /* per symbol */
     uint8_t *taken;    /* per symbol: its address is needed */
+    uint8_t *assigned; /* per symbol: the target of an assignment */
     limba_id *tmap;    /* per language type: the IR type, 0 unknown */
     limba_id *func_of; /* per symbol of a routine: its function */
     /* the function being built */
@@ -124,6 +131,8 @@ limba_id lxl_conv(lxl *L, limba_id v, limba_ltype from, limba_ltype to);
 void lxl_array_parts(lxl *L, uint32_t base, uint32_t at, limba_id *p,
                      limba_id *len, limba_id *lo, limba_id *hi);
 limba_id lxl_to_i64(lxl *L, limba_id v, limba_ltype t);
+/* is base[idx] inside base by the bounds of the for variable idx */
+bool lxl_in_bounds(const lxl *L, uint32_t base, uint32_t idx);
 /* an object without an initial value (§ 4.5): every scalar of a range
    narrower than its base, in the object of type t at p + off, gets a
    value outside it; the rest stays 0 */

@@ -964,6 +964,20 @@ static const run_case run_cases[] = {
      "array[Int32 range 1..n] of S; begin a[1] := 1; writeln(a[1]); "
      "writeln(a[n]); end q; begin q(1); q(9); end.",
      "1\n1\n1\n", "trap 101 at 1:141"},
+    /* a for over the bounds of x leaves out the checks of x[i] only when
+       x keeps its bounds: a string assigned in the loop, a global one a
+       routine may assign, one passed as var, another array, i - 1 as the
+       low bound keep them */
+    {"program p; procedure q(); var s: String := \"abc\"; begin for var i: Int64 := 1 to length(s) do s := copy(s, 1, 1); writeln(s[i]); end; end q; begin q(); end.",
+     "97\n", "trap 100 at 1:124"},
+    {"program p; var g: String := \"abc\"; procedure cut(); begin g := \"a\"; end cut; begin for var i: Int64 := 1 to length(g) do cut(); writeln(g[i]); end; end.",
+     "97\n", "trap 100 at 1:138"},
+    {"program p; procedure cut(var t: String); begin t := \"a\"; end cut; procedure q(); var s: String := \"abc\"; begin for var i: Int64 := 1 to length(s) do cut(s); writeln(s[i]); end; end q; begin q(); end.",
+     "97\n", "trap 100 at 1:167"},
+    {"program p; var a: array[Int32 range 1..3] of Int32; b: array[Int32 range 1..2] of Int32; begin for var i := low(a) to high(a) do writeln(b[i]); end; end.",
+     "0\n0\n", "trap 100 at 1:139"},
+    {"program p; var a: array[Int32 range 1..3] of Int32; begin for var i := low(a) to high(a) do for var j := i - 1 to high(a) do writeln(a[j]); end; end; end.",
+     "", "trap 100 at 1:135"},
 };
 
 /* run main on the input in (NULL: none); what it printed (malloc'd, *len

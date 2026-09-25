@@ -1815,6 +1815,73 @@ static uint32_t declare_dyn(G *g)
     return s;
 }
 
+/* writeln(x[i]) and often y[i], for i a loop variable of index base b
+   and y another array with that index base, which may not hold i */
+static uint32_t write_elements(G *g, uint32_t x, uint32_t i, unsigned b)
+{
+    uint32_t items[3], k = 0;
+    int y = chance(g, 50) ? pick_indexed(g, b) : -1;
+    for (int n = 0; n < (y >= 0 ? 2 : 1); n++) {
+        uint32_t a = n ? (uint32_t)y : x;
+        if (k)
+            items[k++] = new_e(g, E_STR, 0);
+        uint32_t ix = var_ref(g, i);
+        uint32_t el = new_e(g, E_INDEX, g->ty[g->v[a].t].elem);
+        g->e[el].var = a;
+        g->e[el].a = ix;
+        if (is_enum(g, g->e[el].t)) {
+            uint32_t o = new_e(g, E_ORD, T_U32);
+            g->e[o].a = el;
+            el = o;
+        }
+        items[k++] = el;
+    }
+    uint32_t w = new_s(g, S_WRITE);
+    g->st[w].args = keep_list(g, items, k);
+    g->st[w].nargs = k;
+    return w;
+}
+
+/* the body of for i over the bounds of array x begins printing x[i],
+   and sometimes a loop for j := i + c to high(x) (or low(x) to i - c)
+   that prints x[j]: the checks the front end may leave out, next to
+   those it must keep */
+static void over_array(G *g, uint32_t s, uint32_t x, uint32_t i, unsigned b)
+{
+    uint32_t pre[2], np = 0;
+    pre[np++] = write_elements(g, x, i, b);
+    if (chance(g, 40)) {
+        /* i + c .. high(x) and low(x) .. i - c stay inside x; i - c ..
+           high(x) and low(x) .. i + c, with c > 0, may not */
+        uint32_t f = new_s(g, S_FOR);
+        bool up = chance(g, 50), out = chance(g, 30);
+        v128 cv = out ? 1 + below(g, 2) : below(g, 3);
+        unsigned op = up != out ? O_ADD : O_SUB;
+        if (out && fam(b) == 'S' && chance(g, 50)) {
+            /* the same step written the other way: i + (-c), i - (-c) */
+            op = op == O_ADD ? O_SUB : O_ADD;
+            cv = -cv;
+        }
+        uint32_t c = lit(g, b, cv);
+        uint32_t iv = var_ref(g, i);
+        uint32_t near = binop(g, op, b, iv, c);
+        uint32_t edge = bound(g, up ? E_HIGH : E_LOW, x);
+        uint32_t j = new_v(g, b, V_LOOP);
+        g->st[f].var = j;
+        g->st[f].e = up ? near : edge;
+        g->st[f].e2 = up ? edge : near;
+        uint32_t w = write_elements(g, x, j, b);
+        g->st[f].blk = keep_list(g, &w, 1);
+        g->st[f].nblk = 1;
+        pre[np++] = f;
+    }
+    uint32_t bb = g->st[s].blk, nb = g->st[s].nblk;
+    while (np)
+        append(g, &bb, &nb, pre[--np], true);
+    g->st[s].blk = bb;
+    g->st[s].nblk = nb;
+}
+
 /* the type of the values a selector can take: its range, if a variable
    or an element of a range type gives it */
 static uint32_t selector_type(const G *g, uint32_t e)
@@ -1860,6 +1927,56 @@ static uint32_t stmt(G *g, uint32_t *out)
         int d = fn >= 0 ? pick_typed(g, g->r[fn].rt, true) : -1;
         if (d >= 0)
             return copy_call(g, (uint32_t)fn, (uint32_t)d, !pure, out);
+    }
+    int sv = chance(g, 4) ? pick_var(g, T_STR, false, false) : -1;
+    if (sv >= 0 && deep) {
+        /* for var i: Int64 := 1 to length(s) (or down) printing s[i]; the
+           body may assign s, and then each s[i] is checked again */
+        uint32_t s = new_s(g, S_FOR);
+        bool down = chance(g, 40);
+        uint32_t one = lit(g, T_I64, 1 + below(g, 2));
+        uint32_t sr = var_ref(g, (uint32_t)sv);
+        uint32_t len = new_e(g, E_SLEN, T_I64);
+        g->e[len].a = sr;
+        uint32_t i = new_v(g, T_I64, V_LOOP);
+        g->st[s].var = i;
+        g->st[s].down = down;
+        g->st[s].e = down ? len : one;
+        g->st[s].e2 = down ? one : len;
+        uint32_t mark = g->nscope;
+        show(g, i);
+        loop_body(g, s, 0);
+        g->nscope = mark;
+        if (writable(g, (uint32_t)sv) && chance(g, 40)) {
+            /* s := copy(s, 1, k): shorter, and s[i] is checked again */
+            uint32_t a = var_ref(g, (uint32_t)sv);
+            uint32_t from = lit(g, T_I64, 1);
+            uint32_t k = lit(g, T_I64, below(g, 4));
+            uint32_t cp = new_e(g, E_COPY, T_STR);
+            g->e[cp].a = a;
+            g->e[cp].b = from;
+            g->e[cp].c = k;
+            uint32_t as = new_s(g, S_ASSIGN);
+            g->st[as].var = (uint32_t)sv;
+            g->st[as].e = cp;
+            uint32_t bb = g->st[s].blk, nb = g->st[s].nblk;
+            append(g, &bb, &nb, as, true);
+            g->st[s].blk = bb;
+            g->st[s].nblk = nb;
+        }
+        uint32_t ix = var_ref(g, i);
+        uint32_t el = new_e(g, E_SIDX, T_B8);
+        g->e[el].var = (uint32_t)sv;
+        g->e[el].b = ix;
+        uint32_t w = new_s(g, S_WRITE);
+        g->st[w].args = keep_list(g, &el, 1);
+        g->st[w].nargs = 1;
+        uint32_t bb = g->st[s].blk, nb = g->st[s].nblk;
+        append(g, &bb, &nb, w, chance(g, 50));
+        g->st[s].blk = bb;
+        g->st[s].nblk = nb;
+        out[0] = s;
+        return 1;
     }
     if (c < 14 && chance(g, 40)) {
         uint32_t s = declare_dyn(g);
@@ -2018,6 +2135,8 @@ static uint32_t stmt(G *g, uint32_t *out)
         uint32_t mark = g->nscope;
         show(g, v);
         loop_body(g, s, 0);
+        if (!et && arr >= 0 && chance(g, 60))
+            over_array(g, s, (uint32_t)arr, v, b);
         g->nscope = mark;
         out[0] = s;
         return 1;
@@ -3974,6 +4093,21 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         g.st[w].args = keep_list(&g, items, k);
         g.st[w].nargs = k;
         first[nfirst++] = w;
+    }
+    /* and runs over the bounds of some global arrays */
+    for (uint32_t v = 0; v < nglob && nfirst < 15; v++) {
+        uint32_t at = g.v[v].t;
+        if (g.ty[at].k != K_ARRAY || is_enum(&g, g.ty[at].index) ||
+            chance(&g, 40))
+            continue;
+        unsigned b = index_base(&g, at);
+        uint32_t s = new_s(&g, S_FOR);
+        uint32_t i = new_v(&g, b, V_LOOP);
+        g.st[s].var = i;
+        g.st[s].e = bound(&g, E_LOW, v);
+        g.st[s].e2 = bound(&g, E_HIGH, v);
+        over_array(&g, s, v, i, b);
+        first[nfirst++] = s;
     }
     g.main_blk = block(&g, 4 + (int)below(&g, 12), &g.main_n);
     while (nfirst)

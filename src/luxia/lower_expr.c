@@ -599,12 +599,14 @@ static limba_id index_addr(lxl *L, uint32_t node)
     lxl_at(L, node);
     limba_id i64 = lxl_to_i64(L, i, it);
     uint64_t esize = ti(L, at->elem)->size;
+    bool known = lxl_in_bounds(L, base, idx);
     if (at->kind == LIMBA_LTK_OPEN) {
         /* the bounds of the argument, i64 values */
         bool osg = lxl_signed(L, at->index);
         limba_id a = cmp(L, false, osg ? LIMBA_CC_SGE : LIMBA_CC_UGE, i64, lo);
         limba_id b = cmp(L, false, osg ? LIMBA_CC_SLE : LIMBA_CC_ULE, i64, hi);
-        lxl_check(L, bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b), LXR_INDEX);
+        if (!known)
+            lxl_check(L, bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b), LXR_INDEX);
         return addr(L, p, bin(L, LIMBA_OP_SUB, LIMBA_T_I64, i64, lo),
                     (int64_t)esize, 0);
     }
@@ -616,10 +618,12 @@ static limba_id index_addr(lxl *L, uint32_t node)
                  hi64 = lxl_to_i64(L, hi, at->index);
         limba_id a = cmp(L, false, sg ? LIMBA_CC_SGE : LIMBA_CC_UGE, i64, lo64);
         limba_id b = cmp(L, false, sg ? LIMBA_CC_SLE : LIMBA_CC_ULE, i64, hi64);
-        lxl_check(L, bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b), LXR_INDEX);
+        if (!known)
+            lxl_check(L, bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b), LXR_INDEX);
         off = bin(L, LIMBA_OP_SUB, LIMBA_T_I64, i64, lo64);
     } else {
-        check_range(L, i, it, ix->lo, ix->hi, LXR_INDEX);
+        if (!known)
+            check_range(L, i, it, ix->lo, ix->hi, LXR_INDEX);
         off = bin(L, LIMBA_OP_SUB, LIMBA_T_I64, i64,
                   lxl_iconst(L, LIMBA_T_I64, (int64_t)ix->lo));
     }
@@ -866,11 +870,13 @@ limba_id lxl_value(lxl *L, uint32_t node)
             limba_id i = lxl_to_i64(L, lxl_value(L, nd(L, node)->b),
                                     ntype(L, nd(L, node)->b));
             lxl_at(L, node); /* checked at the [ */
-            limba_id len = lxl_rt(L, LIMBA_RT_STR_LEN, LIMBA_T_I64, &s, 1);
-            limba_id a =
-                cmp(L, false, LIMBA_CC_SGE, i, lxl_iconst(L, LIMBA_T_I64, 1));
-            limba_id b = cmp(L, false, LIMBA_CC_SLE, i, len);
-            lxl_check(L, bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b), LXR_INDEX);
+            if (!lxl_in_bounds(L, x->a, nd(L, node)->b)) {
+                limba_id len = lxl_rt(L, LIMBA_RT_STR_LEN, LIMBA_T_I64, &s, 1);
+                limba_id a = cmp(L, false, LIMBA_CC_SGE, i,
+                                 lxl_iconst(L, LIMBA_T_I64, 1));
+                limba_id b = cmp(L, false, LIMBA_CC_SLE, i, len);
+                lxl_check(L, bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b), LXR_INDEX);
+            }
             limba_id p = lxl_rt(L, LIMBA_RT_STR_PTR, LIMBA_T_PTR, &s, 1);
             return load(L, t, addr(L, p, i, 1, -1));
         }

@@ -453,6 +453,76 @@ static void loop_stmt(lxl *L, uint32_t node)
     L->cur = out;
 }
 
+/* an array or a string variable whose bounds never change while a loop
+   runs over them: an array keeps its bounds for all its life; a string
+   variable is kept when nothing assigns it or takes its address, and it
+   is no global (a routine called in the loop could assign it) */
+static bool fixed_bounds(const lxl *L, uint32_t ref)
+{
+    if (nd(L, ref)->kind != LXN_REF || !L->S->sym[ref])
+        return false;
+    limba_sym x = L->S->sym[ref];
+    const limba_symbol *y = &L->S->st.sym[x];
+    if (y->kind != LIMBA_LSYM_VAR && y->kind != LIMBA_LSYM_PARAM)
+        return false;
+    switch (ti(L, y->type)->kind) {
+    case LIMBA_LTK_ARRAY:
+    case LIMBA_LTK_OPEN:
+        return true;
+    case LIMBA_LTK_STRING:
+        return L->store[x].kind != LXL_GLOBAL && !L->taken[x] &&
+               !L->assigned[x];
+    }
+    return false;
+}
+
+/* the variable whose low (low) or high bound expression e stays within,
+   0 if none: low(x), high(x), length(s) (the high bound of a string), a
+   constant from 1 up for any string, i + c and i - c with c >= 0 for a
+   for variable i already known */
+static limba_sym bound_of(const lxl *L, uint32_t e, bool low)
+{
+    limba_lxs *S = L->S;
+    const limba_lx_node *x = nd(L, e);
+    if (x->kind == LXN_CALL && S->sym[x->a] &&
+        S->st.sym[S->sym[x->a]].kind == LIMBA_LSYM_BUILTIN &&
+        list_n(L, x->b) == 1) {
+        unsigned id = S->st.sym[S->sym[x->a]].value;
+        uint32_t a = list_at(L, x->b, 0);
+        if (!fixed_bounds(L, a))
+            return 0;
+        bool str = ti(L, S->type[a])->kind == LIMBA_LTK_STRING;
+        if (low ? id == LXB_LOW : id == LXB_HIGH || (str && id == LXB_LENGTH))
+            return S->sym[a];
+        return 0;
+    }
+    if (low && S->val[e]) {
+        __int128 v;
+        if (lxs_value_to_int(S, S->val[e], &v) && v >= 1)
+            return LXL_ONE;
+    }
+    if (x->kind == LXN_REF && S->sym[e])
+        return low ? L->store[S->sym[e]].lo_of : L->store[S->sym[e]].hi_of;
+    if (x->kind == LXN_BINARY && x->op == (low ? LX_PLUS : LX_MINUS) &&
+        nd(L, x->a)->kind == LXN_REF && S->val[x->b]) {
+        __int128 c;
+        if (lxs_value_to_int(S, S->val[x->b], &c) && c >= 0)
+            return bound_of(L, x->a, low);
+    }
+    return 0;
+}
+
+bool lxl_in_bounds(const lxl *L, uint32_t base, uint32_t idx)
+{
+    limba_lxs *S = L->S;
+    if (nd(L, idx)->kind != LXN_REF || !S->sym[idx] || !fixed_bounds(L, base))
+        return false;
+    limba_sym x = S->sym[base];
+    const lxl_store *v = &L->store[S->sym[idx]];
+    bool str = ti(L, S->type[base])->kind == LIMBA_LTK_STRING;
+    return v->hi_of == x && (v->lo_of == x || (str && v->lo_of == LXL_ONE));
+}
+
 /* for var i := a to b: the bounds once, no step past the last value */
 static void for_stmt(lxl *L, uint32_t node)
 {
@@ -481,6 +551,8 @@ static void for_stmt(lxl *L, uint32_t node)
     lxl_store *st = &L->store[s];
     st->kind = LXL_SSA;
     st->var = limba_ssa_var(L->ssa, it);
+    st->lo_of = bound_of(L, down ? tn : fn, true);
+    st->hi_of = bound_of(L, down ? fn : tn, false);
     limba_ssa_def(L->ssa, st->var, L->cur, from);
     limba_ssa_cbr(L->ssa, L->cur, enter, bodyb, out);
     L->cur = bodyb;
@@ -697,6 +769,9 @@ static void scan_taken(lxl *L)
     limba_lxs *S = L->S;
     for (uint32_t n = 1; n < S->t->nnode; n++) {
         const limba_lx_node *x = nd(L, n);
+        if (x->kind == LXN_ASSIGN && nd(L, x->a)->kind == LXN_REF &&
+            S->sym[x->a])
+            L->assigned[S->sym[x->a]] = 1;
         if (x->kind != LXN_CALL)
             continue;
         limba_sym s = S->sym[x->a];
@@ -921,6 +996,7 @@ limba_module *limba_lxl_program(limba_lxs *S)
     L->m = limba_module_new();
     L->store = limba_xcalloc(S->st.nsym + 1, sizeof(*L->store));
     L->taken = limba_xcalloc(S->st.nsym + 1, 1);
+    L->assigned = limba_xcalloc(S->st.nsym + 1, 1);
     L->func_of = limba_xcalloc(S->st.nsym + 1, sizeof(*L->func_of));
     L->tmap = limba_xcalloc(S->ts.n + 1, sizeof(*L->tmap));
     L->node_pos = limba_xcalloc(S->t->nnode + 1, sizeof(*L->node_pos));
@@ -1005,6 +1081,7 @@ limba_module *limba_lxl_program(limba_lxs *S)
 
     free(L->store);
     free(L->taken);
+    free(L->assigned);
     free(L->func_of);
     free(L->tmap);
     free(L->loops);
