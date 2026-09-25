@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `-O1` takes 168 ms instead of 191 on 108 203 lines (1.55 µs a line
+  from 1.77, median of 21 runs on one core), the output the same bytes:
+  the passes share the CFG of a function, built once and dropped only
+  when the cfg pass changes a branch or a block (the builds for testing
+  check that a CFG kept is the one the function has); gvn hashes its
+  keys a word at a time instead of a byte at a time; the pipeline stops
+  as soon as every pass has run on the function without a change, and a
+  change of dce, which gives the others no work, does not ask for one
+  more round.
 - `limba -O1` optimises each function as soon as it is complete, then
   writes it and frees it, as `-O0` already wrote it: the pipeline runs to
   a fixed point on each function (no pass looks at another), through the

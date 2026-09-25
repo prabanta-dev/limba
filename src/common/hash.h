@@ -35,4 +35,13 @@ static inline uint64_t limba_fnv(const void *p, size_t n, uint64_t h)
 }
 #define LIMBA_FNV_SEED 0xcbf29ce484222325ull
 
+/* a word of 64 bits into h: a multiply and a shift, for keys that are a
+   few words (FNV-1a takes a multiply a byte); the shift brings the high
+   bits down, where a table takes its index */
+static inline uint64_t limba_mix(uint64_t h, uint64_t w)
+{
+    h = (h ^ w) * 0x9e3779b97f4a7c15ull;
+    return h ^ (h >> 32);
+}
+
 #endif

@@ -43,9 +43,8 @@ static bool same_target(const limba_func *f, uint32_t a, uint32_t b)
     return true;
 }
 
-uint32_t limba_pass_cfg(limba_module *m, limba_func *f)
+uint32_t limba_pass_cfg(limba_pass_ctx *x, limba_func *f)
 {
-    (void)m;
     uint32_t changes = 0;
     for (uint32_t b = 0; b < f->nblocks; b++) {
         const limba_block *bl = &f->blocks[b];
@@ -79,22 +78,24 @@ uint32_t limba_pass_cfg(limba_module *m, limba_func *f)
     }
 
     /* blocks the entry does not reach */
-    limba_cfg cfg;
-    limba_cfg_build(f, &cfg);
+    if (changes)
+        limba_pass_cfg_drop(x);
+    const limba_cfg *cfg = limba_pass_cfg_of(x, f);
     uint32_t dead = 0;
     for (uint32_t b = 1; b < f->nblocks; b++)
-        dead += !limba_cfg_reachable(&cfg, b);
+        dead += !limba_cfg_reachable(cfg, b);
     if (changes || dead) {
         limba_edit e;
         limba_edit_begin(&e, f);
         for (uint32_t b = 1; b < f->nblocks; b++)
-            if (!limba_cfg_reachable(&cfg, b)) {
+            if (!limba_cfg_reachable(cfg, b)) {
                 e.dead_block[b] = 1;
                 for (uint32_t k = 0; k < f->blocks[b].ninsts; k++)
                     e.dead[f->blocks[b].insts[k]] = 1;
             }
         limba_edit_end(&e);
+        if (dead) /* the blocks are numbered anew */
+            limba_pass_cfg_drop(x);
     }
-    limba_cfg_free(&cfg);
     return changes + dead;
 }

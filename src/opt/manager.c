@@ -3,8 +3,10 @@
 /*
  * manager.c - the pipeline. One table, the only place that says which
  * passes run and in which order (SedaiBasic2 had five hand-made copies that
- * drifted apart). The whole pipeline repeats on a function until a round
- * changes nothing in it, at most MAX_ROUNDS times: no pass looks at
+ * drifted apart). The pipeline repeats on a function until every pass has
+ * run once in a row without changing it, or changing only what gives the
+ * others no work (no round more just to see that nothing changes), at
+ * most MAX_ROUNDS rounds: no pass looks at
  * another function, so a function at a time gives what the whole module
  * at a time gave, and a front end can optimise each as it completes it.
  */
@@ -18,14 +20,18 @@
 
 #define MAX_ROUNDS 4
 
+/* wakes: what the pass changes may give work to the others. dce only
+   drops values nobody uses: no branch, constant or equal value is new
+   after it, and its own work list leaves nothing dead behind */
 static const struct {
     const char *name;
     limba_pass_fn run;
+    bool wakes;
 } pipeline[] = {
-    {"cfg", limba_pass_cfg},   /* constant branches, unreachable blocks */
-    {"fold", limba_pass_fold}, /* constants and identities */
-    {"gvn", limba_pass_gvn},   /* equal pure values, one computation */
-    {"dce", limba_pass_dce},   /* values nobody uses */
+    {"cfg", limba_pass_cfg, true},   /* constant branches, unreachable blocks */
+    {"fold", limba_pass_fold, true}, /* constants and identities */
+    {"gvn", limba_pass_gvn, true},   /* equal pure values, one computation */
+    {"dce", limba_pass_dce, false},  /* values nobody uses */
 };
 #define NPASSES (sizeof(pipeline) / sizeof(pipeline[0]))
 
@@ -73,37 +79,87 @@ limba_optimizer *limba_optimizer_new(const limba_opt_options *o)
     return z;
 }
 
+#ifndef NDEBUG
+/* the builds for testing check that a CFG kept is the one f has */
+static void cfg_same(const limba_cfg *a, const limba_func *f)
+{
+    limba_cfg b;
+    limba_cfg_build(f, &b);
+    uint32_t n = a->n;
+    bool ok = a->n == b.n && a->sfirst[n] == b.sfirst[n] &&
+              !memcmp(a->sfirst, b.sfirst, (n + 1) * sizeof(uint32_t)) &&
+              !memcmp(a->succ, b.succ, b.sfirst[n] * sizeof(uint32_t)) &&
+              !memcmp(a->idom, b.idom, n * sizeof(uint32_t)) &&
+              !memcmp(a->pre, b.pre, n * sizeof(uint32_t)) &&
+              !memcmp(a->post, b.post, n * sizeof(uint32_t));
+    limba_cfg_free(&b);
+    if (!ok) {
+        fprintf(stderr, "limba: internal error: a pass changed the "
+                        "branches and kept the old CFG\n");
+        abort();
+    }
+}
+#endif
+
+const limba_cfg *limba_pass_cfg_of(limba_pass_ctx *x, const limba_func *f)
+{
+    if (!x->have_cfg) {
+        limba_cfg_build(f, &x->cfg);
+        x->have_cfg = true;
+    }
+#ifndef NDEBUG
+    else
+        cfg_same(&x->cfg, f);
+#endif
+    return &x->cfg;
+}
+
+void limba_pass_cfg_drop(limba_pass_ctx *x)
+{
+    if (x->have_cfg)
+        limba_cfg_free(&x->cfg);
+    x->have_cfg = false;
+}
+
 int limba_optimizer_func(limba_optimizer *z, limba_module *m, limba_id fid,
                          limba_diag *d)
 {
+    limba_pass_ctx x = {.m = m};
+    int r = 0;
     if (z->verify && !z->v)
         z->v = limba_verifier_new(m);
-    unsigned round;
-    for (round = 0; round < MAX_ROUNDS; round++) {
-        uint64_t changed = 0;
-        for (size_t p = 0; p < NPASSES; p++) {
-            if (z->skip[p])
-                continue;
-            uint32_t n = pipeline[p].run(m, &m->funcs[fid]);
-            z->total[p] += n;
-            changed += n;
-            if (z->verify && limba_verifier_func(z->v, fid, d) != 0) {
-                if (d) { /* prefix the pass; a long message is cut */
-                    char msg[sizeof(d->msg) + 32];
-                    snprintf(msg, sizeof(msg), "after pass %s: %s",
-                             pipeline[p].name, d->msg);
-                    memcpy(d->msg, msg, sizeof(d->msg) - 1);
-                    d->msg[sizeof(d->msg) - 1] = 0;
-                }
-                return -1;
+    /* to the fixed point: every pass has run on the function as it is
+       and changed nothing, or nothing that wakes the others; at most
+       MAX_ROUNDS rounds of runs */
+    unsigned active = 0, runs = 0, quiet = 0;
+    for (size_t p = 0; p < NPASSES; p++)
+        active += !z->skip[p];
+    for (size_t p = 0; quiet < active && runs < MAX_ROUNDS * active;
+         p = (p + 1) % NPASSES) {
+        if (z->skip[p])
+            continue;
+        runs++;
+        uint32_t n = pipeline[p].run(&x, &m->funcs[fid]);
+        z->total[p] += n;
+        quiet = n && pipeline[p].wakes ? 0 : quiet + 1;
+        if (z->verify && limba_verifier_func(z->v, fid, d) != 0) {
+            if (d) { /* prefix the pass; a long message is cut */
+                char msg[sizeof(d->msg) + 32];
+                snprintf(msg, sizeof(msg), "after pass %s: %s",
+                         pipeline[p].name, d->msg);
+                memcpy(d->msg, msg, sizeof(d->msg) - 1);
+                d->msg[sizeof(d->msg) - 1] = 0;
             }
-        }
-        if (!changed)
+            r = -1;
             break;
+        }
     }
-    round = round < MAX_ROUNDS ? round + 1 : round;
-    if (round > z->rounds)
-        z->rounds = round;
+    limba_pass_cfg_drop(&x);
+    if (r)
+        return r;
+    unsigned rounds = active ? (runs + active - 1) / active : 0;
+    if (rounds > z->rounds)
+        z->rounds = rounds;
     return 0;
 }
 

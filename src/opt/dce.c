@@ -29,9 +29,9 @@ static bool removable(const limba_inst *in)
     return false;
 }
 
-uint32_t limba_pass_dce(limba_module *m, limba_func *f)
+uint32_t limba_pass_dce(limba_pass_ctx *x, limba_func *f)
 {
-    (void)m;
+    (void)x; /* no branch changes: the CFG holds */
     uint32_t n = f->ninsts, changes = 0;
     uint32_t *uses = limba_xcalloc((size_t)n + 1, sizeof(*uses));
     uint32_t *work = limba_xmalloc(((size_t)n + 1) * sizeof(*work));

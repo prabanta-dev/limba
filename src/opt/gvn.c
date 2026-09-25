@@ -71,14 +71,13 @@ static uint64_t hash(gctx *c, const limba_inst *in)
 {
     uint32_t o[3] = {0, 0, 0};
     operands(c, in, o);
-    int64_t imm = key_imm(in);
-    uint64_t h = LIMBA_FNV_SEED;
-    h = limba_fnv(&in->op, sizeof(in->op), h);
-    h = limba_fnv(&in->cc, sizeof(in->cc), h);
-    h = limba_fnv(&in->type, sizeof(in->type), h);
-    h = limba_fnv(&imm, sizeof(imm), h);
-    h = limba_fnv(&in->imm2, sizeof(in->imm2), h);
-    return limba_fnv(o, sizeof(o), h);
+    uint64_t h =
+        limba_mix(LIMBA_FNV_SEED,
+                  (uint64_t)in->op << 40 ^ (uint64_t)in->cc << 32 ^ in->type);
+    h = limba_mix(h, (uint64_t)key_imm(in));
+    h = limba_mix(h, (uint64_t)in->imm2);
+    h = limba_mix(h, (uint64_t)o[0] << 32 | o[1]);
+    return limba_mix(h, o[2]);
 }
 
 static bool same(gctx *c, const limba_inst *a, const limba_inst *b)
@@ -116,12 +115,10 @@ static void merge(gctx *c, uint32_t id, uint32_t leader)
         limba_edit_replace(&c->e, id, leader);
 }
 
-uint32_t limba_pass_gvn(limba_module *m, limba_func *f)
+uint32_t limba_pass_gvn(limba_pass_ctx *x, limba_func *f)
 {
-    (void)m;
     gctx c = {.f = f};
-    limba_cfg cfg;
-    limba_cfg_build(f, &cfg);
+    const limba_cfg *cfg = limba_pass_cfg_of(x, f); /* no branch changes */
     limba_edit_begin(&c.e, f);
 
     uint32_t size = 64;
@@ -138,14 +135,14 @@ uint32_t limba_pass_gvn(limba_module *m, limba_func *f)
     uint32_t *child = limba_xmalloc(((size_t)n + 1) * sizeof(uint32_t));
     uint32_t *fill = limba_xmalloc(((size_t)n + 1) * sizeof(uint32_t));
     for (uint32_t b = 1; b < n; b++)
-        if (limba_cfg_reachable(&cfg, b))
-            cfirst[cfg.idom[b] + 1]++;
+        if (limba_cfg_reachable(cfg, b))
+            cfirst[cfg->idom[b] + 1]++;
     for (uint32_t b = 0; b < n; b++)
         cfirst[b + 1] += cfirst[b];
     memcpy(fill, cfirst, n * sizeof(uint32_t));
     for (uint32_t b = 1; b < n; b++)
-        if (limba_cfg_reachable(&cfg, b))
-            child[fill[cfg.idom[b]]++] = b;
+        if (limba_cfg_reachable(cfg, b))
+            child[fill[cfg->idom[b]]++] = b;
 
     /* iterative walk: on entry number the block, on exit drop its entries */
     uint32_t *stack = limba_xmalloc(((size_t)n + 1) * sizeof(uint32_t));
@@ -203,6 +200,5 @@ uint32_t limba_pass_gvn(limba_module *m, limba_func *f)
     free(fill);
     free(c.heads);
     free(c.ents);
-    limba_cfg_free(&cfg);
     return changes;
 }

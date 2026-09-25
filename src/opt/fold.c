@@ -586,12 +586,10 @@ static bool fold_inst(fctx *c, uint32_t id)
     return false;
 }
 
-uint32_t limba_pass_fold(limba_module *m, limba_func *f)
+uint32_t limba_pass_fold(limba_pass_ctx *x, limba_func *f)
 {
-    (void)m;
     fctx c = {.f = f};
-    limba_cfg cfg;
-    limba_cfg_build(f, &cfg);
+    const limba_cfg *cfg = limba_pass_cfg_of(x, f); /* no branch changes */
     /* blocks in dominator-tree pre-order, definitions before uses: the
        pre numbers are distinct and below 2 * nblocks, so a table sorts */
     uint32_t *order = limba_xmalloc(((size_t)f->nblocks + 1) * sizeof(*order));
@@ -600,8 +598,8 @@ uint32_t limba_pass_fold(limba_module *m, limba_func *f)
     for (uint32_t k = 0; k < 2 * f->nblocks + 2; k++)
         at[k] = LIMBA_NONE;
     for (uint32_t b = 0; b < f->nblocks; b++)
-        if (limba_cfg_reachable(&cfg, b))
-            at[cfg.pre[b]] = b;
+        if (limba_cfg_reachable(cfg, b))
+            at[cfg->pre[b]] = b;
     for (uint32_t k = 0; k < 2 * f->nblocks + 2; k++)
         if (at[k] != LIMBA_NONE)
             order[n++] = at[k];
@@ -619,6 +617,5 @@ uint32_t limba_pass_fold(limba_module *m, limba_func *f)
     else
         limba_edit_cancel(&c.e);
     free(order);
-    limba_cfg_free(&cfg);
     return changes;
 }
