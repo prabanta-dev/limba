@@ -29,18 +29,12 @@ b3:
 ;; expect
 func @f : fn(i64) -> i64 {
 b0(v0: i64):
-  br b1
-b1:
   v1 = iconst i64 5
-  br b2(v1)
-b2(v2: i64):
-  ret v2
+  ret v1
 }
 
 func @s : fn() -> i32 {
 b0:
-  br b1
-b1:
   v0 = iconst i32 20
   ret v0
 }

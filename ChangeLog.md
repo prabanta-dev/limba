@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- The cfg pass sends a jump to a block that only jumps on where that
+  block goes, and joins a block to its only predecessor when that one
+  jumps to it: the benchmarks run 2 % (binary-trees) to 10 %
+  (reverse-complement) fewer instructions, mandelbrot 9.6 %, fannkuch
+  7.2 %. It builds one CFG a run and finds the blocks no longer reached
+  by a walk along the jumps; a block found dead is emptied, so that its
+  jumps are no edges. -O1 runs 4.5 % more instructions: gvn looks again
+  at the blocks joined. The bounds pass counted the parameters an edit
+  had replaced when it matched a parameter with its argument; it counts
+  the live ones now.
 - The Luxia front end interns the name of the source file once, not at
   each node it gives a position (a strlen and a hash lookup each), and
   the SSA puts the parameters first only in the blocks where it added

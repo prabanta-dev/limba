@@ -197,10 +197,17 @@ static void everywhere(bctx *c)
         if (!limba_cfg_reachable(c->cfg, b))
             continue;
         const limba_block *bl = &f->blocks[b];
+        uint32_t live = 0; /* parameters still there: the edges pass them */
         for (uint32_t k = 0; k < bl->ninsts; k++) {
             uint32_t id = bl->insts[k];
             if (c->e->dead[id])
                 continue;
+            if (f->insts[id].op == LIMBA_OP_PARAM) {
+                if (is_int(f->insts[id].type))
+                    induction(c, &fs, b, live, id);
+                live++;
+                continue;
+            }
             const limba_inst *in = &f->insts[id];
             const uint32_t *o = f->operands + in->first;
             int64_t v;
@@ -223,9 +230,6 @@ static void everywhere(bctx *c)
             case LIMBA_OP_SUBOV:
                 if (konst(c, val(c, o[1]), &v) && v != INT64_MIN)
                     equal(&fs, id, val(c, o[0]), -v);
-                break;
-            case LIMBA_OP_PARAM:
-                induction(c, &fs, b, k, id); /* params come first */
                 break;
             }
         }
