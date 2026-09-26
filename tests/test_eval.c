@@ -142,7 +142,7 @@ static bool run(const char *path, const char *skip, limba_eval_result *r)
         return false;
     limba_diag d = {{0}, 0};
     if (skip) {
-        limba_opt_options o = {true, skip, NULL};
+        limba_opt_options o = {true, skip, NULL, "bounds"};
         if (limba_optimize(m, &o, &d) != 0) {
             CHECK(false, "%s: %s", path, d.msg);
             limba_module_free(m);

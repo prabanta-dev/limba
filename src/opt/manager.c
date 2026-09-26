@@ -3,12 +3,10 @@
 /*
  * manager.c - the pipeline. One table, the only place that says which
  * passes run and in which order (SedaiBasic2 had five hand-made copies that
- * drifted apart). The pipeline repeats on a function until every pass has
- * run once in a row without changing it, or changing only what gives the
- * others no work (no round more just to see that nothing changes), at
- * most MAX_ROUNDS rounds: no pass looks at
- * another function, so a function at a time gives what the whole module
- * at a time gave, and a front end can optimise each as it completes it.
+ * drifted apart). A pass runs on a function again only when a pass that
+ * may give it work has changed the function since its last run (the
+ * wakes of the table), at most MAX_ROUNDS rounds: no pass looks at
+ * another function, so a front end can optimise each as it completes it.
  */
 #include "limba/opt.h"
 #include "pass.h"
@@ -20,17 +18,32 @@
 
 #define MAX_ROUNDS 4
 
-/* wakes: what the pass changes may give work to the others. dce only
-   drops values nobody uses: no branch, constant or equal value is new
-   after it, and its own work list leaves nothing dead behind */
+/* wakes: the passes that what the pass changes may give work to (or, for
+   bounds, give enough work to pay a run). bounds only drops checks,
+   which leaves their conditions unused; dce only
+   drops values nobody uses, which gives no pass work, its own work list
+   leaving nothing dead behind */
+enum { P_CFG, P_GVN, P_BOUNDS, P_DCE };
+#define ALL ((1u << P_CFG) | (1u << P_GVN) | (1u << P_BOUNDS) | (1u << P_DCE))
+/* off: runs only when named in enable (or LIMBA_OPTON). bounds removes
+   few checks the programs run often yet, for 5 % of the time of -O1:
+   it waits for mem2reg and the relations between the variables of a
+   loop */
 static const struct {
     const char *name;
     limba_pass_fn run;
-    bool wakes;
+    unsigned wakes;
+    bool off;
 } pipeline[] = {
-    {"cfg", limba_pass_cfg, true},  /* constant branches, unreachable blocks */
-    {"gvn", limba_pass_gvn, true},  /* folding, then equal values once */
-    {"dce", limba_pass_dce, false}, /* values nobody uses */
+    [P_CFG] = {"cfg", limba_pass_cfg, ALL}, /* constant branches, unreachable
+                                               blocks */
+    /* what gvn merges rarely proves a check more: bounds runs again
+       only when cfg changes the branches, the facts it reads */
+    [P_GVN] = {"gvn", limba_pass_gvn,
+               ALL & ~(1u << P_BOUNDS)}, /* folding, then equal values once */
+    [P_BOUNDS] = {"bounds", limba_pass_bounds, 1u << P_DCE,
+                  true}, /* checks the facts before them prove */
+    [P_DCE] = {"dce", limba_pass_dce, 0}, /* values nobody uses */
 };
 #define NPASSES (sizeof(pipeline) / sizeof(pipeline[0]))
 
@@ -79,8 +92,11 @@ limba_optimizer *limba_optimizer_new(const limba_opt_options *o)
 #endif
     const char *env = getenv("LIMBA_OPTSKIP");
     for (size_t p = 0; p < NPASSES; p++)
-        z->skip[p] = listed(z->o.skip, pipeline[p].name) ||
-                     listed(env, pipeline[p].name);
+        z->skip[p] =
+            listed(z->o.skip, pipeline[p].name) ||
+            listed(env, pipeline[p].name) ||
+            (pipeline[p].off && !listed(z->o.enable, pipeline[p].name) &&
+             !listed(getenv("LIMBA_OPTON"), pipeline[p].name));
     z->no_fold = listed(z->o.skip, "fold") || listed(env, "fold");
     return z;
 }
@@ -162,21 +178,30 @@ int limba_optimizer_func_edit(limba_optimizer *z, limba_module *m, limba_id fid,
     int r = 0;
     if (z->verify_end && !z->v)
         z->v = limba_verifier_new(m);
-    /* to the fixed point: every pass has run on the function as it is
-       and changed nothing, or nothing that wakes the others; at most
-       MAX_ROUNDS rounds of runs */
-    unsigned active = 0, runs = 0, quiet = 0;
-    for (size_t p = 0; p < NPASSES; p++)
-        active += !z->skip[p];
-    for (size_t p = 0; quiet < active && runs < MAX_ROUNDS * active;
+    /* to the fixed point: every pass runs until nothing it could find
+       has changed since its last run; at most MAX_ROUNDS rounds of runs */
+    bool need[NPASSES];
+    unsigned active = 0, runs = 0, pending;
+    for (size_t p = 0; p < NPASSES; p++) {
+        need[p] = !z->skip[p];
+        active += need[p];
+    }
+    pending = active;
+    for (size_t p = 0; pending && runs < MAX_ROUNDS * active;
          p = (p + 1) % NPASSES) {
-        if (z->skip[p])
+        if (!need[p])
             continue;
+        need[p] = false;
+        pending--;
         runs++;
         uint32_t n = pipeline[p].run(&x, f);
         z->total[p] += n;
         edited |= n != 0;
-        quiet = n && pipeline[p].wakes ? 0 : quiet + 1;
+        for (size_t q = 0; n && q < NPASSES; q++)
+            if (pipeline[p].wakes >> q & 1 && !z->skip[q] && !need[q]) {
+                need[q] = true;
+                pending++;
+            }
         if (z->verify && edited) {
             /* applied to be verified: the same code must come out as
                with the edit applied once at the end */

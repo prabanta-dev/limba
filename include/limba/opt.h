@@ -25,6 +25,10 @@ typedef struct {
     const char *skip;
     /* where to write what each pass changed, NULL for nowhere */
     FILE *stats;
+    /* names of passes that are off unless named here ("bounds"),
+       separated by commas; NULL for none. The environment variable
+       LIMBA_OPTON adds to it. */
+    const char *enable;
 } limba_opt_options;
 
 /* 0, or -1 with d saying which pass broke the module and how */

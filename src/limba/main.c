@@ -101,7 +101,7 @@ int main(int argc, char **argv)
     const char *in = NULL, *outpath = NULL, *emit = NULL, *suppress = NULL;
     bool check = false;
     int level = 0;
-    limba_opt_options opt = {false, NULL, NULL};
+    limba_opt_options opt = {false, NULL, NULL, NULL};
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (!strcmp(a, "-h") || !strcmp(a, "--help")) {

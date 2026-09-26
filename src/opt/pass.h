@@ -38,6 +38,7 @@ typedef uint32_t (*limba_pass_fn)(limba_pass_ctx *x, limba_func *f);
 
 uint32_t limba_pass_cfg(limba_pass_ctx *x, limba_func *f);
 uint32_t limba_pass_gvn(limba_pass_ctx *x, limba_func *f);
+uint32_t limba_pass_bounds(limba_pass_ctx *x, limba_func *f);
 uint32_t limba_pass_dce(limba_pass_ctx *x, limba_func *f);
 
 /* limba_optimizer_func on a function whose edit e, begun by its maker, is

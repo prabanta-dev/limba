@@ -508,6 +508,13 @@ static bool fold_inst(fctx *c, uint32_t id)
     double v[3] = {0, 0, 0};
 
     switch (op->format) {
+    case LIMBA_F_CHECK:
+        /* a check of true never stops the program: it goes; one of false
+           always does, and stays */
+        if (!ival(c, o[0], &a) || !a)
+            return false;
+        c->e->dead[id] = 1;
+        return true;
     case LIMBA_F_UN:
         if (in->op == LIMBA_OP_FNEG || in->op == LIMBA_OP_FROUND ||
             in->op == LIMBA_OP_FROUNDA) {

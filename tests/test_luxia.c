@@ -1137,7 +1137,9 @@ static char *compile_run(const char *src, const char *in, size_t inlen,
         } else {
             out = run_module(m, in, inlen, argc, argv, end, size, &n1);
             char end2[256];
-            optctx oc = {limba_optimizer_new(NULL), false, {{0}, 0}};
+            /* bounds too, which is off by default */
+            limba_opt_options on = {false, NULL, NULL, "bounds"};
+            optctx oc = {limba_optimizer_new(&on), false, {{0}, 0}};
             limba_module *m2 = limba_lxl_program_each(&sema, opt_func, &oc);
             limba_optimizer_free(oc.z);
             if (!m2 || oc.bad || limba_verify(m2, &d) != 0) {

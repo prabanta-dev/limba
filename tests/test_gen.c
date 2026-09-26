@@ -95,7 +95,7 @@ int main(void)
             /* verified after every pass on odd seeds; on even ones the
                edit waits to the end, as in a release, and the module is
                verified after */
-            limba_opt_options o = {seed & 1, skip, NULL};
+            limba_opt_options o = {seed & 1, skip, NULL, "bounds"};
             m = limba_gen(seed);
             if (limba_optimize(m, &o, &d) != 0 ||
                 (!(seed & 1) && limba_verify(m, &d) != 0)) {

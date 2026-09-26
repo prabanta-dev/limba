@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Folding drops a check of a constant true: spectral-norm runs 8 % more
+  instructions with its checks than without instead of 16 %, pidigits
+  27 % instead of 32 %, fasta 31 % instead of 34 %.
+- A new pass, bounds, off unless asked (`enable` in the options,
+  `LIMBA_OPTON=bounds`): after ABCD, a check whose condition the facts
+  before it prove goes (differences of values from constants, sign
+  extensions, add.ov and sub.ov of constants, loop variables that only
+  grow or shrink, branches and checks passed), and of a check of both
+  bounds only the half not proved stays; nothing moves. It takes
+  fannkuch-redux from 38 % to 31 % more instructions than without
+  checks, and leaves the other benchmarks as they were, for 5 % of the
+  time of `-O1`: it waits for the loads made once and the relations
+  between loop variables. The tests run it: `tests/opt/bounds.lit` holds
+  checks at the very edge of each difference.
+- The manager wakes a pass only when a pass that may give it work has
+  changed the function (a mask for each pass), in place of the one flag.
 - One edit for each function from its SSA to the end of the optimiser:
   the front end leaves its last edit (trivial parameters, unreachable
   blocks) to apply, `limba_ssa_finish_edit`, and the passes add theirs

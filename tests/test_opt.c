@@ -60,7 +60,7 @@ static char *print(const limba_module *m)
     return s;
 }
 
-static const limba_opt_options verify_each = {true, NULL, NULL};
+static const limba_opt_options verify_each = {true, NULL, NULL, "bounds"};
 
 /* optimise: it must verify after every pass, and a second run must find
    nothing left to do */
