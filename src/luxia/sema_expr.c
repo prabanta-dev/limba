@@ -182,7 +182,7 @@ static limba_ltype op_error(limba_lxs *S, uint32_t node, limba_ltype t,
                             const char *what)
 {
     char tb[128];
-    lxs_error(S, LXE_OPERATOR_TYPE, node, "'%s' %s, not on %s",
+    lxs_error(S, LXE_OPERATOR_TYPE, node, "'%s' %s: it does not apply to %s",
               limba_lx_kind_text(lxs_node(S, node)->op), what,
               lxs_tname(S, t, tb));
     return set(S, node, 0);
@@ -220,7 +220,7 @@ static limba_ltype binary(limba_lxs *S, uint32_t node, uint32_t scope)
             return set(S, node, 0);
         if (untyped(S, lt)) {
             lxs_error(S, LXE_NEED_TYPE, l,
-                      "a shift needs a Bits type: write Bits32(1) shl n");
+                      "a shift needs a Bits type: write 'Bits32(1) shl n'");
             return set(S, node, 0);
         }
         if (!is_modular(S, lt))
@@ -278,7 +278,7 @@ static limba_ltype binary(limba_lxs *S, uint32_t node, uint32_t scope)
         case LX_SLASH:
             if (!is_float(S, lt))
                 return op_error(S, node, lt,
-                                "divides reals: for integers use div");
+                                "divides reals only (for integers, 'div')");
             res = result_of(S, lt);
             break;
         case LX_KW_DIV:
@@ -286,8 +286,7 @@ static limba_ltype binary(limba_lxs *S, uint32_t node, uint32_t scope)
         case LX_KW_REM:
             if (!is_int(S, lt))
                 return op_error(S, node, lt,
-                                "divides integers: for reals "
-                                "use /");
+                                "divides integers only (for reals, '/')");
             res = result_of(S, lt);
             break;
         default: /* + - * */
@@ -365,8 +364,8 @@ static limba_ltype reference(limba_lxs *S, uint32_t node, uint32_t scope)
     case LIMBA_LSYM_TYPE:
         sp = lxs_spell(S, s, &n);
         lxs_error(S, LXE_NOT_A_VALUE, node,
-                  "'%.*s' is a type: to convert a value write %.*s(x)", (int)n,
-                  sp, (int)n, sp);
+                  "'%.*s' is a type: to convert a value write '%.*s(x)'",
+                  (int)n, sp, (int)n, sp);
         return set(S, node, 0);
     default:
         sp = lxs_spell(S, s, &n);
@@ -518,8 +517,9 @@ static void check_format(limba_lxs *S, uint32_t list)
     for (uint32_t i = 0; i < lxs_node(S, list)->b; i++) {
         uint32_t a = limba_lx_list_at(S->t, list, i);
         if (lxs_node(S, a)->kind == LXN_FMT && !S->sym[a]) {
-            lxs_error(S, LXE_FORMAT_PLACE, a,
-                      "x:width:decimals is for write and writeln only");
+            lxs_error(
+                S, LXE_FORMAT_PLACE, a,
+                "'x:width:decimals' is allowed only in write and writeln");
             S->sym[a] = 1; /* reported: not again when it is evaluated */
         }
     }
@@ -802,7 +802,7 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
                 k != LIMBA_LTK_ENUM) {
                 lxs_error(S, LXE_TYPE_MISMATCH, a,
                           "ord takes a Char, a Boolean or an enumeration: "
-                          "convert an integer, UInt32(x)");
+                          "convert an integer, 'UInt32(x)'");
                 return set(S, node, 0);
             }
             set(S, node, S->ty_uint[2]);
@@ -848,7 +848,7 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
             if (!expected || !is_float(S, expected) || untyped(S, expected)) {
                 lxs_error(S, LXE_NEED_TYPE, a,
                           "%s of a constant needs a type: write "
-                          "%s(Float64(x))",
+                          "'%s(Float64(x))'",
                           nm, nm);
                 return set(S, node, 0);
             }
@@ -1052,8 +1052,9 @@ limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
     }
     case LXN_FMT:
         if (!S->sym[node])
-            lxs_error(S, LXE_FORMAT_PLACE, node,
-                      "x:width:decimals is for write and writeln only");
+            lxs_error(
+                S, LXE_FORMAT_PLACE, node,
+                "'x:width:decimals' is allowed only in write and writeln");
         lxs_expr(S, x->a, scope, 0);
         return set(S, node, 0);
     }

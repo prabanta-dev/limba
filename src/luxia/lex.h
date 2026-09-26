@@ -60,6 +60,8 @@ typedef struct {
     uint32_t nreals, capreals;
     limba_strtab *names;   /* folded names, the keywords first */
     limba_strtab *strings; /* values of the string literals */
+    bool unread; /* the file is not UTF-8: no token was made, nothing to
+                    parse */
 } limba_lx;
 
 /* an empty result, with its tables; the keywords are interned */

@@ -148,7 +148,7 @@ static void name(lexer *L)
     if (id < LX_NKEYWORDS) {
         if (folded)
             error(L, LXE_KEYWORD_CASE, start, L->pos - start,
-                  "the keyword '%s' is written in lowercase only",
+                  "the keyword '%s' must be written in lowercase only",
                   kind_text[LX_KW_FIRST + id]);
         emit(L, LX_KW_FIRST + id, start, id);
         return;
@@ -187,7 +187,7 @@ static bool digits(lexer *L, unsigned base, uint32_t start)
     }
     if (!ok)
         error(L, LXE_BAD_NUMBER, start, L->pos - start, "%s",
-              "'_' goes only between two digits");
+              "'_' may appear only between two digits");
     return ok;
 }
 
@@ -237,7 +237,8 @@ static void number(lexer *L)
         bool ok = true;
         if (c1 == 'X' || c1 == 'O' || c1 == 'B') {
             error(L, LXE_BAD_NUMBER, start, 2, "%s",
-                  "the base prefix is written in lowercase: 0x, 0o, 0b");
+                  "the base prefix must be written in lowercase: 0x, 0o, "
+                  "0b");
             ok = false;
         }
         L->pos += 2;
@@ -256,7 +257,7 @@ static void number(lexer *L)
     if (at(L, L->pos) == 'e' || at(L, L->pos) == 'E') {
         if (at(L, L->pos) == 'E') {
             error(L, LXE_BAD_NUMBER, L->pos - 0, 1, "%s",
-                  "the exponent is written with a lowercase e");
+                  "the exponent must be written with a lowercase e");
             ok = false;
         }
         real = true;
@@ -321,11 +322,20 @@ static void character(lexer *L)
     if (cp < 0x20 || cp == 0x7f)
         control_error(L, L->pos);
     L->pos += n;
-    if (at(L, L->pos) == '\'')
+    if (at(L, L->pos) == '\'') {
         L->pos++;
-    else
+    } else {
+        /* 'ab': one error, and on past the apostrophe that closes it on
+           this line, if any */
+        uint32_t end = L->pos;
+        while (end < L->len && L->text[end] != '\'' && L->text[end] != '\n')
+            end++;
+        if (end < L->len && L->text[end] == '\'')
+            L->pos = end + 1;
         error(L, LXE_BAD_CHAR_LITERAL, start, L->pos - start, "%s",
-              "a character literal is closed by ': 'a'");
+              "a character literal must hold one character and be closed "
+              "by an apostrophe, as in 'a'");
+    }
     emit(L, LX_CHAR, start, cp);
 }
 
@@ -524,8 +534,10 @@ void limba_lx_run(limba_lx *lx, const limba_source *src, uint32_t file,
     size_t bad = limba_utf8_check(f->text, f->len);
     if (bad < f->len) {
         error(&L, LXE_BAD_UTF8, (uint32_t)bad, 1, "%s",
-              "the file is not UTF-8 from here on");
+              "the source must be UTF-8: this byte is not, and nothing of "
+              "the file is compiled");
         L.pos = f->len;
+        lx->unread = true;
     } else if (f->len >= 3 && !memcmp(f->text, "\xef\xbb\xbf", 3)) {
         L.pos = 3;
     }

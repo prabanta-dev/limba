@@ -373,10 +373,12 @@ static void resolve_var(limba_lxs *S, uint32_t d, uint32_t scope, bool top)
         limba_ltype vt = lxs_expr(S, x->c, scope, t);
         if (t) {
             lxs_assign_to(S, x->c, t, "the variable");
+        } else if (x->b) {
+            /* the type written is wrong, and reported */
         } else if (vt == S->ts.uint || vt == S->ts.ureal || vt == S->ts.nil) {
             lxs_error(S, LXE_NEED_TYPE, x->c,
                       "a constant without a type gives none to the "
-                      "variable: write var x: T := ...");
+                      "variable: write 'var x: T := ...'");
         } else {
             t = vt;
         }

@@ -40,10 +40,12 @@ static void local_var(limba_lxs *S, uint32_t d, uint32_t scope)
         limba_ltype vt = lxs_expr(S, x->c, scope, t);
         if (t) {
             lxs_assign_to(S, x->c, t, "the variable");
+        } else if (x->b) {
+            /* the type written is wrong, and reported */
         } else if (vt == S->ts.uint || vt == S->ts.ureal || vt == S->ts.nil) {
             lxs_error(S, LXE_NEED_TYPE, x->c,
                       "a constant without a type gives none to the "
-                      "variable: write var x: T := ...");
+                      "variable: write 'var x: T := ...'");
         } else {
             t = vt;
         }
@@ -184,7 +186,7 @@ static void for_stmt(limba_lxs *S, uint32_t node, uint32_t scope)
         else if (ft && tt)
             lxs_error(S, LXE_NEED_TYPE, range,
                       "the bounds are constants without a type: write "
-                      "for var i: Int32 := ...");
+                      "'for var i: Int32 := ...'");
     }
     char tb[128];
     if (t && !limba_types_is_discrete(&S->ts, t)) {
@@ -259,7 +261,8 @@ static void stmt(limba_lxs *S, uint32_t node, uint32_t scope)
     case LXN_EXIT:
     case LXN_CONTINUE:
         if (!S->loops)
-            lxs_error(S, LXE_OUTSIDE_LOOP, node, "'%s' is used inside loops",
+            lxs_error(S, LXE_OUTSIDE_LOOP, node,
+                      "'%s' is allowed only inside a loop",
                       x->kind == LXN_EXIT ? "exit" : "continue");
         if (x->a)
             condition(S, x->a, scope);

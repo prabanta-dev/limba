@@ -107,20 +107,22 @@ static void cb_error(void *ctx, limba_pratt_err err, uint32_t tok,
         break;
     case LIMBA_PRATT_ERR_MIX:
         limba_lxp_error(P, LXE_MIXED_LOGICAL, tok,
-                        "'%s' after '%s' without parentheses: write "
-                        "(a %s b) %s c or a %s (b %s c)",
+                        "'%s' after '%s' needs parentheses: write "
+                        "'(a %s b) %s c' or 'a %s (b %s c)'",
                         op, pv, pv, op, pv, op);
         break;
     case LIMBA_PRATT_ERR_PREFIX:
         limba_lxp_error(P, LXE_PREFIX_PARENS, tok,
                         "'%s' cannot follow an operator here: put it in "
-                        "parentheses, as in a * (-b)",
+                        "parentheses, as in 'a * (-b)'",
                         op);
         break;
     case LIMBA_PRATT_ERR_ATOM:
-        limba_lxp_error(P, LXE_PREFIX_POWER, tok,
-                        "'%s' after '%s': write (%s a) %s b or %s (a %s b)", op,
-                        pv, pv, op, pv, op);
+        limba_lxp_error(
+            P, LXE_PREFIX_POWER, tok,
+            "'%s' after '%s' needs parentheses: write '(%s a) %s b' "
+            "or '%s (a %s b)'",
+            op, pv, pv, op, pv, op);
         break;
     }
 }

@@ -335,12 +335,27 @@ static void end_name(limba_lxp *P, uint32_t name)
     if (lxp_kind(P) != LX_IDENT)
         return;
     uint32_t id = P->t->node[name].a;
-    if (P->t->node[name].kind == LXN_NAME && P->lx->tok[P->pos].val != id) {
-        size_t n;
-        const char *s = limba_strtab_get(P->lx->names, id, &n);
-        limba_lxp_error(P, LXE_END_NAME, P->pos,
-                        "this end closes '%.*s': write that name or none",
-                        (int)n, s);
+    if (P->t->node[name].kind == LXN_NAME) {
+        /* the name as declared, and as written here */
+        limba_where wd, we;
+        const char *decl = "", *here = "";
+        uint32_t n = P->lx->tok[P->pos].len;
+        if (limba_source_where(P->src, P->t->node[name].loc, &wd))
+            decl = P->src->file[wd.file].text + wd.off;
+        if (limba_source_where(P->src, lxp_loc(P), &we))
+            here = P->src->file[we.file].text + we.off;
+        if (P->lx->tok[P->pos].val != id) {
+            size_t dn;
+            limba_strtab_get(P->lx->names, id, &dn);
+            limba_lxp_error(P, LXE_END_NAME, P->pos,
+                            "this end closes '%.*s': write that name or none",
+                            (int)dn, decl);
+        } else if (memcmp(decl, here, n) != 0) {
+            limba_lxp_error(P, LXE_SPELLING, P->pos,
+                            "'%.*s' is declared as '%.*s': write it the same "
+                            "way",
+                            (int)n, here, (int)n, decl);
+        }
     }
     limba_lxp_next(P);
 }
@@ -468,6 +483,8 @@ void limba_lx_parse(limba_lx_ast *t, const limba_lx *lx,
                     const limba_source *src, limba_report *rep)
 {
     limba_lxp P = {lx, t, rep, src, 0, UINT32_MAX};
+    if (lx->unread)
+        return; /* reported by the lexer: an error per token would echo it */
     /* room for a node a token and as many list members: no copies as the
        tree grows */
     if (t->capnode < lx->ntok + 16) {

@@ -65,8 +65,8 @@ static const lex_case lex_cases[] = {
     {"x := \"abc\ny", "id:x := str:\"abc\" id:y eof", "L0003@1:6"},
     {"\"a\tb\"", "str:\"ab\" eof", "L0009@1:3"},
     {"'a' ''' '\xc3\xa8'", "char:U+0061 char:U+0027 char:U+00E8 eof", ""},
-    {"'' 'ab'", "char:U+0000 char:U+0061 id:b char:U+0000 eof",
-     "L0005@1:1 L0005@1:4 L0005@1:7"},
+    /* 'ab' is one error, up to the apostrophe that closes it */
+    {"'' 'ab'", "char:U+0000 char:U+0061 eof", "L0005@1:1 L0005@1:4"},
     /* characters that start no token; columns count UTF-8 characters */
     {"a @ b {", "id:a id:b eof", "L0002@1:3 L0002@1:7"},
     {"\"\xc3\xa8\" @", "str:\"\xc3\xa8\" eof", "L0002@1:5"},
@@ -539,6 +539,11 @@ static const sema_case sema_cases[] = {
     {"program p; var r: Float64 := 1.0; begin writeln(r:5:101); end.",
      "L0029@1:53"},
     {"program p; begin writeln(arg(0)); end.", "L0029@1:30"},
+    /* the name after end is written as declared (§ 2.2) */
+    {"program p; procedure Show(); begin end show; begin end p.", "L0022@1:40"},
+    {"program p; begin end P.", "L0022@1:22"},
+    /* a file that is not UTF-8: one error, no echo from the parser */
+    {"program p; \xff begin end.", "L0001@1:12"},
     /* ord of a character, a Boolean or an enumeration only; low and high
        of a discrete type */
     {"program p; var x: Int32 := 1; begin writeln(ord(x)); end.", "L0027@1:49"},

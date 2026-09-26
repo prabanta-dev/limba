@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Diagnostics: a rule is stated as one ("the keyword 'begin' must be
+  written in lowercase only", "'exit' is allowed only inside a loop"),
+  and code in a suggestion is quoted ("write '(a and b) or c' or
+  'a and (b or c)'"). The name after `end` must be spelled as declared
+  (L0022), and L0015 shows it so. A source that is not UTF-8 gives one
+  error, not an echo from the parser; `'ab'` is one error; L0033 no
+  longer follows an L0025 on the same declaration.
 - `low(T)` and `high(T)` of a discrete type (integers, subtypes with a
   range, enumerations, `Char`, `Boolean`) give its first and last value,
   a constant of `T`, as Ada's `T'First` and `T'Last`.
