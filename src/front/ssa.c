@@ -607,6 +607,9 @@ void limba_ssa_finish_edit(limba_ssa *s,
             most = f->blocks[b].ninsts;
     uint32_t *order = limba_xmalloc(((size_t)most + 1) * sizeof(*order));
     for (limba_id b = 0; b < f->nblocks; b++) {
+        /* only the builder appends parameters after other instructions */
+        if (b >= s->nb || !s->b[b].nparams)
+            continue;
         limba_block *bl = &f->blocks[b];
         uint32_t n = 0;
         for (uint32_t k = 0; k < bl->ninsts; k++)

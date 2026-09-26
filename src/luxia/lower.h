@@ -100,6 +100,8 @@ typedef struct {
     limba_sym *dyns;
     uint32_t ndyns, capdyns;
     uint32_t *node_pos; /* per node: its position in the module, plus 1 */
+    uint32_t pos_file;  /* the file of the last position, plus 1 */
+    limba_id pos_name;  /* its name, interned */
     /* the pure instructions of the current block, by a hash of what they
        compute (lxl_emit): an equal one asked again is the same value. A
        cache: a slot taken by another is only a value emitted twice,

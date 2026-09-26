@@ -218,9 +218,13 @@ void lxl_at(lxl *L, uint32_t node)
         const limba_source *src = L->S->src;
         if (!limba_source_where(src, L->S->t->node[node].loc, &w))
             return;
-        const char *path = src->file[w.file].path;
-        limba_id file = limba_str_intern(L->m, path, strlen(path));
-        L->node_pos[node] = limba_pos_add(L->m, file, w.line, w.col) + 1;
+        /* the name of the file, interned once while it does not change */
+        if (w.file + 1 != L->pos_file) {
+            const char *path = src->file[w.file].path;
+            L->pos_file = w.file + 1;
+            L->pos_name = limba_str_intern(L->m, path, strlen(path));
+        }
+        L->node_pos[node] = limba_pos_add(L->m, L->pos_name, w.line, w.col) + 1;
     }
     limba_ssa_func(L->ssa)->pos_cur = L->node_pos[node] - 1;
 }

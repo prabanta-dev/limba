@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The Luxia front end interns the name of the source file once, not at
+  each node it gives a position (a strlen and a hash lookup each), and
+  the SSA puts the parameters first only in the blocks where it added
+  some: 5.3 % fewer instructions run at `-O0` on 108 203 lines, 3.7 % at
+  `-O1`, the output the same bytes.
 - Folding drops a check of a constant true: spectral-norm runs 8 % more
   instructions with its checks than without instead of 16 %, pidigits
   27 % instead of 32 %, fasta 31 % instead of 34 %.
