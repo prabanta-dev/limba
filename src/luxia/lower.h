@@ -37,11 +37,13 @@ enum {
 
 /* the module of a checked program; NULL if errors were reported */
 limba_module *limba_lxl_program(limba_lxs *S);
-/* the same, calling done as each function is complete, which may write
-   it and clear it (limba_func_clear) */
+/* the same, calling done as each function is complete, with the last
+   edit of its SSA left to apply (limba_ssa_finish_edit): done applies it
+   (limba_edit_end) or gives it to the optimiser, and may then write the
+   function and clear it (limba_func_clear) */
 limba_module *limba_lxl_program_each(limba_lxs *S,
                                      void (*done)(void *ctx, limba_module *m,
-                                                  limba_id fid),
+                                                  limba_id fid, limba_edit *e),
                                      void *ctx);
 
 /* ---- inside the generator ---- */
@@ -98,8 +100,17 @@ typedef struct {
     limba_sym *dyns;
     uint32_t ndyns, capdyns;
     uint32_t *node_pos; /* per node: its position in the module, plus 1 */
-    unsigned suppress;  /* the checks turned off here, LXS_CHECK_* */
-    void (*done)(void *ctx, limba_module *m, limba_id fid);
+    /* the pure instructions of the current block, by a hash of what they
+       compute (lxl_emit): an equal one asked again is the same value. A
+       cache: a slot taken by another is only a value emitted twice,
+       which gvn merges at -O1 */
+    struct lxl_lvn {
+        limba_id id, block;
+        uint32_t gen;
+    } *lvn;
+    uint32_t gen;      /* the function being built, from 1 */
+    unsigned suppress; /* the checks turned off here, LXS_CHECK_* */
+    void (*done)(void *ctx, limba_module *m, limba_id fid, limba_edit *e);
     void *ctx;
 } lxl;
 

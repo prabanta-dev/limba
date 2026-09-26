@@ -15,7 +15,9 @@
 
 typedef struct {
     /* verify the module after every pass and stop at the first pass that
-       breaks it; always on in the builds that are not release */
+       breaks it (the edits of the passes are then applied one by one, not
+       once at the end); the builds that are not release verify each
+       function after the passes anyway */
     bool verify_each;
     /* names of passes not to run, separated by commas; NULL for none;
        "fold" turns off the folding gvn does. The environment variable

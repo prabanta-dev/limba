@@ -31,16 +31,19 @@ static bool removable(const limba_inst *in)
 
 uint32_t limba_pass_dce(limba_pass_ctx *x, limba_func *f)
 {
-    (void)x; /* no branch changes: the CFG holds */
+    /* no branch changes: the CFG holds */
+    limba_edit *e = &x->e;
     uint32_t n = f->ninsts, changes = 0;
     uint32_t *uses = limba_xcalloc((size_t)n + 1, sizeof(*uses));
     uint32_t *work = limba_xmalloc(((size_t)n + 1) * sizeof(*work));
     uint8_t *kinds = NULL;
     uint32_t capkinds = 0, nwork = 0;
-    limba_edit e;
-    limba_edit_begin(&e, f);
 
+    /* the uses by the instructions still there, of the values they stand
+       for now */
     for (uint32_t i = 0; i < n; i++) {
+        if (e->dead[i])
+            continue;
         const limba_inst *in = &f->insts[i];
         if (in->nops > capkinds) {
             capkinds = in->nops;
@@ -49,16 +52,16 @@ uint32_t limba_pass_dce(limba_pass_ctx *x, limba_func *f)
         limba_operand_kinds(f, in, kinds);
         for (uint32_t k = 0; k < in->nops; k++)
             if (kinds[k] == LIMBA_OK_VALUE)
-                uses[f->operands[in->first + k]]++;
+                uses[limba_edit_resolve(e, f->operands[in->first + k])]++;
     }
     for (uint32_t i = 0; i < n; i++)
-        if (!uses[i] && removable(&f->insts[i]))
+        if (!e->dead[i] && !uses[i] && removable(&f->insts[i]))
             work[nwork++] = i;
     while (nwork) {
         uint32_t id = work[--nwork];
-        if (e.dead[id])
+        if (e->dead[id])
             continue;
-        e.dead[id] = 1;
+        e->dead[id] = 1;
         changes++;
         const limba_inst *in = &f->insts[id];
         if (in->nops > capkinds) {
@@ -67,17 +70,14 @@ uint32_t limba_pass_dce(limba_pass_ctx *x, limba_func *f)
         }
         limba_operand_kinds(f, in, kinds);
         for (uint32_t k = 0; k < in->nops; k++) {
-            uint32_t o = f->operands[in->first + k];
-            if (kinds[k] == LIMBA_OK_VALUE && --uses[o] == 0 &&
-                removable(&f->insts[o]))
+            if (kinds[k] != LIMBA_OK_VALUE)
+                continue;
+            uint32_t o = limba_edit_resolve(e, f->operands[in->first + k]);
+            if (--uses[o] == 0 && removable(&f->insts[o]))
                 work[nwork++] = o;
         }
     }
 
-    if (changes)
-        limba_edit_end(&e);
-    else
-        limba_edit_cancel(&e);
     free(uses);
     free(work);
     free(kinds);

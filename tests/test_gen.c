@@ -92,9 +92,13 @@ int main(void)
                 }
             const char *label =
                 k < 0 ? "all passes" : limba_pass_name((unsigned)k);
-            limba_opt_options o = {true, skip, NULL};
+            /* verified after every pass on odd seeds; on even ones the
+               edit waits to the end, as in a release, and the module is
+               verified after */
+            limba_opt_options o = {seed & 1, skip, NULL};
             m = limba_gen(seed);
-            if (limba_optimize(m, &o, &d) != 0) {
+            if (limba_optimize(m, &o, &d) != 0 ||
+                (!(seed & 1) && limba_verify(m, &d) != 0)) {
                 fprintf(stderr, "FAIL seed %" PRIu64 " (%s): %s\n", seed, label,
                         d.msg);
                 failures++;

@@ -19,6 +19,7 @@
 #ifndef LIMBA_FRONT_SSA_H
 #define LIMBA_FRONT_SSA_H
 
+#include "ir/internal.h"
 #include "limba/ir.h"
 
 #include <stdbool.h>
@@ -62,5 +63,12 @@ bool limba_ssa_terminated(const limba_ssa *s, limba_id b);
    without a definition, once per tag */
 void limba_ssa_finish(limba_ssa *s, void (*undefined)(void *ctx, uint32_t tag),
                       void *ctx);
+/* the same, the last edit (trivial parameters replaced, the blocks no path
+   reaches dropped with what they hold) left to apply in *e: the function
+   is canonical only after limba_edit_end, which an optimiser may call
+   once for its own changes too */
+void limba_ssa_finish_edit(limba_ssa *s,
+                           void (*undefined)(void *ctx, uint32_t tag),
+                           void *ctx, limba_edit *e);
 
 #endif

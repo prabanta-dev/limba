@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- One edit for each function from its SSA to the end of the optimiser:
+  the front end leaves its last edit (trivial parameters, unreachable
+  blocks) to apply, `limba_ssa_finish_edit`, and the passes add theirs
+  to it, reading the operands through it and passing over what it marks
+  dead; the function is rebuilt once instead of four or five times.
+  `-O1` takes 142 ms instead of 157 on 108 203 lines (1.31 µs a line;
+  11.5 % fewer instructions run), the output the same bytes. With
+  `--verify` the edit is applied after each pass to verify it, and the
+  code must come out the same; the builds for testing verify each
+  function after the passes, on the edit applied once. `test_luxia`
+  compiles each program a second time as `limba -O1` does, and
+  `test_gen` alternates the two ways of applying the edit.
+- The Luxia front end gives a pure instruction asked again in the same
+  block the value it made already (a small cache keyed by what it
+  computes, in `lxl_emit`): constants, extensions, comparisons, addresses.
+  At `-O0` the large file has 363 331 instructions instead of 445 901
+  and its `.lir` 4.98 MB instead of 5.85; at `-O1` gvn has half the work
+  and the output is the same. The time moves little: 1.7 % fewer cycles
+  at `-O1`, 0.8 % at `-O0`, where the hash costs about what it saves.
 - gvn folds each instruction before it looks for an equal value, in the
   same walk and with the same edit: the fold pass is gone as a pass of
   its own (`LIMBA_OPTSKIP=fold` still turns the folding off). The

@@ -33,7 +33,7 @@ typedef struct {
 typedef struct {
     limba_func *f;
     bool fold;
-    limba_edit e;
+    limba_edit *e;   /* the one of the pipeline */
     uint32_t *heads; /* bucket -> last entry, UINT32_MAX when empty */
     uint32_t mask;
     entry *ents;
@@ -62,7 +62,7 @@ static int64_t key_imm(const limba_inst *in)
 static void operands(gctx *c, const limba_inst *in, uint32_t *o)
 {
     for (uint32_t i = 0; i < in->nops; i++)
-        o[i] = limba_edit_resolve(&c->e, c->f->operands[in->first + i]);
+        o[i] = limba_edit_resolve(c->e, c->f->operands[in->first + i]);
     if (in->nops == 2 && (limba_ops[in->op].flags & LIMBA_OPF_COMMUTATIVE) &&
         o[0] > o[1]) {
         uint32_t t = o[0];
@@ -114,9 +114,9 @@ static uint32_t lookup_or_add(gctx *c, uint32_t id)
 static void merge(gctx *c, uint32_t id, uint32_t leader)
 {
     if (c->f->insts[id].op == LIMBA_OP_CHECK)
-        c->e.dead[id] = 1;
+        c->e->dead[id] = 1;
     else
-        limba_edit_replace(&c->e, id, leader);
+        limba_edit_replace(c->e, id, leader);
 }
 
 /* the instructions of block b: each folded, then merged with an equal
@@ -127,9 +127,11 @@ static uint32_t visit(gctx *c, uint32_t b)
     uint32_t changes = 0;
     for (uint32_t k = 0; k < bl->ninsts; k++) {
         uint32_t id = bl->insts[k];
-        if (c->fold && k >= bl->nparams && limba_fold_inst(c->f, &c->e, id)) {
+        if (c->e->dead[id])
+            continue; /* gone, or another value */
+        if (c->fold && k >= bl->nparams && limba_fold_inst(c->f, c->e, id)) {
             changes++;
-            if (c->e.map[id] != id)
+            if (c->e->map[id] != id)
                 continue; /* it is another value now */
         }
         if (!mergeable(&c->f->insts[id]))
@@ -145,9 +147,8 @@ static uint32_t visit(gctx *c, uint32_t b)
 
 uint32_t limba_pass_gvn(limba_pass_ctx *x, limba_func *f)
 {
-    gctx c = {.f = f, .fold = x->fold};
+    gctx c = {.f = f, .fold = x->fold, .e = &x->e};
     const limba_cfg *cfg = limba_pass_cfg_of(x, f); /* no branch changes */
-    limba_edit_begin(&c.e, f);
 
     uint32_t size = 64;
     while (size < 2 * f->ninsts)
@@ -196,10 +197,6 @@ uint32_t limba_pass_gvn(limba_pass_ctx *x, limba_func *f)
         }
     }
 
-    if (changes)
-        limba_edit_end(&c.e);
-    else
-        limba_edit_cancel(&c.e);
     free(stack);
     free(next);
     free(mark);

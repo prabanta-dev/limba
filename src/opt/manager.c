@@ -55,7 +55,8 @@ static bool listed(const char *list, const char *name)
 
 struct limba_optimizer {
     limba_opt_options o;
-    bool verify;
+    bool verify;     /* after every pass */
+    bool verify_end; /* after the passes */
     bool skip[NPASSES];
     bool no_fold; /* "fold" skipped: gvn does not fold */
     uint64_t total[NPASSES];
@@ -68,9 +69,13 @@ limba_optimizer *limba_optimizer_new(const limba_opt_options *o)
     limba_optimizer *z = limba_xcalloc(1, sizeof(*z));
     if (o)
         z->o = *o;
+    /* verify_each: after every pass, the edit applied pass by pass; the
+       builds for testing verify each function at the end, the edit kept
+       to the end as in a release */
     z->verify = z->o.verify_each;
+    z->verify_end = z->verify;
 #ifndef NDEBUG
-    z->verify = true;
+    z->verify_end = true;
 #endif
     const char *env = getenv("LIMBA_OPTSKIP");
     for (size_t p = 0; p < NPASSES; p++)
@@ -122,12 +127,40 @@ void limba_pass_cfg_drop(limba_pass_ctx *x)
     x->have_cfg = false;
 }
 
+/* apply the edit of the pipeline to f, and start another; a block gone
+   renumbers the others, and the CFG with them */
+static void settle(limba_pass_ctx *x, limba_func *f)
+{
+    bool blocks = false;
+    for (uint32_t b = 0; b < x->e.nblocks && !blocks; b++)
+        blocks = x->e.dead_block[b];
+    limba_edit_end(&x->e);
+    if (blocks)
+        limba_pass_cfg_drop(x);
+    limba_edit_begin(&x->e, f);
+}
+
 int limba_optimizer_func(limba_optimizer *z, limba_module *m, limba_id fid,
                          limba_diag *d)
 {
+    return limba_optimizer_func_edit(z, m, fid, NULL, d);
+}
+
+int limba_optimizer_func_edit(limba_optimizer *z, limba_module *m, limba_id fid,
+                              limba_edit *e, limba_diag *d)
+{
     limba_pass_ctx x = {.m = m, .fold = !z->no_fold};
+    limba_func *f = &m->funcs[fid];
+    bool edited = e != NULL; /* what the maker left is to apply too */
+    if (e)
+        x.e = *e;
+    else
+        limba_edit_begin(&x.e, f);
+    if (edited && z->verify)
+        settle(&x, f); /* verified as made, before the passes */
+    edited = edited && !z->verify;
     int r = 0;
-    if (z->verify && !z->v)
+    if (z->verify_end && !z->v)
         z->v = limba_verifier_new(m);
     /* to the fixed point: every pass has run on the function as it is
        and changed nothing, or nothing that wakes the others; at most
@@ -140,9 +173,16 @@ int limba_optimizer_func(limba_optimizer *z, limba_module *m, limba_id fid,
         if (z->skip[p])
             continue;
         runs++;
-        uint32_t n = pipeline[p].run(&x, &m->funcs[fid]);
+        uint32_t n = pipeline[p].run(&x, f);
         z->total[p] += n;
+        edited |= n != 0;
         quiet = n && pipeline[p].wakes ? 0 : quiet + 1;
+        if (z->verify && edited) {
+            /* applied to be verified: the same code must come out as
+               with the edit applied once at the end */
+            settle(&x, f);
+            edited = false;
+        }
         if (z->verify && limba_verifier_func(z->v, fid, d) != 0) {
             if (d) { /* prefix the pass; a long message is cut */
                 char msg[sizeof(d->msg) + 32];
@@ -155,6 +195,19 @@ int limba_optimizer_func(limba_optimizer *z, limba_module *m, limba_id fid,
             break;
         }
     }
+    if (edited)
+        settle(&x, f);
+    if (!r && z->verify_end && !z->verify &&
+        limba_verifier_func(z->v, fid, d) != 0) {
+        if (d) {
+            char msg[sizeof(d->msg) + 32];
+            snprintf(msg, sizeof(msg), "after the passes: %s", d->msg);
+            memcpy(d->msg, msg, sizeof(d->msg) - 1);
+            d->msg[sizeof(d->msg) - 1] = 0;
+        }
+        r = -1;
+    }
+    limba_edit_cancel(&x.e);
     limba_pass_cfg_drop(&x);
     if (r)
         return r;

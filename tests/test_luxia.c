@@ -13,6 +13,7 @@
 #include "luxia/parse.h"
 #include "eval/eval.h"
 #include "limba/opt.h"
+#include "opt/pass.h"
 #include "luxia/lower.h"
 #include "luxia/sema.h"
 
@@ -1075,8 +1076,26 @@ static char *run_module(limba_module *m, const char *in, size_t inlen, int argc,
     return out;
 }
 
-/* compile a Luxia source to a verified module, run it, then optimise it
-   and run it again: both runs must agree (the OPTDIFF net); the output
+/* each function optimised as the front end completes it, as limba -O1
+   does: the last edit of its SSA and those of the passes applied once */
+typedef struct {
+    limba_optimizer *z;
+    bool bad;
+    limba_diag d;
+} optctx;
+
+static void opt_func(void *ctx, limba_module *m, limba_id fid, limba_edit *e)
+{
+    optctx *c = ctx;
+    if (c->bad)
+        limba_edit_cancel(e);
+    else if (limba_optimizer_func_edit(c->z, m, fid, e, &c->d) != 0)
+        c->bad = true;
+}
+
+/* compile a Luxia source to a verified module and run it, then compile it
+   again optimising each function as it is made (as limba -O1) and run
+   that: both runs must agree (the OPTDIFF net); the output
    may hold any byte, so its length goes to *len when len is not NULL;
    both runs read the input in (NULL: none), with the command line
    argv */
@@ -1118,10 +1137,16 @@ static char *compile_run(const char *src, const char *in, size_t inlen,
         } else {
             out = run_module(m, in, inlen, argc, argv, end, size, &n1);
             char end2[256];
-            if (limba_optimize(m, NULL, &d) != 0) {
-                snprintf(end, size, "optimiser: %.200s", d.msg);
+            optctx oc = {limba_optimizer_new(NULL), false, {{0}, 0}};
+            limba_module *m2 = limba_lxl_program_each(&sema, opt_func, &oc);
+            limba_optimizer_free(oc.z);
+            if (!m2 || oc.bad || limba_verify(m2, &d) != 0) {
+                snprintf(end, size, "optimiser: %.200s",
+                         oc.bad ? oc.d.msg
+                         : m2   ? d.msg
+                                : "no module");
             } else {
-                char *out2 = run_module(m, in, inlen, argc, argv, end2,
+                char *out2 = run_module(m2, in, inlen, argc, argv, end2,
                                         sizeof(end2), &n2);
                 if (n1 != n2 || (n1 && memcmp(out, out2, n1)) ||
                     strcmp(end, end2)) {
@@ -1132,6 +1157,8 @@ static char *compile_run(const char *src, const char *in, size_t inlen,
                 }
                 free(out2);
             }
+            if (m2)
+                limba_module_free(m2);
         }
         limba_module_free(m);
     }

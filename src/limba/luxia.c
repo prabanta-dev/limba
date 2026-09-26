@@ -13,6 +13,7 @@
 #include "luxia/parse.h"
 #include "luxia/lower.h"
 #include "luxia/sema.h"
+#include "opt/pass.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -85,20 +86,31 @@ typedef struct {
     limba_diag d;
 } stream;
 
-static void stream_func(void *ctx, limba_module *m, limba_id fid)
+static void stream_func(void *ctx, limba_module *m, limba_id fid, limba_edit *e)
 {
     stream *st = ctx;
-    if (st->bad || st->opt_bad)
-        return;
-    if (st->verify && !st->v)
-        st->v = limba_verifier_new(m);
-    if (st->verify && limba_verifier_func(st->v, fid, &st->d) != 0) {
-        st->bad = true;
+    if (st->bad || st->opt_bad) {
+        limba_edit_cancel(e);
         return;
     }
-    if (st->z && limba_optimizer_func(st->z, m, fid, &st->d) != 0) {
-        st->opt_bad = true;
-        return;
+    if (st->z && !st->verify) {
+        /* the last edit of the SSA and those of the passes, applied once */
+        if (limba_optimizer_func_edit(st->z, m, fid, e, &st->d) != 0) {
+            st->opt_bad = true;
+            return;
+        }
+    } else {
+        limba_edit_end(e);
+        if (st->verify && !st->v)
+            st->v = limba_verifier_new(m);
+        if (st->verify && limba_verifier_func(st->v, fid, &st->d) != 0) {
+            st->bad = true;
+            return;
+        }
+        if (st->z && limba_optimizer_func(st->z, m, fid, &st->d) != 0) {
+            st->opt_bad = true;
+            return;
+        }
     }
     limba_writer_func(st->w, m, fid);
     limba_func_clear(&m->funcs[fid]);

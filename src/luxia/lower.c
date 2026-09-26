@@ -6,6 +6,7 @@
  */
 #include "lower.h"
 
+#include "common/hash.h"
 #include "common/xalloc.h"
 
 #include <stdio.h>
@@ -127,11 +128,37 @@ limba_id lxl_type(lxl *L, limba_ltype t)
 
 /* ---- emitting ---- */
 
+#define LVN_SIZE 1024 /* a power of 2 */
+
 limba_id lxl_emit(lxl *L, unsigned op, limba_id type, unsigned cc, int64_t imm,
                   int64_t imm2, const uint32_t *ops, uint32_t nops)
 {
-    return limba_inst_add(limba_ssa_func(L->ssa), L->cur, op, type, cc, imm,
-                          imm2, ops, nops);
+    limba_func *f = limba_ssa_func(L->ssa);
+    if (!(limba_ops[op].flags & LIMBA_OPF_PURE) || op == LIMBA_OP_PARAM ||
+        op == LIMBA_OP_UNDEF || type == LIMBA_T_VOID || nops > 3)
+        return limba_inst_add(f, L->cur, op, type, cc, imm, imm2, ops, nops);
+    uint64_t h = limba_mix(LIMBA_FNV_SEED,
+                           (uint64_t)op << 40 ^ (uint64_t)cc << 32 ^ type);
+    h = limba_mix(h, (uint64_t)imm);
+    h = limba_mix(h, (uint64_t)imm2);
+    for (uint32_t i = 0; i < nops; i++)
+        h = limba_mix(h, ops[i]);
+    h = limba_mix(h, L->cur);
+    if (!L->lvn)
+        L->lvn = limba_xcalloc(LVN_SIZE, sizeof(*L->lvn));
+    struct lxl_lvn *e = &L->lvn[h & (LVN_SIZE - 1)];
+    if (e->gen == L->gen && e->block == L->cur) {
+        const limba_inst *in = &f->insts[e->id];
+        if (in->op == op && in->type == type && in->cc == cc &&
+            in->imm == imm && in->imm2 == imm2 && in->nops == nops &&
+            in->block == L->cur &&
+            (!nops ||
+             !memcmp(f->operands + in->first, ops, nops * sizeof(*ops))))
+            return e->id;
+    }
+    limba_id id = limba_inst_add(f, L->cur, op, type, cc, imm, imm2, ops, nops);
+    *e = (struct lxl_lvn){id, L->cur, L->gen};
+    return id;
 }
 
 limba_id lxl_iconst(lxl *L, limba_id type, int64_t v)
@@ -913,6 +940,7 @@ static void begin_function(lxl *L, limba_id fid)
         limba_param_add(f, 0, L->m->members[ft->first + i].type);
     L->ssa = limba_ssa_new(L->m, fid);
     L->fid = fid;
+    L->gen++; /* what the cache of lxl_emit holds is of another function */
     L->cur = 0;
     L->nloops = 0;
     L->nouts = 0;
@@ -964,11 +992,14 @@ static void end_function(lxl *L, uint32_t node, bool function)
     }
     /* the jumps belong to no single place */
     limba_ssa_func(L->ssa)->pos_cur = 0;
-    limba_ssa_finish(L->ssa, undefined, L);
+    limba_edit e;
+    limba_ssa_finish_edit(L->ssa, undefined, L, &e);
     limba_ssa_free(L->ssa);
     L->ssa = NULL;
     if (L->done && !L->S->rep->errors)
-        L->done(L->ctx, L->m, L->fid);
+        L->done(L->ctx, L->m, L->fid, &e);
+    else
+        limba_edit_end(&e);
 }
 
 static void routine_body(lxl *L, limba_sym s)
@@ -1054,7 +1085,7 @@ limba_module *limba_lxl_program(limba_lxs *S)
 
 limba_module *limba_lxl_program_each(limba_lxs *S,
                                      void (*done)(void *ctx, limba_module *m,
-                                                  limba_id fid),
+                                                  limba_id fid, limba_edit *e),
                                      void *ctx)
 {
     if (S->rep->errors)
@@ -1161,6 +1192,7 @@ limba_module *limba_lxl_program_each(limba_lxs *S,
     free(L->out_place);
     free(L->dyns);
     free(L->node_pos);
+    free(L->lvn);
     if (S->rep->errors) {
         limba_module_free(L->m);
         return NULL;

@@ -460,6 +460,15 @@ static void push_target(fin *F, uint32_t **ops, uint32_t *n, uint32_t *cap,
 void limba_ssa_finish(limba_ssa *s, void (*undefined)(void *ctx, uint32_t tag),
                       void *ctx)
 {
+    limba_edit ed;
+    limba_ssa_finish_edit(s, undefined, ctx, &ed);
+    limba_edit_end(&ed);
+}
+
+void limba_ssa_finish_edit(limba_ssa *s,
+                           void (*undefined)(void *ctx, uint32_t tag),
+                           void *ctx, limba_edit *e)
+{
     fin F = {s,
              limba_xcalloc(s->nb + 1, 1),
              limba_xmalloc((s->nparams + 1) * sizeof(limba_id)),
@@ -611,16 +620,17 @@ void limba_ssa_finish(limba_ssa *s, void (*undefined)(void *ctx, uint32_t tag),
     }
     free(order);
 
-    limba_edit ed;
-    limba_edit_begin(&ed, f);
+    limba_edit_begin(e, f);
     for (uint32_t i = 0; i < s->nparams; i++)
         if (F.rep[i] != LIMBA_NONE)
-            limba_edit_replace(&ed, s->params[i].value,
+            limba_edit_replace(e, s->params[i].value,
                                resolve(&F, s->params[i].value));
     for (limba_id b = 0; b < f->nblocks; b++)
-        if (!F.reach[b])
-            ed.dead_block[b] = 1;
-    limba_edit_end(&ed);
+        if (!F.reach[b]) {
+            e->dead_block[b] = 1;
+            for (uint32_t k = 0; k < f->blocks[b].ninsts; k++)
+                e->dead[f->blocks[b].insts[k]] = 1;
+        }
     free(F.reach);
     free(F.rep);
     free(F.state);
