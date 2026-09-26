@@ -381,6 +381,51 @@ static void test_symtab(void)
 
 /* the shortest form of a real: known cases as Python's repr writes them,
    then random bits that must read back to themselves */
+/* a Float32 in its own shortest form: fixed cases, then random floats
+   that must read back with strtof */
+static void test_fmt_f32(unsigned count)
+{
+    static const struct {
+        float v;
+        const char *s;
+    } cases[] = {
+        {0.1f, "0.1"},
+        {-0.0f, "-0.0"},
+        {16777216.0f, "16777216.0"},
+        {3.4028235e38f, "3.4028235e+38"},
+        {1e-45f, "1e-45"},
+        {1.0f / 3.0f, "0.33333334"},
+        {1.0000001f, "1.0000001"},
+    };
+    char buf[LIMBA_FMT_F64_MAX];
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        limba_fmt_f32(buf, cases[i].v);
+        if (strcmp(buf, cases[i].s)) {
+            fprintf(stderr, "test_front: float %s printed %s\n", cases[i].s,
+                    buf);
+            failures++;
+        }
+    }
+    uint64_t s = 11;
+    for (unsigned i = 0; i < count; i++) {
+        uint64_t z = (s += 0x9e3779b97f4a7c15ull);
+        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+        z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+        z ^= z >> 31;
+        uint32_t u = (uint32_t)z;
+        float v;
+        memcpy(&v, &u, sizeof(v));
+        if (isnan(v))
+            continue;
+        limba_fmt_f32(buf, v);
+        float back = strtof(buf, NULL);
+        if (memcmp(&back, &v, sizeof(v))) {
+            fprintf(stderr, "test_front: float %s does not read back\n", buf);
+            failures++;
+        }
+    }
+}
+
 static void test_fmt_f64(unsigned count)
 {
     static const struct {
@@ -440,6 +485,7 @@ int main(void)
     test_types();
     test_symtab();
     test_fmt_f64(20000);
+    test_fmt_f32(20000);
     printf("test_front: integers, rationals, 20000 random roundings to "
            "double and float, types, scopes, 20000 shortest reals, %d "
            "failures\n",

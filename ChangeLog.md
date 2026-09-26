@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `low(T)` and `high(T)` of a discrete type (integers, subtypes with a
+  range, enumerations, `Char`, `Boolean`) give its first and last value,
+  a constant of `T`, as Ada's `T'First` and `T'Last`.
+- `ord` takes a `Char`, a `Boolean` or an enumeration only: an integer
+  is converted instead.
+- A `Float32` is written in the shortest form that reads back as that
+  `Float32` (`0.1`, not `0.10000000149011612`); `str` too. The runtime
+  gains `print_f32` and `str_from_f32`.
 - The cfg pass sends a jump to a block that only jumps on where that
   block goes, and joins a block to its only predecessor when that one
   jumps to it: the benchmarks run 2 % (binary-trees) to 10 %

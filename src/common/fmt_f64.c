@@ -2,9 +2,10 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * fmt_f64.c - the shortest form of a real (see fmt_f64.h). The digits are
- * the fewest that printf rounds to a string strtod reads back to the same
- * bits; the layout is Python's: positional when the exponent of the first
- * digit is in -4..15, else d.ddde+XX with at least two digits.
+ * the fewest that printf rounds to a string strtod (strtof for a Float32)
+ * reads back to the same bits; the layout is Python's: positional when the
+ * exponent of the first digit is in -4..15, else d.ddde+XX with at least two
+ * digits.
  */
 #include "fmt_f64.h"
 
@@ -14,7 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-size_t limba_fmt_f64(char *buf, double v)
+/* v, a float when f32 */
+static size_t fmt(char *buf, double v, bool f32)
 {
     if (isnan(v))
         return (size_t)snprintf(buf, LIMBA_FMT_F64_MAX, "nan");
@@ -23,9 +25,15 @@ size_t limba_fmt_f64(char *buf, double v)
     char e[LIMBA_FMT_F64_MAX];
     for (int p = 1; p <= 17; p++) {
         snprintf(e, sizeof(e), "%.*e", p - 1, v);
-        double back = strtod(e, NULL);
-        if (memcmp(&back, &v, sizeof(v)) == 0)
-            break;
+        if (f32) {
+            float back = strtof(e, NULL), fv = (float)v;
+            if (memcmp(&back, &fv, sizeof(fv)) == 0)
+                break;
+        } else {
+            double back = strtod(e, NULL);
+            if (memcmp(&back, &v, sizeof(v)) == 0)
+                break;
+        }
     }
     /* e is [-]d[.ddd]e(+|-)XX: its digits and the exponent of the first */
     const char *s = e;
@@ -74,4 +82,14 @@ size_t limba_fmt_f64(char *buf, double v)
     }
     buf[n] = 0;
     return n;
+}
+
+size_t limba_fmt_f64(char *buf, double v)
+{
+    return fmt(buf, v, false);
+}
+
+size_t limba_fmt_f32(char *buf, float v)
+{
+    return fmt(buf, v, true);
 }

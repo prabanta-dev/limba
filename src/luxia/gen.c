@@ -4204,8 +4204,12 @@ static void print_value(const G *g, text *o, unsigned t, v128 v)
         char b[4];
         putn(o, b, utf8((uint32_t)v, b));
     } else if (fam(t) == 'F') {
+        /* a Float32 in its own shortest form */
         char buf[LIMBA_FMT_F64_MAX];
-        limba_fmt_f64(buf, fval(v));
+        if (t == T_F32)
+            limba_fmt_f32(buf, (float)fval(v));
+        else
+            limba_fmt_f64(buf, fval(v));
         put(o, buf);
     } else if (t == T_BOOL) {
         put(o, v ? "true" : "false");

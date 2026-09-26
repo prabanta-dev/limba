@@ -90,3 +90,6 @@ LIMBA_RT(BITS_POW, "bits_pow", "(i64, i64) -> i64", LIMBA_RTA_PURE)
 LIMBA_RT(STR_TO_U64, "str_to_u64", "(str, ptr, i64, i64) -> i1",
          LIMBA_RTA_WRITES_MEM)
 LIMBA_RT(STR_TO_F32, "str_to_f32", "(str, ptr) -> i1", LIMBA_RTA_WRITES_MEM)
+/* a Float32 in the shortest form that reads back as a Float32 */
+LIMBA_RT(PRINT_F32, "print_f32", "(f32) -> void", LIMBA_RTA_IO)
+LIMBA_RT(STR_FROM_F32, "str_from_f32", "(f32) -> str", LIMBA_RTA_ALLOC)

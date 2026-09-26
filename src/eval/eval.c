@@ -581,6 +581,16 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         *r = sv(str_make(e, f, limba_fmt_f64(f, dv(a[0]))));
         return true;
     }
+    case LIMBA_RT_STR_FROM_F32: {
+        char f[LIMBA_FMT_F64_MAX];
+        *r = sv(str_make(e, f, limba_fmt_f32(f, (float)dv(a[0]))));
+        return true;
+    }
+    case LIMBA_RT_PRINT_F32: {
+        char f[LIMBA_FMT_F64_MAX];
+        limba_w_bytes(&e->out, f, limba_fmt_f32(f, (float)dv(a[0])));
+        return true;
+    }
     case LIMBA_RT_STR_MID: { /* (s, start from 0, length), clamped */
         const estr *s = str_of(a[0]);
         int64_t start = (int64_t)a[1], len = (int64_t)a[2];

@@ -711,6 +711,25 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         if (!arity(S, node, 1, nm, scope))
             return set(S, node, 0);
         uint32_t a = arg_at(S, node, 0);
+        /* low(T), high(T) of a discrete type: its first and last value,
+           a constant of T (Ada's T'First, T'Last) */
+        limba_lx_node *ax = lxs_node(S, a);
+        limba_sym ts =
+            ax->kind == LXN_REF ? limba_sym_lookup(&S->st, scope, ax->a) : 0;
+        if (ts && S->st.sym[ts].kind == LIMBA_LSYM_TYPE && id != LXB_LENGTH) {
+            if (!lxs_lookup(S, scope, a))
+                return set(S, node, 0);
+            lxs_force(S, ts);
+            limba_ltype tt = S->st.sym[ts].type;
+            if (!tt || !limba_types_is_discrete(&S->ts, tt)) {
+                lxs_error(S, LXE_TYPE_MISMATCH, a,
+                          "%s takes an array, a string or a discrete type", nm);
+                return set(S, node, 0);
+            }
+            const limba_typeinfo *ti = lxs_ty(S, tt);
+            S->val[node] = lxs_value_int(S, id == LXB_LOW ? ti->lo : ti->hi);
+            return set(S, node, tt);
+        }
         limba_ltype t = lxs_expr(S, a, scope, 0);
         if (!t)
             return set(S, node, 0);
@@ -720,10 +739,11 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         if (ti->kind == LIMBA_LTK_OPEN)
             return set(S, node, lxs_base(S, ti->index));
         if (ti->kind != LIMBA_LTK_ARRAY) {
-            lxs_error(S, LXE_TYPE_MISMATCH, a,
-                      "%s takes an array or a "
-                      "string, not %s",
-                      nm, lxs_tname(S, t, tb));
+            lxs_error(S, LXE_TYPE_MISMATCH, a, "%s takes %s, not %s", nm,
+                      id == LXB_LENGTH
+                          ? "an array or a string"
+                          : "an array, a string or a discrete type",
+                      lxs_tname(S, t, tb));
             return set(S, node, 0);
         }
         limba_ltype it = lxs_base(S, ti->index);
@@ -775,6 +795,16 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
             return set(S, node, 0);
         }
         if (id == LXB_ORD) {
+            /* the position of a character, a Boolean or a value of an
+               enumeration (Pascal); an integer is converted instead */
+            unsigned k = kind(S, lxs_base(S, t));
+            if (k != LIMBA_LTK_CHAR && k != LIMBA_LTK_BOOL &&
+                k != LIMBA_LTK_ENUM) {
+                lxs_error(S, LXE_TYPE_MISMATCH, a,
+                          "ord takes a Char, a Boolean or an enumeration: "
+                          "convert an integer, UInt32(x)");
+                return set(S, node, 0);
+            }
             set(S, node, S->ty_uint[2]);
             uint32_t v = S->val[a];
             if (v && lxs_fit(S, node, &v, S->ty_uint[2]))

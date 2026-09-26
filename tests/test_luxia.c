@@ -539,6 +539,10 @@ static const sema_case sema_cases[] = {
     {"program p; var r: Float64 := 1.0; begin writeln(r:5:101); end.",
      "L0029@1:53"},
     {"program p; begin writeln(arg(0)); end.", "L0029@1:30"},
+    /* ord of a character, a Boolean or an enumeration only; low and high
+       of a discrete type */
+    {"program p; var x: Int32 := 1; begin writeln(ord(x)); end.", "L0027@1:49"},
+    {"program p; begin writeln(low(Float64)); end.", "L0027@1:30"},
     /* open arrays: index of the same base, same elements, bounds inside a
        range, only for parameters */
     {"program p; var b: array[Int16 range 1..2] of Int8; procedure Q(v: "
@@ -782,9 +786,16 @@ static const run_case run_cases[] = {
      "true -128 false -128 true 127\n"
      "true 18446744073709551615 true 0 false 0\n"
      "true 255 false 255 true 10 false false false false\n"
-     "true 1.0000001192092896 false false true 1000.0\n"
+     "true 1.0000001 false false true 1000.0\n"
      "true inf true -inf true nan false false true 5.0\n",
      "ok"},
+    /* low(T), high(T): the first and last value of a discrete type, a
+       constant of it */
+    {"program p; type C = (r, g, b); S = Int8 range -3..5; var m: Int64 := "
+     "low(Int64); begin writeln(low(Int8), \" \", high(UInt64), \" \", "
+     "low(S), \" \", high(S), \" \", ord(high(C)), \" \", high(Boolean), "
+     "\" \", ord(high(Char)));\nwriteln(m div (-1)); end p.",
+     "-128 18446744073709551615 -3 5 2 true 1114111\n", "trap 6 at 2:11"},
     /* arg from 1 to argcount(); a width from 0, decimals from 0 to 100,
        checked where they are written */
     {"program p; begin writeln(argcount());\nwriteln(arg(1)); end p.", "0\n",
@@ -971,7 +982,7 @@ static const run_case run_cases[] = {
     {"program p; var i: Int64 := 1152921573326323713; u: UInt64 := "
      "9223372586610589697; begin writeln(Float32(i), \" \", Float32(u)); "
      "end.",
-     "1.1529216420458004e+18 9.223373136366404e+18\n", "ok"},
+     "1.1529216e+18 9.223373e+18\n", "ok"},
     /* chr is checked at its name, s[i] at the [ */
     {"program p; var n: Int32 := 1114112; begin writeln(chr(n)); end.", "",
      "trap 103 at 1:51"},

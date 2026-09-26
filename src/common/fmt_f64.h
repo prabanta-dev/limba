@@ -14,5 +14,8 @@
 
 /* write v into buf (LIMBA_FMT_F64_MAX bytes), NUL-terminated; the length */
 size_t limba_fmt_f64(char *buf, double v);
+/* the same for a Float32: the fewest digits that read back as v in a
+   float, so 0.1f is 0.1 */
+size_t limba_fmt_f32(char *buf, float v);
 
 #endif

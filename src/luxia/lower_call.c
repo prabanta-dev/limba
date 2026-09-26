@@ -167,6 +167,8 @@ static limba_id to_string(lxl *L, limba_id v, limba_ltype t, limba_id dec)
             L, lxl_signed(L, t) ? LIMBA_RT_STR_FROM_I64 : LIMBA_RT_STR_FROM_U64,
             LIMBA_T_STR, &v, 1);
     case LIMBA_LTK_FLOAT: {
+        if (dec == LIMBA_NONE && x->bits == 32) /* its own shortest form */
+            return lxl_rt(L, LIMBA_RT_STR_FROM_F32, LIMBA_T_STR, &v, 1);
         if (x->bits == 32)
             v = un(L, LIMBA_OP_FPEXT, LIMBA_T_F64, v);
         if (dec != LIMBA_NONE) {
@@ -193,9 +195,7 @@ static void lx_print(lxl *L, limba_id v, limba_ltype t)
         rt = lxl_signed(L, t) ? LIMBA_RT_PRINT_I64 : LIMBA_RT_PRINT_U64;
         break;
     case LIMBA_LTK_FLOAT:
-        if (x->bits == 32)
-            v = un(L, LIMBA_OP_FPEXT, LIMBA_T_F64, v);
-        rt = LIMBA_RT_PRINT_F64;
+        rt = x->bits == 32 ? LIMBA_RT_PRINT_F32 : LIMBA_RT_PRINT_F64;
         break;
     case LIMBA_LTK_BOOL:
         rt = LIMBA_RT_PRINT_BOOL;
