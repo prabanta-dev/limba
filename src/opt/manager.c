@@ -35,15 +35,15 @@ static const struct {
     unsigned wakes;
     bool off;
 } pipeline[] = {
-    [P_CFG] = {"cfg", limba_pass_cfg, ALL}, /* constant branches, unreachable
-                                               blocks */
+    /* constant branches, unreachable blocks */
+    [P_CFG] = {"cfg", limba_pass_cfg, ALL, false},
     /* what gvn merges rarely proves a check more: bounds runs again
        only when cfg changes the branches, the facts it reads */
-    [P_GVN] = {"gvn", limba_pass_gvn,
-               ALL & ~(1u << P_BOUNDS)}, /* folding, then equal values once */
+    [P_GVN] = {"gvn", limba_pass_gvn, ALL & ~(1u << P_BOUNDS),
+               false}, /* folding, then equal values once */
     [P_BOUNDS] = {"bounds", limba_pass_bounds, 1u << P_DCE,
                   true}, /* checks the facts before them prove */
-    [P_DCE] = {"dce", limba_pass_dce, 0}, /* values nobody uses */
+    [P_DCE] = {"dce", limba_pass_dce, 0, false}, /* values nobody uses */
 };
 #define NPASSES (sizeof(pipeline) / sizeof(pipeline[0]))
 

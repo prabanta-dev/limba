@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Limba builds with Clang again (`CC=clang ./build.sh`): the pass
+  table of the optimizer initializes every field.
 - Diagnostics: a rule is stated as one ("the keyword 'begin' must be
   written in lowercase only", "'exit' is allowed only inside a loop"),
   and code in a suggestion is quoted ("write '(a and b) or c' or
