@@ -1,0 +1,10 @@
+; trap: 7
+; a string that doubles without end: out of memory, never a crash
+func @main : fn() -> i64 {
+b0:
+  v0 = sconst str "ab"
+  br b1(v0)
+b1(v1: str):
+  v2 = call.rt str str_concat(v1, v1)
+  br b1(v2)
+}

@@ -340,6 +340,20 @@ void limba_print(const limba_module *m, FILE *out)
         fputc('\n', out);
     }
     fprintf(out, "memory %s\n", m->memory == LIMBA_MEM_FB ? "fb" : "strict");
+    if (m->language != LIMBA_NONE) {
+        size_t n;
+        const char *s = limba_str(m, m->language, &n);
+        fputs("language ", out);
+        print_bytes(out, s, n);
+        fputc('\n', out);
+    }
+    for (uint32_t i = 0; i < m->nmessages; i++) {
+        size_t n;
+        const char *s = limba_str(m, m->messages[i].text, &n);
+        fprintf(out, "message %" PRId64 " ", m->messages[i].code);
+        print_bytes(out, s, n);
+        fputc('\n', out);
+    }
 
     for (limba_id t = LIMBA_T_FIRST_USER; t < m->ntypes; t++) {
         const limba_type *ty = &m->types[t];

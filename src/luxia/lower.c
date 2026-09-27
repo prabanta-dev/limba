@@ -1178,6 +1178,8 @@ limba_module *limba_lxl_program_each(limba_lxs *S,
     L->done = done;
     L->ctx = ctx;
     L->m = limba_module_new();
+    /* its traps are worded as Luxia says them: the texts of traps.def */
+    L->m->language = limba_str_intern(L->m, "luxia", 5);
     L->store = limba_xcalloc(S->st.nsym + 1, sizeof(*L->store));
     L->taken = limba_xcalloc(S->st.nsym + 1, 1);
     L->assigned = limba_xcalloc(S->st.nsym + 1, 1);

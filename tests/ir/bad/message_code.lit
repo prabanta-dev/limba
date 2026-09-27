@@ -1,0 +1,3 @@
+; expect: which traps.def does not have
+language "luxia"
+message 999 "nothing"

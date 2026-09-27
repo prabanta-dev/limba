@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- IR version 4. A module may carry how its traps are presented: the name
+  of its language, the prefix of their messages (`language "luxia"`), and
+  texts that replace those of `traps.def` (`message 105 "..."`); the
+  verifier refuses a code `traps.def` does not have, an empty text, a
+  code twice. Luxia writes `luxia`; `lir_run` presents a trap as
+  `luxia: index out of range at prog.luxia:12:5`, its own errors as
+  `lir_run:`. `input_line` is gone from the runtime: nothing emitted it.
+- The numbers `val` reads are public API, `include/limba/val.h`
+  (`limba_val_int`, `limba_val_real`), so that every back end reads what
+  the reference interpreter reads.
+- Specification of Luxia, § 10.1: how much memory a program may use
+  depends on the implementation, and going past it is always "out of
+  memory", never a crash. The reference interpreter counts blocks, the
+  slots of live calls and strings against a budget (1 GiB): a string
+  that grows without end is the trap, no longer the end of the process.
+  Slots are freed when their call returns, and each `sconst` is made once.
 - A signalling NaN of type f32 keeps its bits where the IR copies them
   (bitcast, load, store, memcpy, fneg, calls): the reference interpreter
   held an f32 in a double, and the conversion of the CPU quietened it;

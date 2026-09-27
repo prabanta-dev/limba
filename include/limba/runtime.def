@@ -26,7 +26,6 @@ LIMBA_RT(PRINT_I64, "print_i64", "(i64) -> void", LIMBA_RTA_IO)
 LIMBA_RT(PRINT_F64, "print_f64", "(f64) -> void", LIMBA_RTA_IO)
 LIMBA_RT(PRINT_STR, "print_str", "(str) -> void", LIMBA_RTA_IO)
 LIMBA_RT(PRINT_NL, "print_nl", "() -> void", LIMBA_RTA_IO)
-LIMBA_RT(INPUT_LINE, "input_line", "() -> str", LIMBA_RTA_IO | LIMBA_RTA_ALLOC)
 
 /* strings */
 LIMBA_RT(STR_CONCAT, "str_concat", "(str, str) -> str", LIMBA_RTA_ALLOC)

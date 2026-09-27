@@ -29,6 +29,17 @@ uint64_t limba_rt_fingerprint(void)
     return h;
 }
 
+const char *limba_trap_message(const limba_module *m, int64_t code, size_t *len)
+{
+    for (uint32_t i = 0; m && i < m->nmessages; i++)
+        if (m->messages[i].code == code)
+            return limba_str(m, m->messages[i].text, len);
+    const char *s = limba_trap_text(code);
+    if (s && len)
+        *len = strlen(s);
+    return s;
+}
+
 const char *limba_trap_text(int64_t code)
 {
     switch (code) {

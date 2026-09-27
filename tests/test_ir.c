@@ -213,9 +213,31 @@ static int each(const char *dir, void (*fn)(const char *))
     return done;
 }
 
+/* the words of a trap: the module's message first, then traps.def */
+static void test_messages(void)
+{
+    const char text[] = "language \"luxia\"\nmessage 105 \"pendente\"\n";
+    limba_diag d = {{0}, 0};
+    limba_module *m = limba_parse(text, sizeof(text) - 1, &d);
+    CHECK(m && limba_verify(m, &d) == 0, "messages: %s", d.msg);
+    if (!m)
+        return;
+    size_t n = 0;
+    const char *s = limba_trap_message(m, 105, &n);
+    CHECK(s && n == 8 && !memcmp(s, "pendente", 8), "message of the module");
+    s = limba_trap_message(m, 100, &n);
+    CHECK(s && !strcmp(s, "index out of range") && n == 18,
+          "message of traps.def");
+    CHECK(!limba_trap_message(m, 999, &n), "message of no trap");
+    s = limba_str(m, m->language, &n);
+    CHECK(n == 5 && !memcmp(s, "luxia", 5), "language");
+    limba_module_free(m);
+}
+
 int main(void)
 {
     test_leb128();
+    test_messages();
     int ok = each("tests/ir/ok", test_ok);
     int bad = each("tests/ir/bad", test_bad);
     CHECK(ok > 0 && bad > 0, "no test files found");

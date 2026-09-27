@@ -51,6 +51,10 @@ typedef struct {
     /* count the references to strings from memory and check the rules
        of § 11c (LIMBA_EVAL_BADMEM); slower, the output does not change */
     bool check_mem;
+    /* the memory of the program: blocks of mem_alloc alive, the slots of
+       the calls alive, and every string made (never freed here); past it,
+       the trap NOMEM. 0 for 1 GiB, a limit of this oracle, not of the IR */
+    uint64_t max_memory;
 } limba_eval_limits;
 
 typedef struct {

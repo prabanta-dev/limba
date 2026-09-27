@@ -22,7 +22,7 @@
 #include <stdio.h>
 
 /* bumped whenever the binary form or the tables change incompatibly */
-#define LIMBA_IR_VERSION 3
+#define LIMBA_IR_VERSION 4
 
 typedef uint32_t limba_id;
 #define LIMBA_NONE UINT32_MAX
@@ -304,9 +304,23 @@ enum limba_memory { LIMBA_MEM_STRICT, LIMBA_MEM_FB };
 typedef struct limba_strtab limba_strtab;
 typedef struct limba_hash limba_hash;
 
+/* how the language of a module words one of its traps */
+typedef struct {
+    int64_t code;  /* a code of traps.def */
+    limba_id text; /* string id, not empty */
+} limba_message;
+
 typedef struct limba_module {
     limba_id name;   /* string id, LIMBA_NONE if unnamed */
     uint32_t memory; /* enum limba_memory; STRICT by default */
+    /* how the traps of the program are presented, written by the front
+       end for its language (optional): the prefix of their messages
+       ("luxia"), LIMBA_NONE for the engine's own, and texts that replace
+       those of traps.def. An engine's own errors (an invalid module, its
+       limits, call.ext, unreachable) keep its own prefix */
+    limba_id language;
+    limba_message *messages;
+    uint32_t nmessages, capmessages;
     limba_strtab *strings;
     limba_type *types;
     uint32_t ntypes, captypes;
@@ -330,6 +344,12 @@ limba_module *limba_module_new(void);
 void limba_module_free(limba_module *m);
 
 limba_id limba_str_intern(limba_module *m, const char *s, size_t len);
+/* the text of a trap in the language of m (checked by the verifier) */
+void limba_message_add(limba_module *m, int64_t code, limba_id text);
+/* the text of a trap in module m: its own message for the code, else that
+   of traps.def; NULL for a code traps.def does not have */
+const char *limba_trap_message(const limba_module *m, int64_t code,
+                               size_t *len);
 /* the bytes of a string id; *len may be NULL */
 const char *limba_str(const limba_module *m, limba_id id, size_t *len);
 uint32_t limba_str_count(const limba_module *m);

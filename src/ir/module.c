@@ -89,6 +89,7 @@ limba_module *limba_module_new(void)
     limba_module *m = limba_xcalloc(1, sizeof(*m));
     m->name = LIMBA_NONE;
     m->memory = LIMBA_MEM_STRICT;
+    m->language = LIMBA_NONE;
     m->strings = limba_strtab_new();
     m->typeidx = limba_hash_new();
     m->symidx = limba_hash_new();
@@ -132,6 +133,7 @@ void limba_module_free(limba_module *m)
         limba_func_clear(&m->funcs[i]);
     free(m->funcs);
     free(m->pos);
+    free(m->messages);
     free(m->globals);
     free(m->externs);
     free(m->members);
@@ -388,6 +390,12 @@ limba_id limba_block_add(limba_func *f)
     limba_id id = f->nblocks++;
     memset(&f->blocks[id], 0, sizeof(f->blocks[id]));
     return id;
+}
+
+void limba_message_add(limba_module *m, int64_t code, limba_id text)
+{
+    LIMBA_GROW(m->messages, m->nmessages, m->capmessages);
+    m->messages[m->nmessages++] = (limba_message){code, text};
 }
 
 limba_id limba_slot_add(limba_func *f, uint32_t size, uint32_t align)

@@ -174,6 +174,13 @@ int limba_writer_end(limba_writer *wr, const limba_module *m, uint8_t **buf,
         limba_w_uleb(&w, n);
         limba_w_bytes(&w, s, n);
     }
+    /* how the traps are presented: the language, its messages */
+    limba_w_uleb(&w, m->language == LIMBA_NONE ? 0 : (uint64_t)m->language + 1);
+    limba_w_uleb(&w, m->nmessages);
+    for (uint32_t i = 0; i < m->nmessages; i++) {
+        limba_w_sleb(&w, m->messages[i].code);
+        limba_w_uleb(&w, m->messages[i].text);
+    }
 
     limba_w_uleb(&w, m->ntypes - LIMBA_T_FIRST_USER);
     for (limba_id t = LIMBA_T_FIRST_USER; t < m->ntypes; t++) {
@@ -382,6 +389,13 @@ limba_module *limba_read(const uint8_t *buf, size_t len, limba_diag *d)
             limba_diag_set(d, 0, "a string written twice");
             goto fail;
         }
+    }
+
+    m->language = r_opt(&r);
+    uint32_t nmsg = limba_r_count(&r, 2);
+    for (uint32_t i = 0; i < nmsg && !r.bad; i++) {
+        int64_t code = limba_r_sleb(&r);
+        limba_message_add(m, code, r_id(&r));
     }
 
     uint32_t ntypes = limba_r_count(&r, 3);

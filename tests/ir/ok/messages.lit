@@ -1,0 +1,11 @@
+; how the traps of a language are worded: its name, a message
+memory strict
+language "luxia"
+message 100 "index out of range"
+message 105 "dangling pointer"
+
+func @main : fn() -> i64 {
+b0:
+  v0 = iconst i64 0
+  ret v0
+}

@@ -1136,7 +1136,7 @@ static const run_case run_cases[] = {
 static char *run_module(limba_module *m, const char *in, size_t inlen, int argc,
                         char **argv, char *end, size_t size, size_t *len)
 {
-    limba_eval_limits lim = {0, 0, argc, argv, NULL, true};
+    limba_eval_limits lim = {0, 0, argc, argv, NULL, true, 0};
     if (in && inlen)
         lim.in = fmemopen((void *)in, inlen, "r");
     limba_eval_result r;

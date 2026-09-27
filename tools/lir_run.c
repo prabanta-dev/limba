@@ -7,6 +7,9 @@
  *
  * Prints what the program printed, then a line with how it ended and what
  * it returned, on standard error. Exit status: 0 returned, 1 anything else.
+ * A trap of the program is first presented as its language words it (the
+ * module's prefix and messages, progetto_ir.md § 4): "luxia: index out of
+ * range at prog.luxia:12:5"; a module without a language gets "lir_run".
  */
 #include "eval/eval.h"
 #include "limba/ir.h"
@@ -75,21 +78,38 @@ int main(int argc, char **argv)
     limba_eval_result r;
     /* the program reads standard input and its own arguments */
     limba_eval_limits lim = {
-        0, 0, argc - first_arg, argv + first_arg, stdin, check_mem};
+        0, 0, argc - first_arg, argv + first_arg, stdin, check_mem, 0};
     limba_eval(m, entry, &lim, &r);
     fwrite(r.out, 1, r.outlen, stdout);
+    fflush(stdout);
+    size_t fn = 0;
+    const char *file = NULL;
+    const limba_pos *where =
+        r.pos && r.pos <= m->npos ? &m->pos[r.pos - 1] : NULL;
+    if (where)
+        file = limba_str(m, where->file, &fn);
+    const char *text;
+    size_t tn;
+    if (r.status == LIMBA_EVAL_TRAP &&
+        (text = limba_trap_message(m, r.code, &tn))) {
+        size_t ln = 7;
+        const char *lang = m->language != LIMBA_NONE
+                               ? limba_str(m, m->language, &ln)
+                               : "lir_run";
+        fprintf(stderr, "%.*s: %.*s", (int)ln, lang, (int)tn, text);
+        if (where)
+            fprintf(stderr, " at %.*s:%" PRIu32 ":%" PRIu32, (int)fn, file,
+                    where->line, where->col);
+        fputc('\n', stderr);
+    }
     fprintf(stderr, "lir_run: %s", status_text[r.status]);
     if (r.status == LIMBA_EVAL_TRAP || r.status == LIMBA_EVAL_HALT)
         fprintf(stderr, " %" PRId64, r.code);
     if (r.status == LIMBA_EVAL_TRAP && limba_trap_text(r.code))
         fprintf(stderr, " (%s)", limba_trap_text(r.code));
-    if (r.pos && r.pos <= m->npos) {
-        const limba_pos *p = &m->pos[r.pos - 1];
-        size_t n;
-        const char *file = limba_str(m, p->file, &n);
-        fprintf(stderr, " at %.*s:%" PRIu32 ":%" PRIu32, (int)n, file, p->line,
-                p->col);
-    }
+    if (where)
+        fprintf(stderr, " at %.*s:%" PRIu32 ":%" PRIu32, (int)fn, file,
+                where->line, where->col);
     if (r.status == LIMBA_EVAL_OK)
         fprintf(stderr, " %" PRId64, (int64_t)r.ret);
     fprintf(stderr, ", %" PRIu64 " steps", r.steps);

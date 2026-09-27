@@ -120,6 +120,22 @@ static bool check_symbols(vctx *v)
         FAIL("memory model %" PRIu32 " is unknown", m->memory);
     if (m->name != LIMBA_NONE && m->name >= nstr)
         FAIL("module name out of range");
+    if (m->language != LIMBA_NONE && m->language >= nstr)
+        FAIL("language name out of range");
+    /* a module words the traps that exist, and cannot make new ones */
+    for (uint32_t i = 0; i < m->nmessages; i++) {
+        const limba_message *msg = &m->messages[i];
+        size_t n = 0;
+        if (!limba_trap_text(msg->code))
+            FAIL("message for code %" PRId64 ", which traps.def does not "
+                 "have",
+                 msg->code);
+        if (msg->text >= nstr || (limba_str(m, msg->text, &n), n == 0))
+            FAIL("message for code %" PRId64 ": no text", msg->code);
+        for (uint32_t j = 0; j < i; j++)
+            if (m->messages[j].code == msg->code)
+                FAIL("two messages for code %" PRId64, msg->code);
+    }
     for (uint32_t i = 0; i < m->nglobals; i++) {
         const limba_global *g = &m->globals[i];
         if (g->name >= nstr)

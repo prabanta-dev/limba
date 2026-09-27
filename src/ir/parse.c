@@ -146,6 +146,17 @@ static bool module(P *p)
                 p->m->memory = LIMBA_MEM_FB;
             else
                 return lp_fail(p, "%s", "memory strict or memory fb");
+        } else if (lp_accept_word(p, "language")) {
+            /* language "luxia": the prefix of the messages of traps */
+            if (!lp_string(p, &p->m->language))
+                return false;
+        } else if (lp_accept_word(p, "message")) {
+            /* message 105 "dangling pointer": the text of a trap */
+            int64_t code;
+            limba_id text;
+            if (!lp_integer(p, &code) || !lp_string(p, &text))
+                return false;
+            limba_message_add(p->m, code, text);
         } else if (lp_accept_word(p, "type")) {
             if (!structure(p))
                 return false;

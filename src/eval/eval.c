@@ -15,6 +15,7 @@
 #include "eval.h"
 
 #include "limba/fmt.h"
+#include "limba/val.h"
 #include "common/leb128.h"
 #include "common/xalloc.h"
 #include "ir/internal.h"
@@ -23,6 +24,7 @@
 #include <inttypes.h>
 #include <math.h>
 #include <pthread.h>
+#include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,6 +70,12 @@ typedef struct {
        interpreter itself */
     const char *stack_base;
     size_t stack_budget;
+    /* the memory of the program against max_memory; a string past it in
+       the runtime jumps back to the call with the trap NOMEM */
+    uint64_t used, budget;
+    jmp_buf nomem;
+    bool armed;
+    estr **sconst; /* the string of each sconst, made once: immortal */
 } E;
 
 /* the run has a thread of its own, with a stack for max_depth calls of
@@ -155,9 +163,24 @@ static void amap_free(amap *a)
     free(a->val);
 }
 
-/* a string of n bytes, its contents to be written by the caller */
+/* n bytes more for the program, if the budget has them */
+static bool take(E *e, uint64_t n)
+{
+    if (n > e->budget - e->used)
+        return false;
+    e->used += n;
+    return true;
+}
+
+/* a string of n bytes, its contents to be written by the caller; past the
+   budget, in the runtime, the trap NOMEM */
 static estr *str_alloc(E *e, size_t n)
 {
+    if (!take(e, sizeof(estr) + (uint64_t)n + 1)) {
+        if (e->armed)
+            longjmp(e->nomem, 1);
+        e->used += sizeof(estr) + (uint64_t)n + 1; /* a constant: made */
+    }
     estr *x = keep(e, limba_xmalloc(sizeof(estr) + n + 1));
     x->len = n;
     x->mrefs = x->seen = 0;
@@ -288,165 +311,6 @@ static size_t utf8(uint32_t c, char *buf)
 }
 
 /* a whole string as a number: optional blanks around, nothing else */
-/* ---- val: a number of a text (luxia_0.md § 9) ---- */
-
-static int digit_of(char c, unsigned base)
-{
-    int v = c >= '0' && c <= '9'   ? c - '0'
-            : c >= 'a' && c <= 'f' ? c - 'a' + 10
-            : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                                   : -1;
-    return v >= 0 && (unsigned)v < base ? v : -1;
-}
-
-/* the digits of base at p[*i], a _ only between two of them, copied to
-   buf at *k without the _; false if there is none */
-static bool num_digits(const char *p, size_t n, size_t *i, unsigned base,
-                       char *buf, size_t *k)
-{
-    size_t start = *i;
-    while (*i < n) {
-        if (digit_of(p[*i], base) >= 0)
-            buf[(*k)++] = p[(*i)++];
-        else if (p[*i] == '_' && *i > start && *i + 1 < n &&
-                 digit_of(p[*i + 1], base) >= 0)
-            (*i)++;
-        else
-            break;
-    }
-    return *i > start;
-}
-
-/* the literal p[0..n) in buf without its _: 1 for an integer of *base
-   (the digits only), 2 for a real (for strtod), 0 for no literal */
-static int num_literal(const char *p, size_t n, char *buf, unsigned *base)
-{
-    size_t i = 0, k = 0;
-    int kind = 1;
-    *base = 10;
-    if (n > 2 && p[0] == '0' && (p[1] == 'x' || p[1] == 'o' || p[1] == 'b')) {
-        *base = p[1] == 'x' ? 16 : p[1] == 'o' ? 8 : 2;
-        i = 2;
-        if (!num_digits(p, n, &i, *base, buf, &k))
-            return 0;
-    } else {
-        if (!num_digits(p, n, &i, 10, buf, &k))
-            return 0;
-        if (i < n && p[i] == '.') {
-            buf[k++] = p[i++];
-            if (!num_digits(p, n, &i, 10, buf, &k))
-                return 0;
-            kind = 2;
-        }
-        if (i < n && p[i] == 'e') {
-            buf[k++] = p[i++];
-            if (i < n && (p[i] == '+' || p[i] == '-'))
-                buf[k++] = p[i++];
-            if (!num_digits(p, n, &i, 10, buf, &k))
-                return 0;
-            kind = 2;
-        }
-    }
-    buf[k] = 0;
-    return i == n ? kind : 0;
-}
-
-/* the body of the number in s, without the spaces and tabs around and the
-   sign (+, - or 0 for none); false if nothing is left */
-static bool num_body(const estr *s, const char **p, size_t *n, char *sign)
-{
-    const char *b = s->data, *e = s->data + s->len;
-    while (b < e && (*b == ' ' || *b == '\t'))
-        b++;
-    while (e > b && (e[-1] == ' ' || e[-1] == '\t'))
-        e--;
-    *sign = b < e && (*b == '+' || *b == '-') ? *b++ : 0;
-    *p = b;
-    *n = (size_t)(e - b);
-    return b < e;
-}
-
-/* an integer of s: its magnitude and sign; false past 64 bits */
-static bool num_int(const estr *s, uint64_t *mag, bool *neg)
-{
-    const char *p;
-    size_t n;
-    unsigned base;
-    char sign;
-    if (!num_body(s, &p, &n, &sign))
-        return false;
-    *neg = sign == '-';
-    char *buf = limba_xmalloc(n + 1);
-    bool ok = num_literal(p, n, buf, &base) == 1;
-    *mag = 0;
-    for (char *c = buf; ok && *c; c++)
-        ok = !__builtin_mul_overflow(*mag, base, mag) &&
-             !__builtin_add_overflow(*mag, (uint64_t)digit_of(*c, base), mag);
-    free(buf);
-    return ok;
-}
-
-/* a real of s, rounded once to f64 or f32 (the bits of the double that
-   holds it); false for a finite text beyond the type */
-static bool num_real(const estr *s, bool f32, uint64_t *out)
-{
-    const char *p;
-    size_t n;
-    char sign;
-    unsigned base;
-    if (!num_body(s, &p, &n, &sign))
-        return false;
-    double d;
-    if (n == 3 && !memcmp(p, "inf", 3)) {
-        d = INFINITY;
-    } else if (n == 3 && !memcmp(p, "nan", 3)) {
-        if (sign)
-            return false; /* nan has no sign */
-        d = NAN;
-    } else {
-        /* room for 0x, a hexadecimal digit for each binary one, p0 */
-        char *buf = limba_xmalloc(n + 8), *text = buf;
-        int kind = num_literal(p, n, buf, &base);
-        if (kind == 1 && base != 10) {
-            /* the digits as hexadecimal ones, for a rounding done once:
-               a digit of base 2^b is b bits, zeros pad the first */
-            unsigned b = base == 16 ? 4 : base == 8 ? 3 : 1;
-            size_t nbits = strlen(buf) * b, pad = (4 - nbits % 4) % 4;
-            size_t nh = (nbits + pad) / 4;
-            text = limba_xmalloc(nh + 8);
-            memcpy(text, "0x", 2);
-            for (size_t h = 0; h < nh; h++) {
-                unsigned v = 0;
-                for (size_t q = h * 4; q < h * 4 + 4; q++) {
-                    size_t at = q - pad; /* the bit in the digits */
-                    unsigned one =
-                        q < pad ? 0
-                                : ((unsigned)digit_of(buf[at / b], base) >>
-                                   (b - 1 - at % b)) &
-                                      1;
-                    v = v << 1 | one;
-                }
-                text[2 + h] = "0123456789abcdef"[v];
-            }
-            memcpy(text + 2 + nh, "p0", 3);
-        }
-        d = 0;
-        if (kind) {
-            if (f32)
-                d = strtof(text, NULL);
-            else
-                d = strtod(text, NULL);
-        }
-        if (text != buf)
-            free(text);
-        free(buf);
-        if (!kind || isinf(d))
-            return false;
-    }
-    *out = fbits(sign == '-' ? -d : d, f32 ? LIMBA_T_F32 : LIMBA_T_F64);
-    return true;
-}
-
 static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
 {
     char buf[512];
@@ -510,7 +374,8 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_STR_TO_I64:
     case LIMBA_RT_STR_TO_U64: {
         uint64_t mag;
-        bool neg, ok = num_int(str_of(a[0]), &mag, &neg);
+        const estr *s = str_of(a[0]);
+        bool neg, ok = limba_val_int(s->data, s->len, &mag, &neg);
         if (rt == LIMBA_RT_STR_TO_I64)
             ok = ok && mag <= (uint64_t)INT64_MAX + neg &&
                  (int64_t)(neg ? 0 - mag : mag) >= (int64_t)a[2] &&
@@ -524,7 +389,8 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_STR_TO_F32: {
         bool f32 = rt == LIMBA_RT_STR_TO_F32;
         uint64_t v;
-        bool ok = num_real(str_of(a[0]), f32, &v);
+        const estr *s = str_of(a[0]);
+        bool ok = limba_val_real(s->data, s->len, f32, &v);
         *r = ok;
         return !ok || mem_store(e, a[1], f32 ? LIMBA_T_F32 : LIMBA_T_F64, v);
     }
@@ -613,9 +479,6 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_PRINT_NL:
         limba_w_byte(&e->out, '\n');
         return true;
-    case LIMBA_RT_INPUT_LINE:
-        *r = sv(str_make(e, "", 0)); /* no input in a test */
-        return true;
     case LIMBA_RT_STR_CONCAT: {
         const estr *x = str_of(a[0]), *y = str_of(a[1]);
         estr *s = str_alloc(e, x->len + y->len);
@@ -672,10 +535,15 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         *r = (uint64_t)(uintptr_t)str_of(a[0])->data;
         return true;
     case LIMBA_RT_MEM_ALLOC: {
-        if ((int64_t)a[0] < 0 || a[0] > (1u << 30))
-            return trap(e, LIMBA_TRAP_NOMEM);
         size_t size = a[0] ? a[0] : 1;
-        void *p = keep(e, limba_xcalloc(size, 1));
+        if ((int64_t)a[0] < 0 || !take(e, size))
+            return trap(e, LIMBA_TRAP_NOMEM);
+        void *p = calloc(size, 1);
+        if (!p) {
+            e->used -= size;
+            return trap(e, LIMBA_TRAP_NOMEM);
+        }
+        keep(e, p);
         amap_put(&e->heap, (uintptr_t)p, size);
         *r = (uint64_t)(uintptr_t)p;
         return true;
@@ -690,6 +558,7 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
             return trap(e, LIMBA_TRAP_INVALID_FREE);
         size_t size = e->heap.val[k];
         amap_del(&e->heap, a[0]);
+        e->used -= size; /* out of the budget; the bytes stay reserved */
         return !e->lim.check_mem || forget(e, a[0], size);
     }
     case LIMBA_RT_PTR_LIVE:
@@ -775,6 +644,8 @@ static void store(void *p, limba_id t, uint64_t v)
     }
 }
 
+/* size zeroed bytes aligned to align, taken from the budget; NULL past
+   it: the trap NOMEM, never a crash */
 static void *zalloc_aligned(E *e, size_t size, size_t align)
 {
     void *p;
@@ -783,14 +654,24 @@ static void *zalloc_aligned(E *e, size_t size, size_t align)
     if (!size)
         size = 1;
     size = (size + align - 1) / align * align;
-    if (posix_memalign(&p, align, size))
-        p = NULL;
-    if (!p) {
-        fputs("limba: out of memory\n", stderr);
-        exit(70);
+    if (!take(e, size))
+        return NULL;
+    if (posix_memalign(&p, align, size)) {
+        e->used -= size;
+        return NULL;
     }
     memset(p, 0, size);
-    return keep(e, p);
+    return p;
+}
+
+/* the bytes zalloc_aligned took for size */
+static size_t zalloc_size(size_t size, size_t align)
+{
+    if (align < sizeof(void *))
+        align = sizeof(void *);
+    if (!size)
+        size = 1;
+    return (size + align - 1) / align * align;
 }
 
 /* ---- the strings in memory (check_mem, progetto_ir.md § 11c) ---- */
@@ -1292,7 +1173,15 @@ static bool call_inst(E *e, const limba_func *f, const limba_inst *in,
         break;
     }
     case LIMBA_OP_CALLRT:
+        /* a string past the budget comes back here (str_alloc) */
+        if (setjmp(e->nomem)) {
+            e->armed = false;
+            ok = trap(e, LIMBA_TRAP_NOMEM);
+            break;
+        }
+        e->armed = true;
         ok = runtime(e, (uint32_t)in->imm, args, r);
+        e->armed = false;
         break;
     default:
         e->status = LIMBA_EVAL_UNSUPPORTED; /* call.ext: no C here */
@@ -1331,13 +1220,18 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
         return trap(e, LIMBA_TRAP_STACK);
     e->depth++;
     uint64_t *v = limba_xcalloc((size_t)f->ninsts + 1, sizeof(*v));
+    /* the slots live while the call does: zeroed at entry (IR § 4) */
     void **slots = limba_xcalloc((size_t)f->nslots + 1, sizeof(*slots));
-    for (uint32_t s = 0; s < f->nslots; s++)
-        slots[s] = zalloc_aligned(e, f->slots[s].size, f->slots[s].align);
+    bool ok = true;
+    for (uint32_t s = 0; s < f->nslots && ok; s++)
+        if (!(slots[s] =
+                  zalloc_aligned(e, f->slots[s].size, f->slots[s].align)))
+            ok = trap(e, LIMBA_TRAP_NOMEM);
     const limba_block *bl = &f->blocks[0];
     for (uint32_t i = 0; i < bl->nparams; i++)
         v[bl->insts[i]] = args[i];
-    bool ok = true;
+    if (!ok)
+        goto done;
 
     for (;;) {
         const limba_block *next = NULL;
@@ -1362,11 +1256,15 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
                                      : (uint64_t)in->imm;
                 break;
             case LIMBA_F_SCONST: {
-                size_t n;
-                const char *s = limba_str(m, (limba_id)in->imm, &n);
-                estr *x = str_make(e, s, n);
-                x->immortal = 1;
-                r = sv(x);
+                /* immortal: made once, however often it runs */
+                estr **x = &e->sconst[in->imm];
+                if (!*x) {
+                    size_t n;
+                    const char *s = limba_str(m, (limba_id)in->imm, &n);
+                    *x = str_make(e, s, n);
+                    (*x)->immortal = 1;
+                }
+                r = sv(*x);
                 break;
             }
             case LIMBA_F_TYPED:
@@ -1491,8 +1389,12 @@ done:
             ok = rc_walk(e, p, f->slots[s].type, -1);
         ok = ok && forget(e, p, f->slots[s].size);
     }
+    for (uint32_t s = 0; s < f->nslots && slots[s]; s++) {
+        free(slots[s]);
+        e->used -= zalloc_size(f->slots[s].size, f->slots[s].align);
+    }
     free(v);
-    free(slots); /* the slot memory itself is in the arena */
+    free(slots);
     e->depth--;
     return ok;
 }
@@ -1566,13 +1468,20 @@ void limba_eval(const limba_module *m, const char *entry,
         return;
     }
 
-    /* globals, with their initial values */
+    e.budget =
+        limits && limits->max_memory ? limits->max_memory : (uint64_t)1 << 30;
+    e.sconst = limba_xcalloc((size_t)limba_str_count(m) + 1, sizeof(estr *));
+    /* globals, with their initial values; too large: NOMEM, no run */
     e.globals = limba_xcalloc((size_t)m->nglobals + 1, sizeof(void *));
-    for (uint32_t i = 0; i < m->nglobals; i++) {
+    for (uint32_t i = 0; i < m->nglobals && e.status == LIMBA_EVAL_OK; i++) {
         const limba_global *g = &m->globals[i];
         const limba_type *ty = &m->types[g->type];
         void *p = zalloc_aligned(&e, ty->size, ty->align);
-        e.globals[i] = p;
+        if (!p) {
+            trap(&e, LIMBA_TRAP_NOMEM);
+            break;
+        }
+        e.globals[i] = keep(&e, p);
         if (g->init == LIMBA_INIT_INT)
             store(p, g->type, norm((uint64_t)g->value, g->type));
         else if (g->init == LIMBA_INIT_FLOAT)
@@ -1591,7 +1500,8 @@ void limba_eval(const limba_module *m, const char *entry,
     }
 
     uint64_t ret = 0;
-    run_on_stack(&e, &m->funcs[fid], &ret);
+    if (e.status == LIMBA_EVAL_OK)
+        run_on_stack(&e, &m->funcs[fid], &ret);
     if (e.status == LIMBA_EVAL_OK && e.lim.check_mem)
         end_check(&e);
     r->status = e.status;
@@ -1608,6 +1518,7 @@ void limba_eval(const limba_module *m, const char *entry,
         free(e.arena[i]);
     free(e.arena);
     amap_free(&e.heap);
+    free(e.sconst);
     amap_free(&e.words);
     free(e.counted);
     free(e.globals);

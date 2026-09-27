@@ -1,0 +1,3 @@
+; expect: two messages
+message 100 "index"
+message 100 "again"

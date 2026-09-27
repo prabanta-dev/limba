@@ -865,9 +865,12 @@ luxia: index out of range at prog.luxia:12:5
 and with **exit status 1**, the same for every error. Luxia 0 has no
 handlers: every run-time error stops the program.
 
-When `new` cannot allocate, the program stops in the same way with the
-message "out of memory" and exit status 1 (as Ada's `Storage_Error`).
-This is not a check: it cannot be suppressed.
+When the program cannot get the memory it asks for (`new`, a string, a
+computed array), it stops in the same way with the message "out of
+memory" and exit status 1 (as Ada's `Storage_Error`). How much memory a
+program may use depends on the implementation; going past it is always
+this error, never a crash. This is not a check: it cannot be
+suppressed.
 
 The same holds for calls nested too deeply, recursion without end for
 example: the program stops with "stack overflow" (Ada's `Storage_Error`

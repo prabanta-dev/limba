@@ -27,8 +27,10 @@
 #include <string.h>
 
 static int failures, compared, skipped;
-/* every run counts the strings in memory and checks their rules */
-static const limba_eval_limits check_mem = {.check_mem = true};
+/* every run counts the strings in memory and checks their rules, in 64 MiB
+   of memory: enough for these programs, little for the tests of NOMEM */
+static const limba_eval_limits check_mem = {.check_mem = true,
+                                            .max_memory = (uint64_t)64 << 20};
 
 #define CHECK(cond, ...)                                                       \
     do {                                                                       \
