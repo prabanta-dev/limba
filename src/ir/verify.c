@@ -136,7 +136,8 @@ static bool check_symbols(vctx *v)
             ok = limba_type_is_int(g->type) || g->type == LIMBA_T_PTR;
             break;
         case LIMBA_INIT_FLOAT:
-            ok = limba_type_is_float(g->type);
+            ok = limba_type_is_float(g->type) &&
+                 (g->type != LIMBA_T_F32 || (uint64_t)g->value <= UINT32_MAX);
             break;
         case LIMBA_INIT_STR:
             ok = g->type == LIMBA_T_STR && (uint64_t)g->value < nstr;
@@ -378,6 +379,8 @@ static bool check_inst(vctx *v, uint32_t u)
     case LIMBA_F_FCONST:
         if (!limba_type_is_float(r))
             IFAIL(u, "fconst of a type that is not a float");
+        if (r == LIMBA_T_F32 && (uint64_t)in->imm > UINT32_MAX)
+            IFAIL(u, "fconst f32 of more than the 32 bits of a float");
         break;
     case LIMBA_F_SCONST:
         if (r != LIMBA_T_STR || (uint64_t)in->imm >= limba_str_count(m))

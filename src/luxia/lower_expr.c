@@ -61,10 +61,19 @@ static limba_id cmp(lxl *L, bool fl, unsigned cc, limba_id a, limba_id b)
                     o, 2);
 }
 
+/* the bits of the float of type (for f32 those of the float: d holds a
+   Float32 exactly) */
 static limba_id fconst(lxl *L, limba_id type, double d)
 {
     int64_t bits;
-    memcpy(&bits, &d, sizeof(bits));
+    if (type == LIMBA_T_F32) {
+        float f = (float)d;
+        uint32_t u;
+        memcpy(&u, &f, sizeof(u));
+        bits = u;
+    } else {
+        memcpy(&bits, &d, sizeof(bits));
+    }
     return lxl_emit(L, LIMBA_OP_FCONST, type, 0, bits, 0, NULL, 0);
 }
 

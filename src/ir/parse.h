@@ -61,7 +61,7 @@ bool lp_expect_word(P *p, const char *w);
 limba_id lp_name(P *p, const limba_tok *k);
 bool lp_integer(P *p, int64_t *out);
 bool lp_uinteger32(P *p, uint32_t *out);
-bool lp_real(P *p, int64_t *bits);
+bool lp_real(P *p, limba_id t, int64_t *bits);
 bool lp_string(P *p, limba_id *id);
 bool lp_type(P *p, limba_id *out);
 bool lp_sym(P *p, limba_id *n);

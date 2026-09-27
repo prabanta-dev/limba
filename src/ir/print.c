@@ -94,11 +94,22 @@ static void print_type(FILE *out, const limba_module *m, limba_id t)
     }
 }
 
-static void print_double(FILE *out, int64_t bits)
+/* a float constant of type t: its bits are those of the float of t */
+static void print_real(FILE *out, int64_t bits, limba_id t)
 {
+    if (t == LIMBA_T_F32) {
+        float x;
+        uint32_t u = (uint32_t)bits;
+        memcpy(&x, &u, sizeof(x));
+        if (isnan(x)) /* the payload and the sign must survive */
+            fprintf(out, "nan.0x%08" PRIx32, u);
+        else
+            fprintf(out, "%a", (double)x); /* exact: not a NaN */
+        return;
+    }
     double x;
     memcpy(&x, &bits, sizeof(x));
-    if (isnan(x)) /* the payload and the sign must survive */
+    if (isnan(x))
         fprintf(out, "nan.0x%016" PRIx64, (uint64_t)bits);
     else
         fprintf(out, "%a", x);
@@ -167,7 +178,7 @@ static void print_inst(pctx *p, uint32_t id)
         break;
     case LIMBA_F_FCONST:
         fputc(' ', out);
-        print_double(out, in->imm);
+        print_real(out, in->imm, in->type);
         break;
     case LIMBA_F_SCONST: {
         size_t n;
@@ -359,7 +370,7 @@ void limba_print(const limba_module *m, FILE *out)
             break;
         case LIMBA_INIT_FLOAT:
             fputs(" = ", out);
-            print_double(out, g->value);
+            print_real(out, g->value, g->type);
             break;
         case LIMBA_INIT_STR: {
             size_t n;

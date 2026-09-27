@@ -108,10 +108,12 @@ bool lp_uinteger32(P *p, uint32_t *out)
     return true;
 }
 
-/* a float literal: hex or decimal, inf, nan, or nan.0x<bits> for a NaN
-   whose bits must survive */
-bool lp_real(P *p, int64_t *bits)
+/* a float literal of type t: hex or decimal, inf, nan, or nan.0x<bits>
+   for a NaN whose bits must survive; the bits of a float for f32, read
+   as a float (rounded once), never through a double */
+bool lp_real(P *p, limba_id t, int64_t *bits)
 {
+    bool f32 = t == LIMBA_T_F32;
     const limba_tok *k = lp_peek(p);
     char tmp[64];
     if (k->n >= sizeof(tmp))
@@ -122,7 +124,7 @@ bool lp_real(P *p, int64_t *bits)
         char *e;
         errno = 0;
         uint64_t b = strtoull(tmp + 4, &e, 16);
-        if (errno || *e)
+        if (errno || *e || (f32 && b > UINT32_MAX))
             return lp_fail(p, "%s", "malformed NaN");
         *bits = (int64_t)b;
         p->i++;
@@ -132,10 +134,17 @@ bool lp_real(P *p, int64_t *bits)
         !(k->kind == TK_IDENT && (!strcmp(tmp, "inf") || !strcmp(tmp, "nan"))))
         return lp_fail(p, "%s expected", "a floating-point number");
     char *e;
-    double x = strtod(tmp, &e);
+    if (f32) {
+        float x = strtof(tmp, &e);
+        uint32_t u;
+        memcpy(&u, &x, sizeof(u));
+        *bits = u;
+    } else {
+        double x = strtod(tmp, &e);
+        memcpy(bits, &x, sizeof(x));
+    }
     if (*e)
         return lp_fail(p, "%s", "malformed floating-point number");
-    memcpy(bits, &x, sizeof(x));
     p->i++;
     return true;
 }

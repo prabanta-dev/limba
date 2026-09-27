@@ -34,7 +34,7 @@ b2:
 b3:
   v3 = iconst i32 -1
   v4 = fconst f32 0x1.8p+1
-  v5 = fconst f32 nan.0x7ff8000000000001
+  v5 = fconst f32 nan.0x7fc00001
   v6 = fcmp.uno i1 v4, v5
   v7 = iconst i32 7
   v8 = select i32 v6, v3, v7

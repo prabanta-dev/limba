@@ -134,10 +134,15 @@ static uint32_t constant(G *g, limba_id t)
         default:
             x = pool[below(g, sizeof(pool) / sizeof(pool[0]))];
         }
-        if (t == LIMBA_T_F32)
-            x = (float)x;
         int64_t bits;
-        memcpy(&bits, &x, sizeof(bits));
+        if (t == LIMBA_T_F32) {
+            float f = (float)x;
+            uint32_t u;
+            memcpy(&u, &f, sizeof(u));
+            bits = u; /* an f32 constant is the bits of its float */
+        } else {
+            memcpy(&bits, &x, sizeof(bits));
+        }
         v = emit(g, LIMBA_OP_FCONST, t, 0, bits, 0, NULL, 0);
     }
     keep(g, t, v);

@@ -69,7 +69,7 @@ static bool global(P *p)
                 return false;
             g->init = LIMBA_INIT_INT;
         } else {
-            if (!lp_real(p, &g->value))
+            if (!lp_real(p, g->type, &g->value))
                 return false;
             g->init = LIMBA_INIT_FLOAT;
         }

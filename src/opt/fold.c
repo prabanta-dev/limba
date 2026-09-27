@@ -43,12 +43,22 @@ static bool ival(fctx *c, uint32_t x, int64_t *v)
     return true;
 }
 
+/* the number of a float constant, for arithmetic: an f32 constant is
+   the 32 bits of its float (a NaN made a double loses its bits, which
+   arithmetic may: see fold_float) */
 static bool fval(fctx *c, uint32_t x, double *v)
 {
     const limba_inst *d = def(c, x);
     if (d->op != LIMBA_OP_FCONST)
         return false;
-    memcpy(v, &d->imm, sizeof(*v));
+    if (d->type == LIMBA_T_F32) {
+        uint32_t u = (uint32_t)d->imm;
+        float f;
+        memcpy(&f, &u, sizeof(f));
+        *v = f;
+    } else {
+        memcpy(v, &d->imm, sizeof(*v));
+    }
     return true;
 }
 
@@ -78,10 +88,15 @@ static bool fits_signed(__int128 v, limba_id t)
     return v >= lo && v <= hi;
 }
 
+/* the constant of type t for the number x: for f32 the bits of the float */
 static int64_t fbits(double x, limba_id t)
 {
-    if (t == LIMBA_T_F32)
-        x = (float)x;
+    if (t == LIMBA_T_F32) {
+        float f = (float)x;
+        uint32_t u;
+        memcpy(&u, &f, sizeof(u));
+        return u;
+    }
     int64_t b;
     memcpy(&b, &x, sizeof(b));
     return b;
@@ -349,11 +364,8 @@ static bool fold_conv(fctx *c, limba_inst *in, uint32_t x)
         case LIMBA_OP_BITCAST:
             if (from == LIMBA_T_I64) {
                 limba_inst_set_fconst(in, a);
-            } else { /* i32 to f32 */
-                uint32_t u = (uint32_t)ua;
-                float fl;
-                memcpy(&fl, &u, sizeof(fl));
-                limba_inst_set_fconst(in, fbits(fl, LIMBA_T_F32));
+            } else { /* i32 to f32: the same 32 bits */
+                limba_inst_set_fconst(in, (int64_t)(uint32_t)ua);
             }
             return true;
         }
@@ -399,17 +411,10 @@ static bool fold_conv(fctx *c, limba_inst *in, uint32_t x)
         limba_inst_set_iconst(in, (int64_t)v);
         return true;
     }
-    case LIMBA_OP_BITCAST:
-        if (from == LIMBA_T_F64) {
-            int64_t b;
-            memcpy(&b, &fa, sizeof(b));
-            limba_inst_set_iconst(in, b);
-        } else {
-            float fl = (float)fa;
-            uint32_t u;
-            memcpy(&u, &fl, sizeof(u));
-            limba_inst_set_iconst(in, (int32_t)u);
-        }
+    case LIMBA_OP_BITCAST: /* the bits of the constant, untouched */
+        limba_inst_set_iconst(in, from == LIMBA_T_F64
+                                      ? d->imm
+                                      : (int64_t)(int32_t)(uint32_t)d->imm);
         return true;
     }
     return false;
@@ -516,8 +521,17 @@ static bool fold_inst(fctx *c, uint32_t id)
         c->e->dead[id] = 1;
         return true;
     case LIMBA_F_UN:
-        if (in->op == LIMBA_OP_FNEG || in->op == LIMBA_OP_FROUND ||
-            in->op == LIMBA_OP_FROUNDA) {
+        if (in->op == LIMBA_OP_FNEG) {
+            /* the sign bit only: a NaN keeps its payload */
+            const limba_inst *d = def(c, o[0]);
+            if (d->op != LIMBA_OP_FCONST)
+                return false;
+            limba_inst_set_fconst(in, d->imm ^ (in->type == LIMBA_T_F32
+                                                    ? (int64_t)0x80000000
+                                                    : INT64_MIN));
+            return true;
+        }
+        if (in->op == LIMBA_OP_FROUND || in->op == LIMBA_OP_FROUNDA) {
             if (!fval(c, o[0], &v[0]) || !fold_float(in, v, &r))
                 return false;
             limba_inst_set_fconst(in, r);

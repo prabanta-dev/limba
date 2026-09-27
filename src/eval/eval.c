@@ -211,10 +211,35 @@ static double dv(uint64_t v)
     return d;
 }
 
+/* an f32 is the 32 bits of its float, zero-extended, as in Meri: it goes
+   through a double only where the IR converts (a double would quieten a
+   signalling NaN, progetto_ir.md § 11b) */
+static float fv32(uint64_t v)
+{
+    uint32_t u = (uint32_t)v;
+    float f;
+    memcpy(&f, &u, sizeof(f));
+    return f;
+}
+
+static uint64_t f32bits(float f)
+{
+    uint32_t u;
+    memcpy(&u, &f, sizeof(u));
+    return u;
+}
+
+/* the number a float value of type t holds, for arithmetic only */
+static double fnum(uint64_t v, limba_id t)
+{
+    return t == LIMBA_T_F32 ? (double)fv32(v) : dv(v);
+}
+
+/* the value of type t for the result d of an arithmetic operation */
 static uint64_t fbits(double d, limba_id t)
 {
     if (t == LIMBA_T_F32)
-        d = (float)d;
+        return f32bits((float)d);
     uint64_t b;
     memcpy(&b, &d, sizeof(b));
     return b;
@@ -623,12 +648,12 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     }
     case LIMBA_RT_STR_FROM_F32: {
         char f[LIMBA_FMT_F64_MAX];
-        *r = sv(str_make(e, f, limba_fmt_f32(f, (float)dv(a[0]))));
+        *r = sv(str_make(e, f, limba_fmt_f32(f, fv32(a[0]))));
         return true;
     }
     case LIMBA_RT_PRINT_F32: {
         char f[LIMBA_FMT_F64_MAX];
-        limba_w_bytes(&e->out, f, limba_fmt_f32(f, (float)dv(a[0])));
+        limba_w_bytes(&e->out, f, limba_fmt_f32(f, fv32(a[0])));
         return true;
     }
     case LIMBA_RT_STR_MID: { /* (s, start from 0, length), clamped */
@@ -708,10 +733,10 @@ static uint64_t load(void *p, limba_id t)
         memcpy(&x, p, sizeof(x));
         return (uint64_t)(int64_t)x;
     }
-    case LIMBA_T_F32: {
-        float x;
+    case LIMBA_T_F32: { /* the 32 bits, as they are */
+        uint32_t x;
         memcpy(&x, p, sizeof(x));
-        return fbits(x, LIMBA_T_F32);
+        return x;
     }
     default: {
         uint64_t x;
@@ -741,7 +766,7 @@ static void store(void *p, limba_id t, uint64_t v)
         return;
     }
     case LIMBA_T_F32: {
-        float x = (float)dv(v);
+        uint32_t x = (uint32_t)v;
         memcpy(p, &x, 4);
         return;
     }
@@ -1044,7 +1069,7 @@ static uint64_t float_op(unsigned op, limba_id t, uint64_t a, uint64_t b,
                          uint64_t c)
 {
     if (t == LIMBA_T_F32) {
-        float x = (float)dv(a), y = (float)dv(b), z = (float)dv(c), r = 0;
+        float x = fv32(a), y = fv32(b), z = fv32(c), r = 0;
         switch (op) {
         case LIMBA_OP_FADD:
             r = x + y;
@@ -1059,8 +1084,7 @@ static uint64_t float_op(unsigned op, limba_id t, uint64_t a, uint64_t b,
             r = x / y;
             break;
         case LIMBA_OP_FNEG:
-            r = -x;
-            break;
+            return a ^ 0x80000000u; /* the sign bit: a NaN keeps the rest */
         case LIMBA_OP_FROUND:
             r = nearbyintf(x); /* the default mode: to nearest, ties even */
             break;
@@ -1071,7 +1095,7 @@ static uint64_t float_op(unsigned op, limba_id t, uint64_t a, uint64_t b,
             r = fmaf(x, y, z);
             break;
         }
-        return fbits(r, t);
+        return f32bits(r);
     }
     double x = dv(a), y = dv(b), z = dv(c), r = 0;
     switch (op) {
@@ -1106,7 +1130,7 @@ static uint64_t float_op(unsigned op, limba_id t, uint64_t a, uint64_t b,
 static bool compare(unsigned cc, limba_id t, uint64_t a, uint64_t b)
 {
     if (limba_cc_is_float(cc)) {
-        double x = dv(a), y = dv(b);
+        double x = fnum(a, t), y = fnum(b, t);
         bool u = isnan(x) || isnan(y);
         switch (cc) {
         case LIMBA_CC_OEQ:
@@ -1169,7 +1193,7 @@ static bool convert(unsigned op, limba_id from, limba_id to, uint64_t a,
                     uint64_t *r)
 {
     unsigned bits = limba_type_bits(to);
-    double d = dv(a), tr;
+    double d = limba_type_is_float(from) ? fnum(a, from) : 0, tr;
     switch (op) {
     case LIMBA_OP_TRUNC:
         *r = norm(a, to);
@@ -1219,19 +1243,10 @@ static bool convert(unsigned op, limba_id from, limba_id to, uint64_t a,
         *r = norm(*r, to);
         return true;
     case LIMBA_OP_BITCAST:
-        if (from == LIMBA_T_I32) {
-            uint32_t u = (uint32_t)a;
-            float f;
-            memcpy(&f, &u, 4);
-            *r = fbits(f, LIMBA_T_F32);
-        } else if (from == LIMBA_T_F32) {
-            float f = (float)d;
-            uint32_t u;
-            memcpy(&u, &f, 4);
-            *r = norm(u, LIMBA_T_I32);
-        } else {
-            *r = a; /* i64 and f64 share their bits */
-        }
+        /* the bits, untouched: an f32 is already its 32 bits */
+        *r = from == LIMBA_T_I32   ? (uint64_t)(uint32_t)a
+             : from == LIMBA_T_F32 ? norm((uint32_t)a, LIMBA_T_I32)
+                                   : a;
         return true;
     case LIMBA_OP_PTRTOINT:
         *r = norm(a, to);
@@ -1342,7 +1357,9 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
                 r = norm((uint64_t)in->imm, t);
                 break;
             case LIMBA_F_FCONST:
-                r = fbits(dv((uint64_t)in->imm), t);
+                /* the bits of the float of t, as the IR carries them */
+                r = t == LIMBA_T_F32 ? (uint64_t)(uint32_t)in->imm
+                                     : (uint64_t)in->imm;
                 break;
             case LIMBA_F_SCONST: {
                 size_t n;
@@ -1559,7 +1576,9 @@ void limba_eval(const limba_module *m, const char *entry,
         if (g->init == LIMBA_INIT_INT)
             store(p, g->type, norm((uint64_t)g->value, g->type));
         else if (g->init == LIMBA_INIT_FLOAT)
-            store(p, g->type, fbits(dv((uint64_t)g->value), g->type));
+            store(p, g->type,
+                  g->type == LIMBA_T_F32 ? (uint64_t)(uint32_t)g->value
+                                         : (uint64_t)g->value);
         else if (g->init == LIMBA_INIT_STR) {
             size_t k;
             const char *s = limba_str(m, (limba_id)g->value, &k);

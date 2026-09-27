@@ -206,7 +206,7 @@ static bool statement(P *p)
             return false;
         break;
     case LIMBA_F_FCONST:
-        if (!lp_real(p, &imm))
+        if (!lp_real(p, ty, &imm))
             return false;
         break;
     case LIMBA_F_SCONST: {

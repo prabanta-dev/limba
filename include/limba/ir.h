@@ -32,7 +32,9 @@ typedef uint32_t limba_id;
 /* shapes of the operands */
 enum limba_format {
     LIMBA_F_ICONST,   /* imm = value */
-    LIMBA_F_FCONST,   /* imm = bits of the double (f32 too, widened) */
+    LIMBA_F_FCONST,   /* imm = bits: of the double, of the float for f32
+                         (zero-extended), never widened (a NaN keeps its
+                         payload) */
     LIMBA_F_SCONST,   /* imm = string id */
     LIMBA_F_TYPED,    /* nothing but the result type (null, undef) */
     LIMBA_F_UN,       /* one value */
@@ -232,7 +234,8 @@ typedef struct {
     limba_id type;
     uint32_t flags; /* LIMBA_SYM_* */
     uint8_t init;   /* enum limba_init */
-    int64_t value;  /* integer, bits of a double, or string id */
+    int64_t value;  /* integer, bits of the float (as fconst), or string
+                       id */
 } limba_global;
 
 typedef struct {

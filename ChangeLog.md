@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A signalling NaN of type f32 keeps its bits where the IR copies them
+  (bitcast, load, store, memcpy, fneg, calls): the reference interpreter
+  held an f32 in a double, and the conversion of the CPU quietened it;
+  constant folding did the same with bitcast and fneg. An f32 is now the
+  32 bits of its float everywhere: in the interpreter, and in `fconst
+  f32` and the initial value of an f32 global, which carry those bits
+  (`nan.0x7f800001` in the text form), not a widened double.
 - Pointers and strings in memory made rigorous (specification of Luxia
   § 3.10, § 9.7, § 10). Reading or writing through a pointer to a
   disposed object is the run-time error "dangling pointer" (code 105,
