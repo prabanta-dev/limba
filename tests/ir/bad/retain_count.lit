@@ -1,0 +1,10 @@
+; expect: a ptr and an integer count
+func @main : fn() -> i64 {
+  slot 8 align 8 type str
+b0:
+  v0 = slot ptr $0
+  v1 = fconst f64 1.0
+  retain str v0, v1
+  v2 = iconst i64 0
+  ret v2
+}

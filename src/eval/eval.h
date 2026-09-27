@@ -12,6 +12,13 @@
  *   overflow of add.ov / sub.ov / mul.ov        trap 6
  *   shift by the width or more                  the count modulo the width
  *
+ * Calls nested deeper than max_depth, or than the stack of the thread the
+ * run has for itself holds, are the trap STACK, mem_free of what
+ * is not a live block the trap INVALID_FREE, ptr_live answers whether a
+ * block is alive: freed blocks are never reused, so a dangling pointer
+ * stays different from any new one. The counts of retain, release and of
+ * store str are kept only with check_mem.
+ *
  * fptosi and fptoui saturate (too large: the maximum, too small: the
  * minimum, NaN: 0), as WebAssembly's trunc_sat: they are pure, and a
  * language that wants an error checks before converting.
@@ -25,10 +32,14 @@ enum limba_eval_status {
     LIMBA_EVAL_OK,          /* returned */
     LIMBA_EVAL_TRAP,        /* a run-time error: code says which */
     LIMBA_EVAL_UNREACHABLE, /* executed unreachable */
-    LIMBA_EVAL_LIMIT,       /* too many steps or calls too deep */
+    LIMBA_EVAL_LIMIT,       /* too many steps */
     LIMBA_EVAL_UNSUPPORTED, /* call.ext: no C here */
     LIMBA_EVAL_BAD,         /* no such entry, or it takes parameters */
     LIMBA_EVAL_HALT,        /* halt(code): code is the exit status */
+    /* check_mem: a rule of the strings in memory broken (progetto_ir.md
+       § 11c): a str read or written as another type, or as a part, a
+       release below zero, counts that do not match memory at the end */
+    LIMBA_EVAL_BADMEM,
 };
 
 typedef struct {
@@ -37,6 +48,9 @@ typedef struct {
     int argc;           /* the command line of the program, for arg() */
     char **argv;
     FILE *in; /* what read_line reads; NULL: nothing */
+    /* count the references to strings from memory and check the rules
+       of § 11c (LIMBA_EVAL_BADMEM); slower, the output does not change */
+    bool check_mem;
 } limba_eval_limits;
 
 typedef struct {
@@ -45,11 +59,10 @@ typedef struct {
     uint64_t ret; /* the returned value, in its bits; 0 for void */
     char *out;    /* what the program printed, malloc'd, NUL-terminated */
     size_t outlen;
-    uint64_t steps;   /* instructions executed */
-    size_t live;      /* blocks of mem_alloc never freed */
-    size_t bad_frees; /* mem_free of what is not a live block */
-    uint32_t pos;     /* a trap or a halt: the position of the instruction
-                         in m->pos, 0 if it has none */
+    uint64_t steps; /* instructions executed */
+    size_t live;    /* blocks of mem_alloc never freed */
+    uint32_t pos;   /* a trap or a halt: the position of the instruction
+                       in m->pos, 0 if it has none */
 } limba_eval_result;
 
 /* run function entry of a verified module; the result owns r->out */

@@ -42,7 +42,8 @@ static void usage(FILE *out)
           "  --suppress=a,b  checks off in the whole Luxia source\n"
           "                  (index_check, range_check, overflow_check,\n"
           "                  division_check, conversion_check,\n"
-          "                  shift_check, nil_check, all_checks); where\n"
+          "                  shift_check, nil_check, dangling_check,\n"
+          "                  all_checks); where\n"
           "                  one would fail, the behaviour is undefined\n"
           "  -h, --help      this text\n",
           out);

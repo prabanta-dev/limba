@@ -27,6 +27,44 @@ static unsigned kind(const limba_lxs *S, limba_ltype t)
     return lxs_ty(S, t)->kind;
 }
 
+/* an object reached through a pointer: p^, p.f, p[i], p.a[i], in any
+   chain (§ 3.10) */
+static bool reached_by_pointer(limba_lxs *S, uint32_t node)
+{
+    limba_lx_node *x = lxs_node(S, node);
+    if (x->kind == LXN_DEREF)
+        return true;
+    if (x->kind != LXN_SEL && x->kind != LXN_INDEX)
+        return false;
+    limba_ltype bt = S->type[x->a];
+    if (bt && kind(S, bt) == LIMBA_LTK_POINTER)
+        return true;
+    return reached_by_pointer(S, x->a);
+}
+
+/* a type passed by copy, not an aggregate passed by address */
+static bool scalar_kind(limba_lxs *S, limba_ltype t)
+{
+    unsigned k = t ? kind(S, t) : LIMBA_LTK_INT;
+    return k != LIMBA_LTK_RECORD && k != LIMBA_LTK_ARRAY && k != LIMBA_LTK_OPEN;
+}
+
+/* an argument the routine writes through its address (a var one, an out
+   record or array) is no object reached through a pointer in Luxia 0: a
+   dispose during the call would leave the address dangling, unchecked */
+static void by_reference(limba_lxs *S, uint32_t a, bool var)
+{
+    if (!reached_by_pointer(S, a))
+        return;
+    lxs_error(S, LXE_THROUGH_POINTER, a,
+              var ? "an object reached through a pointer cannot be a var "
+                    "argument: copy it into a variable, pass that, then "
+                    "assign it back"
+                  : "an object reached through a pointer cannot be an out "
+                    "argument of a record or array type: pass a variable, "
+                    "then assign it");
+}
+
 static bool is_int(const limba_lxs *S, limba_ltype t)
 {
     return t == S->ts.uint || kind(S, t) == LIMBA_LTK_INT;
@@ -588,8 +626,9 @@ static limba_ltype routine_call(limba_lxs *S, uint32_t node, uint32_t scope,
                           "this is %s, the parameter is %s",
                           lxs_tname(S, at, ta), lxs_tname(S, p.type, tb));
         }
-        if (p.mode != LXS_IN)
-            lxs_writable(S, a, true);
+        if (p.mode != LXS_IN && lxs_writable(S, a, true) &&
+            (p.mode == LXS_VAR || !scalar_kind(S, p.type)))
+            by_reference(S, a, p.mode == LXS_VAR);
     }
     return set(S, node, result);
 }
@@ -702,7 +741,8 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
             if (t && kind(S, t) != LIMBA_LTK_STRING)
                 lxs_error(S, LXE_TYPE_MISMATCH, a,
                           "readline reads into a String variable");
-            lxs_writable(S, a, true);
+            if (lxs_writable(S, a, true))
+                by_reference(S, a, true);
         }
         return set(S, node, S->ts.bool_);
     case LXB_LENGTH:
@@ -824,7 +864,8 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
             limba_ltype t = lxs_expr(S, a, scope, 0);
             if (t && !is_numeric(S, t))
                 lxs_error(S, LXE_TYPE_MISMATCH, a, "val reads a number");
-            lxs_writable(S, a, true);
+            if (lxs_writable(S, a, true))
+                by_reference(S, a, true);
         }
         return set(S, node, S->ts.bool_);
     case LXB_SQRT:

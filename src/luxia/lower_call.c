@@ -128,20 +128,48 @@ static void routine(lxl *L, uint32_t node, limba_sym s, limba_id *result)
         LIMBA_GROW(ops, n, cap);
         ops[n++] = slot;
     }
+    /* scalar out arguments reached through a pointer: where each goes
+       back after the call, the slot the routine writes, its type */
+    limba_id *backs = NULL;
+    uint32_t nbacks = 0, capbacks = 0;
     for (uint32_t i = 0; i < count && i < nargs(L, node); i++) {
         limba_param p = S->ts.param[first + i];
         uint32_t a = arg(L, node, i);
+        limba_ltype at = S->type[a];
+        if (ti(L, at)->kind == LIMBA_LTK_POINTER)
+            at = ti(L, at)->elem;
         limba_id v[3];
         uint32_t k = 1;
+        bool by_addr = true;
         if (ti(L, p.type)->kind == LIMBA_LTK_OPEN) {
             open_arg(L, node, a, p.type, &v[0], &v[1], &v[2]);
             k = 3;
         } else if (p.mode != LXS_IN || !lxl_scalar(L, p.type)) {
             v[0] = lxl_addr(L, a);
         } else {
+            by_addr = false;
             v[0] = lxl_value(L, a);
             lxl_at(L, node); /* a range is checked at the call */
             v[0] = lxl_coerce(L, v[0], S->type[a], p.type);
+        }
+        bool through = by_addr && lxl_via(L, v[0]) != LIMBA_NONE;
+        if (through && p.mode == LXS_IN) {
+            /* an object reached through a pointer goes by copy: a
+               dispose during the call leaves the routine its own */
+            limba_id tmp = lxl_temp(L, at, node);
+            lxl_copy(L, tmp, v[0], at);
+            v[0] = tmp;
+        } else if (through && p.mode == LXS_OUT) {
+            /* a scalar (a var argument, an aggregate out one, cannot be
+               reached through a pointer: § 3.10): copy-out goes back
+               through the pointer after the call, checked there */
+            limba_id tmp = lxl_temp(L, at, node);
+            limba_id back[3] = {v[0], tmp, lxl_type(L, at)};
+            for (unsigned j = 0; j < 3; j++) {
+                LIMBA_GROW(backs, nbacks, capbacks);
+                backs[nbacks++] = back[j];
+            }
+            v[0] = tmp;
         }
         for (uint32_t j = 0; j < k; j++) {
             LIMBA_GROW(ops, n, cap);
@@ -153,6 +181,13 @@ static void routine(lxl *L, uint32_t node, limba_sym s, limba_id *result)
         sig->elem == S->ts.void_ || agg ? LIMBA_T_VOID : lxl_type(L, sig->elem);
     limba_id r = lxl_emit(L, LIMBA_OP_CALL, rt, 0, L->func_of[s], 0, ops, n);
     free(ops);
+    for (uint32_t b = 0; b < nbacks; b += 3) {
+        limba_id x = un(L, LIMBA_OP_LOAD, backs[b + 2], backs[b + 1]);
+        lxl_live(L, backs[b]);
+        uint32_t so[2] = {x, backs[b]};
+        lxl_emit(L, LIMBA_OP_STORE, LIMBA_T_VOID, 0, 0, 0, so, 2);
+    }
+    free(backs);
     *result = agg ? slot : rt == LIMBA_T_VOID ? LIMBA_NONE : r;
 }
 
@@ -276,6 +311,7 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         return;
     case LXB_READLINE:
         v = lxl_addr(L, a0);
+        lxl_live(L, v);
         *result = lxl_rt(L, LIMBA_RT_READ_LINE, LIMBA_T_I1, &v, 1);
         return;
     case LXB_LENGTH:
@@ -405,6 +441,7 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         if (!real && it != LIMBA_T_I64)
             v = un(L, LIMBA_OP_TRUNC, it, v);
         uint32_t so[2] = {v, lxl_addr(L, xn)};
+        lxl_live(L, so[1]);
         lxl_emit(L, LIMBA_OP_STORE, LIMBA_T_VOID, 0, 0, 0, so, 2);
         limba_ssa_br(L->ssa, L->cur, done);
         limba_ssa_seal(L->ssa, done);
@@ -446,10 +483,38 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         v = lxl_value(L, a0);
         *result = un(L, LIMBA_OP_FROUND, lxl_type(L, t0), v);
         return;
-    case LXB_DISPOSE:
+    case LXB_DISPOSE: {
         v = lxl_value(L, a0);
+        limba_ltype target = ti(L, t0)->elem;
+        if (!lxl_holds_str(L, target)) {
+            /* nil: nothing; freed already: invalid dispose, in mem_free */
+            lxl_rt(L, LIMBA_RT_MEM_FREE, LIMBA_T_VOID, &v, 1);
+            return;
+        }
+        /* its Strings released first, but only in a live object: a
+           second dispose is still the error of mem_free */
+        limba_id check = limba_ssa_block(L->ssa), rel = limba_ssa_block(L->ssa),
+                 fr = limba_ssa_block(L->ssa), done = limba_ssa_block(L->ssa);
+        limba_id null =
+            lxl_emit(L, LIMBA_OP_NULLV, LIMBA_T_PTR, 0, 0, 0, NULL, 0);
+        limba_ssa_cbr(L->ssa, L->cur, icmp(L, LIMBA_CC_NE, v, null), check,
+                      done);
+        limba_ssa_seal(L->ssa, check);
+        L->cur = check;
+        limba_id live = lxl_rt(L, LIMBA_RT_PTR_LIVE, LIMBA_T_I1, &v, 1);
+        limba_ssa_cbr(L->ssa, L->cur, live, rel, fr);
+        limba_ssa_seal(L->ssa, rel);
+        L->cur = rel;
+        lxl_rc(L, LIMBA_OP_RELEASE, v, target, lxl_iconst(L, LIMBA_T_I64, 1));
+        limba_ssa_br(L->ssa, L->cur, fr);
+        limba_ssa_seal(L->ssa, fr);
+        L->cur = fr;
         lxl_rt(L, LIMBA_RT_MEM_FREE, LIMBA_T_VOID, &v, 1);
+        limba_ssa_br(L->ssa, L->cur, done);
+        limba_ssa_seal(L->ssa, done);
+        L->cur = done;
         return;
+    }
     case LXB_ARGCOUNT:
         *result = lxl_rt(L, LIMBA_RT_ARG_COUNT, LIMBA_T_I32, NULL, 0);
         return;

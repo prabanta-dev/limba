@@ -22,15 +22,30 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* a string of the program: length, bytes, a NUL for str_ptr */
+/* a string of the program: length, the counts of check_mem, bytes, a NUL
+   for str_ptr */
 typedef struct {
     size_t len;
+    int64_t mrefs;    /* references from memory: store str, retain... */
+    int64_t seen;     /* at the end: the words of memory that hold it */
+    uint8_t immortal; /* sconst, an initial value: never counted */
+    uint8_t listed;   /* in E.counted */
     char data[];
 } estr;
+
+/* a map of addresses, open addressing: key 0 is empty, 1 removed */
+typedef struct {
+    uintptr_t *key;
+    size_t *val;
+    size_t cap, used, live;
+} amap;
+
+#define AMAP_NONE SIZE_MAX
 
 typedef struct {
     const limba_module *m;
@@ -41,14 +56,24 @@ typedef struct {
     void **arena; /* everything allocated, freed at the end */
     size_t narena, caparena;
     void **globals;
-    /* the blocks of mem_alloc not yet freed: a set of addresses, open
-       addressing, 1 marks a removed entry */
-    uintptr_t *heap;
-    size_t capheap, usedheap, live, bad_frees;
+    amap heap;      /* the blocks of mem_alloc not yet freed, with their size */
+    amap words;     /* check_mem: the words of memory that hold a str */
+    estr **counted; /* check_mem: the strings whose count ever moved */
+    size_t ncounted, capcounted;
     int status;
     int64_t code;
     uint32_t pos; /* where the run stopped, innermost call first */
+    /* the C stack the run may use: a call of the program deeper than
+       budget bytes from base is the trap STACK, never a crash of the
+       interpreter itself */
+    const char *stack_base;
+    size_t stack_budget;
 } E;
+
+/* the run has a thread of its own, with a stack for max_depth calls of
+   any build (a sanitizer grows each frame); reserved, not touched */
+#define EVAL_STACK ((size_t)256 << 20)
+#define EVAL_STACK_MARGIN ((size_t)1 << 20)
 
 static void *keep(E *e, void *p)
 {
@@ -57,55 +82,77 @@ static void *keep(E *e, void *p)
     return p;
 }
 
-static size_t heap_slot(uintptr_t p, size_t cap)
+static size_t amap_hash(uintptr_t p, size_t cap)
 {
-    return (size_t)((p >> 4) * 0x9e3779b97f4a7c15ull) & (cap - 1);
+    return (size_t)(((p >> 3) * 0x9e3779b97f4a7c15ull) >> 24) & (cap - 1);
 }
 
-static void heap_add(E *e, uintptr_t p)
+/* where p is, AMAP_NONE if absent */
+static size_t amap_find(const amap *a, uintptr_t p)
 {
-    if (2 * (e->usedheap + 1) > e->capheap) {
+    if (!a->live)
+        return AMAP_NONE;
+    for (size_t k = amap_hash(p, a->cap); a->key[k]; k = (k + 1) & (a->cap - 1))
+        if (a->key[k] == p)
+            return k;
+    return AMAP_NONE;
+}
+
+static void amap_put(amap *a, uintptr_t p, size_t val)
+{
+    size_t k = amap_find(a, p);
+    if (k != AMAP_NONE) {
+        a->val[k] = val;
+        return;
+    }
+    if (2 * (a->used + 1) > a->cap) {
         /* rehash the live entries, without the removed ones */
-        size_t cap = e->capheap ? e->capheap : 64;
-        while (4 * (e->live + 1) > cap)
+        size_t cap = a->cap ? a->cap : 64;
+        while (4 * (a->live + 1) > cap)
             cap *= 2;
-        uintptr_t *h = limba_xcalloc(cap, sizeof(*h));
-        for (size_t i = 0; i < e->capheap; i++) {
-            if (e->heap[i] <= 1)
+        uintptr_t *key = limba_xcalloc(cap, sizeof(*key));
+        size_t *vals = limba_xcalloc(cap, sizeof(*vals));
+        for (size_t i = 0; i < a->cap; i++) {
+            if (a->key[i] <= 1)
                 continue;
-            size_t k = heap_slot(e->heap[i], cap);
-            while (h[k])
-                k = (k + 1) & (cap - 1);
-            h[k] = e->heap[i];
+            size_t j = amap_hash(a->key[i], cap);
+            while (key[j])
+                j = (j + 1) & (cap - 1);
+            key[j] = a->key[i];
+            vals[j] = a->val[i];
         }
-        free(e->heap);
-        e->heap = h;
-        e->capheap = cap;
-        e->usedheap = e->live;
+        free(a->key);
+        free(a->val);
+        a->key = key;
+        a->val = vals;
+        a->cap = cap;
+        a->used = a->live;
     }
-    size_t k = heap_slot(p, e->capheap);
-    while (e->heap[k] > 1)
-        k = (k + 1) & (e->capheap - 1);
-    if (!e->heap[k])
-        e->usedheap++;
-    e->heap[k] = p;
-    e->live++;
+    k = amap_hash(p, a->cap);
+    while (a->key[k] > 1)
+        k = (k + 1) & (a->cap - 1);
+    if (!a->key[k])
+        a->used++;
+    a->key[k] = p;
+    a->val[k] = val;
+    a->live++;
 }
 
-/* false if p is not a block of mem_alloc still alive */
-static bool heap_remove(E *e, uintptr_t p)
+/* false if p was not there */
+static bool amap_del(amap *a, uintptr_t p)
 {
-    if (!e->capheap)
+    size_t k = amap_find(a, p);
+    if (k == AMAP_NONE)
         return false;
-    for (size_t k = heap_slot(p, e->capheap); e->heap[k];
-         k = (k + 1) & (e->capheap - 1)) {
-        if (e->heap[k] == p) {
-            e->heap[k] = 1;
-            e->live--;
-            return true;
-        }
-    }
-    return false;
+    a->key[k] = 1;
+    a->live--;
+    return true;
+}
+
+static void amap_free(amap *a)
+{
+    free(a->key);
+    free(a->val);
 }
 
 /* a string of n bytes, its contents to be written by the caller */
@@ -113,6 +160,8 @@ static estr *str_alloc(E *e, size_t n)
 {
     estr *x = keep(e, limba_xmalloc(sizeof(estr) + n + 1));
     x->len = n;
+    x->mrefs = x->seen = 0;
+    x->immortal = x->listed = 0;
     x->data[n] = 0;
     return x;
 }
@@ -194,6 +243,8 @@ static void out_f64(E *e, double v)
 }
 
 static void store(void *p, limba_id t, uint64_t v);
+static bool mem_store(E *e, uintptr_t p, limba_id t, uint64_t v);
+static bool forget(E *e, uintptr_t p, size_t n);
 
 /* UTF-8 of a code point, into buf (4 bytes); its length */
 static size_t utf8(uint32_t c, char *buf)
@@ -428,9 +479,8 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
             len--;
         uint64_t s = sv(str_make(e, ok ? line : "", len));
         free(line);
-        store((void *)(uintptr_t)a[0], LIMBA_T_STR, s);
         *r = ok;
-        return true;
+        return mem_store(e, a[0], LIMBA_T_STR, s);
     }
     case LIMBA_RT_STR_TO_I64:
     case LIMBA_RT_STR_TO_U64: {
@@ -442,20 +492,16 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
                  (int64_t)(neg ? 0 - mag : mag) <= (int64_t)a[3];
         else
             ok = ok && (!neg || mag == 0) && mag >= a[2] && mag <= a[3];
-        if (ok)
-            store((void *)(uintptr_t)a[1], LIMBA_T_I64, neg ? 0 - mag : mag);
         *r = ok;
-        return true;
+        return !ok || mem_store(e, a[1], LIMBA_T_I64, neg ? 0 - mag : mag);
     }
     case LIMBA_RT_STR_TO_F64:
     case LIMBA_RT_STR_TO_F32: {
         bool f32 = rt == LIMBA_RT_STR_TO_F32;
         uint64_t v;
         bool ok = num_real(str_of(a[0]), f32, &v);
-        if (ok)
-            store((void *)(uintptr_t)a[1], f32 ? LIMBA_T_F32 : LIMBA_T_F64, v);
         *r = ok;
-        return true;
+        return !ok || mem_store(e, a[1], f32 ? LIMBA_T_F32 : LIMBA_T_F64, v);
     }
     case LIMBA_RT_ARG_COUNT:
         *r = (uint64_t)(e->lim.argc > 0 ? e->lim.argc : 0);
@@ -603,15 +649,26 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_MEM_ALLOC: {
         if ((int64_t)a[0] < 0 || a[0] > (1u << 30))
             return trap(e, LIMBA_TRAP_NOMEM);
-        void *p = keep(e, limba_xcalloc(a[0] ? a[0] : 1, 1));
-        heap_add(e, (uintptr_t)p);
+        size_t size = a[0] ? a[0] : 1;
+        void *p = keep(e, limba_xcalloc(size, 1));
+        amap_put(&e->heap, (uintptr_t)p, size);
         *r = (uint64_t)(uintptr_t)p;
         return true;
     }
-    case LIMBA_RT_MEM_FREE:
-        /* the arena frees everything at the end: here only the count */
-        if (a[0] && !heap_remove(e, (uintptr_t)a[0]))
-            e->bad_frees++;
+    case LIMBA_RT_MEM_FREE: {
+        /* the arena frees the bytes at the end, and never reuses them: a
+           dangling pointer stays different from any new one */
+        size_t k = amap_find(&e->heap, a[0]);
+        if (!a[0])
+            return true;
+        if (k == AMAP_NONE)
+            return trap(e, LIMBA_TRAP_INVALID_FREE);
+        size_t size = e->heap.val[k];
+        amap_del(&e->heap, a[0]);
+        return !e->lim.check_mem || forget(e, a[0], size);
+    }
+    case LIMBA_RT_PTR_LIVE:
+        *r = a[0] && amap_find(&e->heap, a[0]) != AMAP_NONE;
         return true;
     case LIMBA_RT_MATH_SQRT:
         *r = fbits(sqrt(dv(a[0])), LIMBA_T_F64);
@@ -709,6 +766,193 @@ static void *zalloc_aligned(E *e, size_t size, size_t align)
     }
     memset(p, 0, size);
     return keep(e, p);
+}
+
+/* ---- the strings in memory (check_mem, progetto_ir.md § 11c) ---- */
+
+static bool badmem(E *e)
+{
+    e->status = LIMBA_EVAL_BADMEM;
+    return false;
+}
+
+/* one reference from memory more (d = 1) or less (d = -1) on string v */
+static bool count(E *e, uint64_t v, int d)
+{
+    if (!v)
+        return true;
+    estr *s = (estr *)(uintptr_t)v;
+    if (s->immortal)
+        return true;
+    if (!s->listed) {
+        s->listed = 1;
+        LIMBA_GROW(e->counted, e->ncounted, e->capcounted);
+        e->counted[e->ncounted++] = s;
+    }
+    s->mrefs += d;
+    return s->mrefs >= 0 || badmem(e);
+}
+
+/* no str in the bytes [p, p + n): what a load or store of another type
+   may touch */
+static bool no_str(E *e, uintptr_t p, size_t n)
+{
+    if (!e->words.live)
+        return true;
+    for (uintptr_t w = p & ~(uintptr_t)7; w < p + n; w += 8)
+        if (amap_find(&e->words, w) != AMAP_NONE)
+            return badmem(e);
+    return true;
+}
+
+/* the str in [p, p + n) are overwritten or gone, uncounted (memset,
+   memcpy, mem_free, the end of a slot): they must be whole */
+static bool forget(E *e, uintptr_t p, size_t n)
+{
+    if (!e->words.live)
+        return true;
+    for (uintptr_t w = p & ~(uintptr_t)7; w < p + n; w += 8)
+        if (amap_del(&e->words, w) && (w < p || w + 8 > p + n))
+            return badmem(e);
+    return true;
+}
+
+static bool mem_load(E *e, uintptr_t p, limba_id t, uint64_t *r)
+{
+    *r = load((void *)p, t);
+    if (!e->lim.check_mem)
+        return true;
+    if (t == LIMBA_T_STR) /* zero is "": bytes never written */
+        return !*r || amap_find(&e->words, p) != AMAP_NONE || badmem(e);
+    return no_str(e, p, e->m->types[t].size);
+}
+
+/* store str takes a reference on the new value, then releases the old */
+static bool mem_store(E *e, uintptr_t p, limba_id t, uint64_t v)
+{
+    if (e->lim.check_mem) {
+        if (t == LIMBA_T_STR) {
+            if (p & 7)
+                return badmem(e);
+            uint64_t old = amap_find(&e->words, p) != AMAP_NONE
+                               ? load((void *)p, LIMBA_T_STR)
+                               : 0;
+            if (!count(e, v, 1) || !count(e, old, -1))
+                return false;
+            amap_put(&e->words, p, 0);
+        } else if (!no_str(e, p, e->m->types[t].size)) {
+            return false;
+        }
+    }
+    store((void *)p, t, v);
+    return true;
+}
+
+/* memcpy moves the str of the source with it, uncounted */
+static bool mem_copy(E *e, uintptr_t dst, uintptr_t src, size_t len)
+{
+    if (!e->lim.check_mem || !e->words.live) {
+        memmove((void *)dst, (void *)src, len);
+        return true;
+    }
+    size_t *offs = NULL, n = 0, cap = 0;
+    bool ok = true;
+    for (uintptr_t w = src & ~(uintptr_t)7; w < src + len && ok; w += 8)
+        if (amap_find(&e->words, w) != AMAP_NONE) {
+            if (w < src || w + 8 > src + len || ((dst - src) & 7))
+                ok = badmem(e);
+            LIMBA_GROW(offs, n, cap);
+            offs[n++] = w - src;
+        }
+    if (ok && (ok = forget(e, dst, len))) {
+        memmove((void *)dst, (void *)src, len);
+        for (size_t i = 0; i < n; i++)
+            amap_put(&e->words, dst + offs[i], 0);
+    }
+    free(offs);
+    return ok;
+}
+
+static bool mem_fill(E *e, uintptr_t dst, int byte, size_t len)
+{
+    if (e->lim.check_mem && !forget(e, dst, len))
+        return false;
+    memset((void *)dst, byte, len);
+    return true;
+}
+
+/* retain (d = 1) or release (d = -1) every str of a value of type t at p */
+static bool rc_walk(E *e, uintptr_t p, limba_id t, int d)
+{
+    const limba_module *m = e->m;
+    const limba_type *ty = &m->types[t];
+    switch (ty->kind) {
+    case LIMBA_TK_STR: {
+        uint64_t v = load((void *)p, LIMBA_T_STR);
+        if (v && amap_find(&e->words, p) == AMAP_NONE)
+            return badmem(e);
+        return count(e, v, d);
+    }
+    case LIMBA_TK_ARRAY: {
+        uint32_t size = m->types[ty->elem].size;
+        if (!limba_type_holds_str(m, ty->elem))
+            return true;
+        for (uint32_t i = 0; i < ty->count; i++)
+            if (!rc_walk(e, p + (uintptr_t)i * size, ty->elem, d))
+                return false;
+        return true;
+    }
+    case LIMBA_TK_STRUCT:
+        for (uint32_t i = 0; i < ty->count; i++) {
+            const limba_member *f = &m->members[ty->first + i];
+            if (limba_type_holds_str(m, f->type) &&
+                !rc_walk(e, p + f->offset, f->type, d))
+                return false;
+        }
+        return true;
+    default:
+        return true;
+    }
+}
+
+/* retain T p, n and release T p, n: a negative count, or one whose bytes
+   overflow, is RANGE in every engine; the counts only with check_mem */
+static bool rc_inst(E *e, const limba_inst *in, uint64_t p, uint64_t nv)
+{
+    int64_t n = (int64_t)nv;
+    uint64_t size = e->m->types[in->imm].size;
+    if (n < 0 || (n && size > UINT64_MAX / (uint64_t)n))
+        return trap(e, LIMBA_TRAP_RANGE);
+    if (!e->lim.check_mem)
+        return true;
+    int d = in->op == LIMBA_OP_RETAIN ? 1 : -1;
+    for (int64_t i = 0; i < n; i++)
+        if (!rc_walk(e, p + (uint64_t)i * size, (limba_id)in->imm, d))
+            return false;
+    return true;
+}
+
+/* at the end of a run: every counted string has as many references as
+   words of memory still hold it */
+static void end_check(E *e)
+{
+    amap *w = &e->words;
+    for (int pass = 0; pass < 2; pass++)
+        for (size_t k = 0; k < w->cap; k++) {
+            if (w->key[k] <= 1)
+                continue;
+            uint64_t v = load((void *)w->key[k], LIMBA_T_STR);
+            estr *s = (estr *)(uintptr_t)v;
+            if (!v || s->immortal)
+                continue;
+            if (!pass)
+                s->seen++;
+            else if (s->seen != s->mrefs)
+                e->status = LIMBA_EVAL_BADMEM;
+        }
+    for (size_t i = 0; i < e->ncounted; i++)
+        if (e->counted[i]->seen != e->counted[i]->mrefs)
+            e->status = LIMBA_EVAL_BADMEM;
 }
 
 /* ---- operations ---- */
@@ -1065,10 +1309,11 @@ static const limba_block *jump(const limba_func *f, uint32_t k, uint64_t *v)
 static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
 {
     const limba_module *m = e->m;
-    if (e->depth >= e->lim.max_depth) {
-        e->status = LIMBA_EVAL_LIMIT;
-        return false;
-    }
+    char here;
+    size_t used = e->stack_base > &here ? (size_t)(e->stack_base - &here)
+                                        : (size_t)(&here - e->stack_base);
+    if (e->depth >= e->lim.max_depth || used > e->stack_budget)
+        return trap(e, LIMBA_TRAP_STACK);
     e->depth++;
     uint64_t *v = limba_xcalloc((size_t)f->ninsts + 1, sizeof(*v));
     void **slots = limba_xcalloc((size_t)f->nslots + 1, sizeof(*slots));
@@ -1102,7 +1347,9 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
             case LIMBA_F_SCONST: {
                 size_t n;
                 const char *s = limba_str(m, (limba_id)in->imm, &n);
-                r = sv(str_make(e, s, n));
+                estr *x = str_make(e, s, n);
+                x->immortal = 1;
+                r = sv(x);
                 break;
             }
             case LIMBA_F_TYPED:
@@ -1136,10 +1383,10 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
                 ok = convert(in->op, f->insts[o[0]].type, t, v[o[0]], &r);
                 break;
             case LIMBA_F_LOAD:
-                r = load((void *)(uintptr_t)v[o[0]], t);
+                ok = mem_load(e, v[o[0]], t, &r);
                 break;
             case LIMBA_F_STORE:
-                store((void *)(uintptr_t)v[o[1]], f->insts[o[0]].type, v[o[0]]);
+                ok = mem_store(e, v[o[1]], f->insts[o[0]].type, v[o[0]]);
                 break;
             case LIMBA_F_SLOT:
                 r = (uint64_t)(uintptr_t)slots[in->imm];
@@ -1155,14 +1402,16 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
                 r = v[o[0]] + v[o[1]] * (uint64_t)in->imm + (uint64_t)in->imm2;
                 break;
             case LIMBA_F_MEM3: {
-                void *dst = (void *)(uintptr_t)v[o[0]];
                 size_t len = (size_t)uv(v[o[2]], f->insts[o[2]].type);
                 if (in->op == LIMBA_OP_MEMCPY)
-                    memmove(dst, (void *)(uintptr_t)v[o[1]], len);
+                    ok = mem_copy(e, v[o[0]], v[o[1]], len);
                 else
-                    memset(dst, (int)(uint8_t)v[o[1]], len);
+                    ok = mem_fill(e, v[o[0]], (int)(uint8_t)v[o[1]], len);
                 break;
             }
+            case LIMBA_F_RC:
+                ok = rc_inst(e, in, v[o[0]], v[o[1]]);
+                break;
             case LIMBA_F_CALL:
             case LIMBA_F_CALL_IND:
             case LIMBA_F_CALL_EXT:
@@ -1218,10 +1467,55 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
         bl = next;
     }
 done:
+    /* the typed slots release their strings, every slot forgets its own */
+    for (uint32_t s = 0; ok && e->lim.check_mem && s < f->nslots; s++) {
+        uintptr_t p = (uintptr_t)slots[s];
+        if (f->slots[s].type != LIMBA_NONE)
+            ok = rc_walk(e, p, f->slots[s].type, -1);
+        ok = ok && forget(e, p, f->slots[s].size);
+    }
     free(v);
     free(slots); /* the slot memory itself is in the arena */
     e->depth--;
     return ok;
+}
+
+struct run {
+    E *e;
+    const limba_func *f;
+    uint64_t ret;
+};
+
+static void *run_thread(void *arg)
+{
+    struct run *r = arg;
+    char base;
+    r->e->stack_base = &base;
+    r->e->stack_budget = EVAL_STACK - EVAL_STACK_MARGIN;
+    call(r->e, r->f, NULL, &r->ret);
+    return NULL;
+}
+
+/* call f on a stack of EVAL_STACK bytes; without a thread, on this one
+   with a budget the default stack of a process holds */
+static void run_on_stack(E *e, const limba_func *f, uint64_t *ret)
+{
+    struct run r = {e, f, 0};
+    pthread_attr_t a;
+    pthread_t t;
+    bool threaded = !pthread_attr_init(&a) &&
+                    !pthread_attr_setstacksize(&a, EVAL_STACK) &&
+                    !pthread_create(&t, &a, run_thread, &r);
+    pthread_attr_destroy(&a);
+    if (threaded) {
+        pthread_join(t, NULL);
+    } else {
+        char base;
+        e->stack_base = &base;
+        e->stack_budget = 4 * EVAL_STACK_MARGIN;
+        call(e, f, NULL, &r.ret);
+    }
+    *ret = r.ret;
 }
 
 void limba_eval(const limba_module *m, const char *entry,
@@ -1235,6 +1529,7 @@ void limba_eval(const limba_module *m, const char *entry,
         e.lim.argc = limits->argc;
         e.lim.argv = limits->argv;
         e.lim.in = limits->in;
+        e.lim.check_mem = limits->check_mem;
     }
     memset(r, 0, sizeof(*r));
 
@@ -1268,19 +1563,24 @@ void limba_eval(const limba_module *m, const char *entry,
         else if (g->init == LIMBA_INIT_STR) {
             size_t k;
             const char *s = limba_str(m, (limba_id)g->value, &k);
-            store(p, LIMBA_T_STR, sv(str_make(&e, s, k)));
+            estr *x = str_make(&e, s, k);
+            x->immortal = 1;
+            store(p, LIMBA_T_STR, sv(x));
+            if (e.lim.check_mem)
+                amap_put(&e.words, (uintptr_t)p, 0);
         }
     }
 
     uint64_t ret = 0;
-    call(&e, &m->funcs[fid], NULL, &ret);
+    run_on_stack(&e, &m->funcs[fid], &ret);
+    if (e.status == LIMBA_EVAL_OK && e.lim.check_mem)
+        end_check(&e);
     r->status = e.status;
     r->code = e.code;
     r->pos = e.pos;
     r->ret = e.status == LIMBA_EVAL_OK ? ret : 0;
     r->steps = e.steps;
-    r->live = e.live;
-    r->bad_frees = e.bad_frees;
+    r->live = e.heap.live;
     limba_w_byte(&e.out, 0);
     r->out = (char *)e.out.buf;
     r->outlen = e.out.len - 1;
@@ -1288,7 +1588,9 @@ void limba_eval(const limba_module *m, const char *entry,
     for (size_t i = 0; i < e.narena; i++)
         free(e.arena[i]);
     free(e.arena);
-    free(e.heap);
+    amap_free(&e.heap);
+    amap_free(&e.words);
+    free(e.counted);
     free(e.globals);
 }
 

@@ -14,9 +14,16 @@
 
 LIMBA_TRAP(OVERFLOW, 6, "overflow")
 LIMBA_TRAP(NOMEM, 7, "out of memory")
+/* calls nested deeper than the engine allows: never a crash */
+LIMBA_TRAP(STACK, 28, "stack overflow")
 LIMBA_TRAP(DIVZERO, 11, "division by zero")
 LIMBA_TRAP(INDEX, 100, "index out of range")
 LIMBA_TRAP(RANGE, 101, "value out of range")
 LIMBA_TRAP(NIL, 102, "nil dereferenced")
 LIMBA_TRAP(CONVERSION, 103, "conversion out of range")
 LIMBA_TRAP(SHIFT, 104, "shift count out of range")
+/* an access through a pointer to a block that mem_free has freed
+   (check of ptr_live) */
+LIMBA_TRAP(DANGLING, 105, "dangling pointer")
+/* mem_free of what is not a live block of mem_alloc: not a check */
+LIMBA_TRAP(INVALID_FREE, 106, "invalid dispose")

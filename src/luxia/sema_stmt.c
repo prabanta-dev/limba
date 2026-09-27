@@ -307,6 +307,7 @@ unsigned lxs_check_bits(const char *name, size_t len)
         {"conversion_check", LXS_CHECK_CONVERSION},
         {"shift_check", LXS_CHECK_SHIFT},
         {"nil_check", LXS_CHECK_NIL},
+        {"dangling_check", LXS_CHECK_DANGLING},
         {"all_checks", LXS_CHECK_ALL},
     };
     for (size_t i = 0; i < sizeof(checks) / sizeof(checks[0]); i++)
@@ -338,11 +339,11 @@ void lxs_pragma(limba_lxs *S, uint32_t node)
             lxs_error(S, LXE_CHECK_NAME, c,
                       "'%.*s' is no check: index_check, range_check, "
                       "overflow_check, division_check, conversion_check, "
-                      "shift_check, nil_check or all_checks",
+                      "shift_check, nil_check, dangling_check or all_checks",
                       (int)n, s);
         op |= bits;
     }
-    lxs_node(S, node)->op = (uint8_t)op;
+    lxs_node(S, node)->flags = (uint16_t)op;
 }
 
 void lxs_stmts(limba_lxs *S, uint32_t list, uint32_t scope)

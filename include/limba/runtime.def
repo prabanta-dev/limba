@@ -39,7 +39,10 @@ LIMBA_RT(STR_PTR, "str_ptr", "(str) -> ptr", LIMBA_RTA_PURE)
 
 /* memory of the program: Allocate, Deallocate */
 LIMBA_RT(MEM_ALLOC, "mem_alloc", "(i64) -> ptr", LIMBA_RTA_ALLOC)
-LIMBA_RT(MEM_FREE, "mem_free", "(ptr) -> void", LIMBA_RTA_WRITES_MEM)
+/* mem_free(null) does nothing; anything else that is not a live block of
+   mem_alloc is the trap INVALID_FREE */
+LIMBA_RT(MEM_FREE, "mem_free", "(ptr) -> void",
+         LIMBA_RTA_WRITES_MEM | LIMBA_RTA_MAY_TRAP)
 
 /* mathematics */
 LIMBA_RT(MATH_SQRT, "math_sqrt", "(f64) -> f64", LIMBA_RTA_PURE)
@@ -99,3 +102,6 @@ LIMBA_RT(STR_TO_F32, "str_to_f32", "(str, ptr) -> i1", LIMBA_RTA_WRITES_MEM)
    (limba_fmt_f32) */
 LIMBA_RT(PRINT_F32, "print_f32", "(f32) -> void", LIMBA_RTA_IO)
 LIMBA_RT(STR_FROM_F32, "str_from_f32", "(f32) -> str", LIMBA_RTA_ALLOC)
+/* is p a live block of mem_alloc (its start, not freed)? The dangling
+   check: check ptr_live(p), 105 right before an access through p */
+LIMBA_RT(PTR_LIVE, "ptr_live", "(ptr) -> i1", LIMBA_RTA_READS_HEAP)

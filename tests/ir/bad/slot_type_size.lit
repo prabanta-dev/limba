@@ -1,0 +1,9 @@
+; expect: does not fit it
+type %named = { i32 @0, str @8 } size 16 align 8
+
+func @main : fn() -> i64 {
+  slot 8 align 8 type %named
+b0:
+  v0 = iconst i64 0
+  ret v0
+}

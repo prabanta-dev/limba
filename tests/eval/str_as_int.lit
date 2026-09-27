@@ -1,0 +1,12 @@
+; memory: broken
+; the bytes of a str read as an i64 (progetto_ir.md § 11c): check_mem
+; stops it, what could read a released string in an engine that counts
+func @main : fn() -> i64 {
+  slot 8 align 8 type str
+b0:
+  v0 = slot ptr $0
+  v1 = sconst str "a"
+  store v1, v0
+  v2 = load i64 v0
+  ret v2
+}

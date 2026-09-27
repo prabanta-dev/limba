@@ -6,8 +6,10 @@
  * and writes nothing.
  *
  * tests/eval, every .lit: the interpreter itself, against what its header
- *     says: "; output: <line>" per printed line, "; result: <n>" or
- *     "; trap: <code>". An oracle is checked before it judges.
+ *     says: "; output: <line>" per printed line, "; result: <n>",
+ *     "; trap: <code>" or "; memory: broken" (a rule of the strings in
+ *     memory broken, found by check_mem, on in every run here). An oracle
+ *     is checked before it judges.
  * tests/eval, tests/ir/ok, tests/opt (before ";; expect"), every .lit with
  *     a @main: the same program not optimised, fully optimised, and with
  *     each pass alone must print the same, end the same way and return the
@@ -25,6 +27,8 @@
 #include <string.h>
 
 static int failures, compared, skipped;
+/* every run counts the strings in memory and checks their rules */
+static const limba_eval_limits check_mem = {.check_mem = true};
 
 #define CHECK(cond, ...)                                                       \
     do {                                                                       \
@@ -111,13 +115,15 @@ static void golden(const char *path)
         } else if (!strncmp(p, "; trap: ", 8)) {
             status = LIMBA_EVAL_TRAP;
             value = strtoll(p + 8, NULL, 10);
+        } else if (!strncmp(p, "; memory: broken", 16)) {
+            status = LIMBA_EVAL_BADMEM;
         }
         if (!eol)
             break;
     }
     want[wlen] = 0;
     limba_eval_result r;
-    limba_eval(m, "main", NULL, &r);
+    limba_eval(m, "main", &check_mem, &r);
     CHECK(r.status == status, "%s: ended with status %d, expected %d", path,
           r.status, status);
     CHECK(status != LIMBA_EVAL_TRAP || r.code == value,
@@ -149,7 +155,7 @@ static bool run(const char *path, const char *skip, limba_eval_result *r)
             return false;
         }
     }
-    limba_eval(m, "main", NULL, r);
+    limba_eval(m, "main", &check_mem, r);
     limba_module_free(m);
     return true;
 }

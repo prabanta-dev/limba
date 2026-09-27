@@ -205,6 +205,27 @@ static bool use(vctx *v, uint32_t u, uint32_t x, limba_id *type)
 }
 
 /* values of in, by operand index */
+/* does t hold an array of 0 elements, at any depth? */
+static bool holds_empty_array(const limba_module *m, limba_id t)
+{
+    const limba_type *ty = &m->types[t];
+    if (ty->kind == LIMBA_TK_ARRAY)
+        return !ty->count || holds_empty_array(m, ty->elem);
+    if (ty->kind == LIMBA_TK_STRUCT)
+        for (uint32_t i = 0; i < ty->count; i++)
+            if (holds_empty_array(m, m->members[ty->first + i].type))
+                return true;
+    return false;
+}
+
+/* a type retain, release and a typed slot may name (§ 11c): it holds a
+   str and no array of 0 elements, which would count nothing silently */
+static bool counted_type(const limba_module *m, limba_id t)
+{
+    return t < m->ntypes && limba_type_holds_str(m, t) &&
+           !holds_empty_array(m, t);
+}
+
 static bool vals(vctx *v, uint32_t u, limba_id *t, uint32_t n)
 {
     const limba_inst *in = &v->f->insts[u];
@@ -524,6 +545,17 @@ static bool check_inst(vctx *v, uint32_t u)
         break;
     case LIMBA_F_PARAM:
         break;
+    case LIMBA_F_RC:
+        if (!vals(v, u, t, 2))
+            return false;
+        if (t[0] != LIMBA_T_PTR || !limba_type_is_int(t[1]))
+            IFAIL(u, "%s: a ptr and an integer count", op->text);
+        if (in->imm < 0 || !counted_type(v->m, (limba_id)in->imm))
+            IFAIL(u,
+                  "%s of a type that holds no str, or holds an array of 0 "
+                  "elements",
+                  op->text);
+        break;
     }
     return true;
 }
@@ -536,11 +568,19 @@ static bool check_func(vctx *v)
 
     if (!f->nblocks)
         FAIL("@%s: a function has at least one block", fname);
-    for (uint32_t s = 0; s < f->nslots; s++)
-        if (!is_pow2(f->slots[s].align))
+    for (uint32_t s = 0; s < f->nslots; s++) {
+        const limba_slot *sl = &f->slots[s];
+        if (!is_pow2(sl->align))
             FAIL("@%s: slot $%" PRIu32 " has an alignment that is not a "
                  "power of two",
                  fname, s);
+        if (sl->type != LIMBA_NONE &&
+            (!counted_type(m, sl->type) || m->types[sl->type].size > sl->size ||
+             m->types[sl->type].align > sl->align))
+            FAIL("@%s: slot $%" PRIu32 " has a type that holds no str, holds "
+                 "an array of 0 elements, or does not fit it",
+                 fname, s);
+    }
 
     for (uint32_t i = 0; i < f->ninsts; i++)
         if (limba_inst_pos(f, i) > m->npos)

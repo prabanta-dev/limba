@@ -1169,7 +1169,7 @@ prog.luxia:2:8: error[L0057]: the pragmas are suppress and unsuppress, not 'supr
 
 A pragma names checks among `index_check`, `range_check`,
 `overflow_check`, `division_check`, `conversion_check`, `shift_check`,
-`nil_check` and `all_checks` (§ 10.3).
+`nil_check`, `dangling_check` and `all_checks` (§ 10.3).
 
 ```pascal
 program p;
@@ -1179,7 +1179,40 @@ end.
 ```
 
 ```
-prog.luxia:2:17: error[L0058]: 'range_chek' is no check: index_check, range_check, overflow_check, division_check, conversion_check, shift_check, nil_check or all_checks
+prog.luxia:2:17: error[L0058]: 'range_chek' is no check: index_check, range_check, overflow_check, division_check, conversion_check, shift_check, nil_check, dangling_check or all_checks
+```
+
+### L0059 — ARGUMENT THROUGH A POINTER
+
+In Luxia 0 an object reached through a pointer (`p^`, `p.f`, `p[i]`,
+`p.a[i]`, in any chain) cannot be passed as a `var` argument, nor as an
+`out` argument of a record or array type (§ 3.10): the routine would
+write through its address after a `dispose`, where no check can see it.
+This includes `readline` and `val`. Copy the object into a variable, pass
+that, then assign it back. A scalar `out` argument is allowed.
+
+```pascal
+program p;
+type R = record a: Int32; end;
+var q: ^R;
+procedure inc(var x: Int32);
+begin
+  x := x + 1;
+end inc;
+begin
+  q := new(R);
+  inc(q.a);
+end p.
+```
+
+```
+prog.luxia:10:8: error[L0059]: an object reached through a pointer cannot be a var argument: copy it into a variable, pass that, then assign it back
+```
+
+With `procedure fill(out r: R)`, `fill(q^)` gives:
+
+```
+prog.luxia:10:9: error[L0059]: an object reached through a pointer cannot be an out argument of a record or array type: pass a variable, then assign it
 ```
 
 ## All the codes
@@ -1244,3 +1277,4 @@ prog.luxia:2:17: error[L0058]: 'range_chek' is no check: index_check, range_chec
 | L0056 | OUT_UNASSIGNED | an `out` parameter left without a value |
 | L0057 | PRAGMA_NAME | a pragma that is not `suppress` or `unsuppress` |
 | L0058 | CHECK_NAME | a check that has no such name |
+| L0059 | THROUGH_POINTER | an object reached through a pointer as a `var` argument, or an `out` record or array |

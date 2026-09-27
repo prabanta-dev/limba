@@ -4826,8 +4826,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
             snprintf(p->end, sizeof(p->end), "trap %d at %u:%u", x.code, x.line,
                      x.col);
         else if (x.live)
-            snprintf(p->end, sizeof(p->end), "ok, %u live, 0 bad frees",
-                     x.live);
+            snprintf(p->end, sizeof(p->end), "ok, %u live", x.live);
         else
             snprintf(p->end, sizeof(p->end), "ok");
     }

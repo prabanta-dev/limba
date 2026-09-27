@@ -68,13 +68,16 @@ static limba_id fconst(lxl *L, limba_id type, double d)
     return lxl_emit(L, LIMBA_OP_FCONST, type, 0, bits, 0, NULL, 0);
 }
 
+/* a load and a store, through a pointer after its dangling check */
 static limba_id load(lxl *L, limba_ltype t, limba_id addr)
 {
+    lxl_live(L, addr);
     return un(L, LIMBA_OP_LOAD, lxl_type(L, t), addr);
 }
 
 static void store(lxl *L, limba_id value, limba_id addr)
 {
+    lxl_live(L, addr);
     uint32_t o[2] = {value, addr};
     lxl_emit(L, LIMBA_OP_STORE, LIMBA_T_VOID, 0, 0, 0, o, 2);
 }
@@ -84,7 +87,10 @@ static limba_id addr(lxl *L, limba_id base, limba_id index, int64_t scale,
                      int64_t disp)
 {
     uint32_t o[2] = {base, index};
-    return lxl_emit(L, LIMBA_OP_ADDR, LIMBA_T_PTR, 0, scale, disp, o, 2);
+    limba_id a = lxl_emit(L, LIMBA_OP_ADDR, LIMBA_T_PTR, 0, scale, disp, o, 2);
+    if (lxl_via(L, base) != LIMBA_NONE)
+        lxl_via_set(L, a, lxl_via(L, base));
+    return a;
 }
 
 /* an integer value widened to i64, by the sign of its type */
@@ -547,6 +553,7 @@ static limba_id nil_checked(lxl *L, limba_id p)
 {
     limba_id null = lxl_emit(L, LIMBA_OP_NULLV, LIMBA_T_PTR, 0, 0, 0, NULL, 0);
     lxl_check(L, cmp(L, false, LIMBA_CC_NE, p, null), LXR_NIL);
+    lxl_via_set(L, p, p);
     return p;
 }
 
@@ -931,11 +938,10 @@ void lxl_assign(lxl *L, uint32_t node, uint32_t target, uint32_t value)
     /* the target first, its index checked, then the value (luxia_0.md
        § 6: from left to right) */
     if (!lxl_scalar(L, t)) {
-        uint64_t size = ti(L, t)->size;
         limba_id dst = lxl_addr(L, target);
         limba_id src = lxl_addr(L, value);
-        uint32_t o[3] = {dst, src, lxl_iconst(L, LIMBA_T_I64, (int64_t)size)};
-        lxl_emit(L, LIMBA_OP_MEMCPY, LIMBA_T_VOID, 0, 0, 0, o, 3);
+        lxl_at(L, node); /* a dangling pointer is caught at the assignment */
+        lxl_copy(L, dst, src, t);
         return;
     }
     limba_lx_node *x = nd(L, target);

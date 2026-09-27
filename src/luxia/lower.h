@@ -12,6 +12,12 @@
  * definite assignment and the return on every path are checked here, on
  * the SSA form.
  *
+ * An access through a pointer (a load, a store, a copy) is preceded by
+ * the dangling check, ptr_live of that pointer, with no call in between;
+ * a record or an array that holds a String is copied with retain and
+ * release around the memcpy, lives in a typed slot, and is released
+ * before mem_free (progetto_ir.md § 4, § 11c).
+ *
  * A function whose result is a record or an array takes, before its
  * parameters, the address where the result goes: a slot of the caller.
  * An array with computed bounds lives on the heap and is freed where its
@@ -33,6 +39,7 @@ enum {
     LXR_NIL = LIMBA_TRAP_NIL,
     LXR_CONVERSION = LIMBA_TRAP_CONVERSION,
     LXR_SHIFT = LIMBA_TRAP_SHIFT,
+    LXR_DANGLING = LIMBA_TRAP_DANGLING,
 };
 
 /* the module of a checked program; NULL if errors were reported */
@@ -57,6 +64,7 @@ typedef struct {
     limba_id lo, hi; /* DYN: the bounds, values of the index type; OPEN:
                         those of the argument, i64 values */
     limba_id global; /* GLOBAL */
+    limba_id count;  /* DYN: the number of elements, an i64 value */
     limba_id back;   /* an out parameter: where its value goes back */
     /* the variable of a for: the array (or string) whose bounds hold it,
        below and above, all through the body; LXL_ONE for a lower bound
@@ -112,6 +120,11 @@ typedef struct {
     } *lvn;
     uint32_t gen;      /* the function being built, from 1 */
     unsigned suppress; /* the checks turned off here, LXS_CHECK_* */
+    /* per instruction of the function: the pointer whose object holds
+       the address it computes, LIMBA_NONE if none; an access there is
+       checked with ptr_live first (§ 3.10) */
+    limba_id *via;
+    uint32_t capvia;
     void (*done)(void *ctx, limba_module *m, limba_id fid, limba_edit *e);
     void *ctx;
 } lxl;
@@ -132,6 +145,20 @@ bool lxl_overflow_checked(const lxl *L);
 /* a slot for a value of type t, made in the entry block; node is where
    a type too large for the stack is reported */
 limba_id lxl_temp(lxl *L, limba_ltype t, uint32_t node);
+/* the address a is in the object of pointer p (p itself for p^) */
+void lxl_via_set(lxl *L, limba_id a, limba_id p);
+limba_id lxl_via(const lxl *L, limba_id a);
+/* the dangling check of an access at a, if a is reached by a pointer:
+   emitted right before the access */
+void lxl_live(lxl *L, limba_id a);
+/* does a value of type t hold a String (then counted in memory)? */
+bool lxl_holds_str(lxl *L, limba_ltype t);
+/* retain or release (op) every String of n values of type t at p (n an
+   i64 value); nothing for a type without Strings */
+void lxl_rc(lxl *L, unsigned op, limba_id p, limba_ltype t, limba_id n);
+/* the copy of a record or an array of type t: the dangling checks of
+   both, then retain src, release dst, memcpy (r := r keeps its strings) */
+void lxl_copy(lxl *L, limba_id dst, limba_id src, limba_ltype t);
 /* a new block that is where the code goes now */
 void lxl_goto_new(lxl *L, limba_id b);
 /* the instructions made from now on come from node */

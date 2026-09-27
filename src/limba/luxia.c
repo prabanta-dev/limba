@@ -129,8 +129,8 @@ static bool suppress_bits(const char *list, unsigned *bits)
             fprintf(stderr,
                     "limba: --suppress: '%.*s' is no check: index_check, "
                     "range_check, overflow_check, division_check, "
-                    "conversion_check, shift_check, nil_check or "
-                    "all_checks\n",
+                    "conversion_check, shift_check, nil_check, "
+                    "dangling_check or all_checks\n",
                     (int)n, list);
             return false;
         }

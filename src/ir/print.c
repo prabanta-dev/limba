@@ -248,6 +248,14 @@ static void print_inst(pctx *p, uint32_t id)
         val(p, o[0]);
         fprintf(out, ", %" PRId64, in->imm);
         break;
+    case LIMBA_F_RC:
+        fputc(' ', out);
+        print_type(out, m, (limba_id)in->imm);
+        fputc(' ', out);
+        val(p, o[0]);
+        fputs(", ", out);
+        val(p, o[1]);
+        break;
     default: /* values only: un, bin, tern, cmp, conv, load, store, mem3,
                 ret */
         for (uint32_t i = 0; i < in->nops; i++) {
@@ -279,9 +287,15 @@ static void print_func(FILE *out, const limba_module *m, const limba_func *f)
     if (f->flags & LIMBA_SYM_EXPORT)
         fputs(" export", out);
     fputs(" {\n", out);
-    for (uint32_t s = 0; s < f->nslots; s++)
-        fprintf(out, "  slot %" PRIu32 " align %" PRIu32 "\n", f->slots[s].size,
+    for (uint32_t s = 0; s < f->nslots; s++) {
+        fprintf(out, "  slot %" PRIu32 " align %" PRIu32, f->slots[s].size,
                 f->slots[s].align);
+        if (f->slots[s].type != LIMBA_NONE) {
+            fputs(" type ", out);
+            print_type(out, m, f->slots[s].type);
+        }
+        fputc('\n', out);
+    }
     for (uint32_t b = 0; b < f->nblocks; b++) {
         const limba_block *bl = &f->blocks[b];
         fprintf(out, "b%" PRIu32, b);

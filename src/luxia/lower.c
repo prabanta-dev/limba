@@ -190,8 +190,73 @@ static unsigned check_of(int64_t code)
         return LXS_CHECK_SHIFT;
     case LXR_NIL:
         return LXS_CHECK_NIL;
+    case LXR_DANGLING:
+        return LXS_CHECK_DANGLING;
     }
     return 0;
+}
+
+void lxl_via_set(lxl *L, limba_id a, limba_id p)
+{
+    if (a >= L->capvia) {
+        uint32_t cap = L->capvia ? L->capvia : 256;
+        while (cap <= a)
+            cap *= 2;
+        L->via = limba_xrealloc(L->via, cap, sizeof(*L->via));
+        memset(L->via + L->capvia, 0xff,
+               (size_t)(cap - L->capvia) * sizeof(*L->via));
+        L->capvia = cap;
+    }
+    L->via[a] = p;
+}
+
+limba_id lxl_via(const lxl *L, limba_id a)
+{
+    return a < L->capvia ? L->via[a] : LIMBA_NONE;
+}
+
+void lxl_live(lxl *L, limba_id a)
+{
+    limba_id p = lxl_via(L, a);
+    if (p == LIMBA_NONE || (L->suppress & LXS_CHECK_DANGLING))
+        return;
+    lxl_check(L, lxl_rt(L, LIMBA_RT_PTR_LIVE, LIMBA_T_I1, &p, 1), LXR_DANGLING);
+}
+
+bool lxl_holds_str(lxl *L, limba_ltype t)
+{
+    return t && limba_type_holds_str(L->m, lxl_type(L, t));
+}
+
+void lxl_rc(lxl *L, unsigned op, limba_id p, limba_ltype t, limba_id n)
+{
+    if (!lxl_holds_str(L, t))
+        return;
+    limba_id it = lxl_type(L, t);
+    const limba_typeinfo *x = ti(L, t);
+    if (x->kind == LIMBA_LTK_ARRAY && !L->m->types[it].count) {
+        /* too many elements for the type of the IR, or computed: its
+           elements, n times as many */
+        const limba_typeinfo *ix = ti(L, x->index);
+        uint64_t k = (uint64_t)(ix->hi - ix->lo + 1);
+        uint32_t o[2] = {n, lxl_iconst(L, LIMBA_T_I64, (int64_t)k)};
+        n = lxl_emit(L, LIMBA_OP_MUL, LIMBA_T_I64, 0, 0, 0, o, 2);
+        it = lxl_type(L, x->elem);
+    }
+    uint32_t o[2] = {p, n};
+    lxl_emit(L, op, LIMBA_T_VOID, 0, it, 0, o, 2);
+}
+
+void lxl_copy(lxl *L, limba_id dst, limba_id src, limba_ltype t)
+{
+    lxl_live(L, dst);
+    lxl_live(L, src);
+    limba_id one = lxl_iconst(L, LIMBA_T_I64, 1);
+    lxl_rc(L, LIMBA_OP_RETAIN, src, t, one);
+    lxl_rc(L, LIMBA_OP_RELEASE, dst, t, one);
+    uint32_t o[3] = {dst, src,
+                     lxl_iconst(L, LIMBA_T_I64, (int64_t)ti(L, t)->size)};
+    lxl_emit(L, LIMBA_OP_MEMCPY, LIMBA_T_VOID, 0, 0, 0, o, 3);
 }
 
 bool lxl_overflow_checked(const lxl *L)
@@ -265,13 +330,24 @@ static void local(lxl *L, limba_sym s)
                  "too large for the stack");
         size = 8;
     }
-    limba_id slot = limba_slot_add(f, (uint32_t)size, x->align ? x->align : 1);
+    /* a slot that holds Strings is typed: released at every return */
+    bool counted = size == x->size && lxl_holds_str(L, t);
+    limba_id slot =
+        limba_slot_add_typed(f, (uint32_t)size, x->align ? x->align : 1,
+                             counted ? lxl_type(L, t) : LIMBA_NONE);
     /* the address is made in the entry block, which dominates all */
     limba_id cur = L->cur;
     L->cur = 0;
     st->kind = LXL_MEM;
     st->addr = lxl_emit(L, LIMBA_OP_SLOT, LIMBA_T_PTR, 0, slot, 0, NULL, 0);
     L->cur = cur;
+    /* a slot is zeroed at the entry of its function (IR § 4): only a
+       declaration inside a loop starts again from zero, its Strings of
+       the round before released */
+    if (!L->nloops)
+        return;
+    if (counted)
+        lxl_rc(L, LIMBA_OP_RELEASE, st->addr, t, lxl_iconst(L, LIMBA_T_I64, 1));
     uint32_t o[3] = {st->addr, lxl_iconst(L, LIMBA_T_I8, 0),
                      lxl_iconst(L, LIMBA_T_I64, (int64_t)size)};
     lxl_emit(L, LIMBA_OP_MEMSET, LIMBA_T_VOID, 0, 0, 0, o, 3);
@@ -286,8 +362,10 @@ limba_id lxl_temp(lxl *L, limba_ltype t, uint32_t node)
                   "a value too large for the stack is not translated yet");
         size = 8;
     }
-    limba_id slot = limba_slot_add(limba_ssa_func(L->ssa), (uint32_t)size,
-                                   x->align ? x->align : 1);
+    bool counted = size == x->size && lxl_holds_str(L, t);
+    limba_id slot = limba_slot_add_typed(limba_ssa_func(L->ssa), (uint32_t)size,
+                                         x->align ? x->align : 1,
+                                         counted ? lxl_type(L, t) : LIMBA_NONE);
     limba_id cur = L->cur;
     L->cur = 0;
     limba_id a = lxl_emit(L, LIMBA_OP_SLOT, LIMBA_T_PTR, 0, slot, 0, NULL, 0);
@@ -299,7 +377,10 @@ limba_id lxl_temp(lxl *L, limba_ltype t, uint32_t node)
 static void free_dyns(lxl *L, uint32_t n)
 {
     for (uint32_t i = L->ndyns; i-- > n;) {
-        limba_id a = L->store[L->dyns[i]].addr;
+        const lxl_store *st = &L->store[L->dyns[i]];
+        limba_id a = st->addr;
+        lxl_rc(L, LIMBA_OP_RELEASE, a,
+               ti(L, L->S->st.sym[L->dyns[i]].type)->elem, st->count);
         lxl_rt(L, LIMBA_RT_MEM_FREE, LIMBA_T_VOID, &a, 1);
     }
 }
@@ -371,6 +452,7 @@ static void dynamic(lxl *L, limba_sym s, uint32_t tnode)
         lxl_emit(L, LIMBA_OP_ICMP, LIMBA_T_I1, LIMBA_CC_SLT, 0, 0, c, 2), c[1],
         n};
     n = lxl_emit(L, LIMBA_OP_SELECT, LIMBA_T_I64, 0, 0, 0, sel, 3);
+    st->count = n;
     uint32_t o4[2] = {
         n, lxl_iconst(L, LIMBA_T_I64, (int64_t)ti(L, x->elem)->size)};
     limba_id bytes = lxl_emit(L, LIMBA_OP_MULOV, LIMBA_T_I64, 0, 0, 0, o4, 2);
@@ -416,10 +498,8 @@ static void var_decl(lxl *L, uint32_t d)
                     lxl_emit(L, LIMBA_OP_STORE, LIMBA_T_VOID, 0, 0, 0, o, 2);
                 }
             } else {
-                uint32_t o[3] = {
-                    lxl_var_addr(L, s), lxl_addr(L, init),
-                    lxl_iconst(L, LIMBA_T_I64, (int64_t)ti(L, t)->size)};
-                lxl_emit(L, LIMBA_OP_MEMCPY, LIMBA_T_VOID, 0, 0, 0, o, 3);
+                limba_id dst = lxl_var_addr(L, s);
+                lxl_copy(L, dst, lxl_addr(L, init), t);
             }
             (void)tmp;
         }
@@ -738,10 +818,7 @@ static void return_stmt(lxl *L, uint32_t node)
     limba_id v = LIMBA_NONE;
     if (e && L->ret_ptr != LIMBA_NONE) {
         /* a record or an array: into the slot of the caller */
-        uint32_t o[3] = {
-            L->ret_ptr, lxl_addr(L, e),
-            lxl_iconst(L, LIMBA_T_I64, (int64_t)ti(L, L->result)->size)};
-        lxl_emit(L, LIMBA_OP_MEMCPY, LIMBA_T_VOID, 0, 0, 0, o, 3);
+        lxl_copy(L, L->ret_ptr, lxl_addr(L, e), L->result);
     } else if (e) {
         v = lxl_value(L, e);
         lxl_at(L, node); /* a range is checked at the return */
@@ -813,7 +890,7 @@ static void stmt(lxl *L, uint32_t node)
 /* a pragma: its checks off, or back on */
 static void pragma(lxl *L, uint32_t node)
 {
-    unsigned op = nd(L, node)->op;
+    unsigned op = nd(L, node)->flags;
     if (op & LXS_UNSUPPRESS)
         L->suppress &= ~(op & LXS_CHECK_ALL);
     else
@@ -951,6 +1028,8 @@ static void begin_function(lxl *L, limba_id fid)
     L->nout_place = 0;
     L->ndyns = 0;
     L->ret_ptr = LIMBA_NONE;
+    if (L->capvia)
+        memset(L->via, 0xff, (size_t)L->capvia * sizeof(*L->via));
 }
 
 /* before a return: every out parameter goes back to its argument, and
@@ -1197,6 +1276,7 @@ limba_module *limba_lxl_program_each(limba_lxs *S,
     free(L->dyns);
     free(L->node_pos);
     free(L->lvn);
+    free(L->via);
     if (S->rep->errors) {
         limba_module_free(L->m);
         return NULL;

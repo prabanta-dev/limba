@@ -1,0 +1,27 @@
+; output: 1
+; output: 0
+; output: 0
+; trap: 105
+; ptr_live: a live block, a freed one; a new block is never at the
+; address of a freed one; the dangling check stops the program
+func @main : fn() -> i64 {
+b0:
+  v0 = iconst i64 8
+  v1 = call.rt ptr mem_alloc(v0)
+  v2 = call.rt i1 ptr_live(v1)
+  v3 = zext i64 v2
+  call.rt void print_i64(v3)
+  call.rt void print_nl()
+  call.rt void mem_free(v1)
+  v4 = call.rt i1 ptr_live(v1)
+  v5 = zext i64 v4
+  call.rt void print_i64(v5)
+  call.rt void print_nl()
+  v6 = call.rt ptr mem_alloc(v0)
+  v7 = icmp.eq i1 v1, v6
+  v8 = zext i64 v7
+  call.rt void print_i64(v8)
+  call.rt void print_nl()
+  check v4, 105
+  ret v0
+}

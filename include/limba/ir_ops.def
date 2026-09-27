@@ -125,3 +125,14 @@ LIMBA_OP(FROUND, "fround", LIMBA_F_UN, LIMBA_OPF_PURE)
 /* the same, ties away from zero (roundToIntegralTiesToAway): the rounding
    of Ada, Integer(2.5) = 3 */
 LIMBA_OP(FROUNDA, "fround.away", LIMBA_F_UN, LIMBA_OPF_PURE)
+
+/* the counts of the strings in memory (progetto_ir.md § 11c): retain T p, n
+   takes one reference more on every str of n elements of type T from p,
+   release one less; the bytes do not change. T holds a str, n >= 0 (a
+   negative n is the trap RANGE) */
+LIMBA_OP(RETAIN, "retain", LIMBA_F_RC,
+         LIMBA_OPF_READS_MEM | LIMBA_OPF_WRITES_MEM | LIMBA_OPF_MAY_TRAP |
+             LIMBA_OPF_NO_RESULT)
+LIMBA_OP(RELEASE, "release", LIMBA_F_RC,
+         LIMBA_OPF_READS_MEM | LIMBA_OPF_WRITES_MEM | LIMBA_OPF_MAY_TRAP |
+             LIMBA_OPF_NO_RESULT)

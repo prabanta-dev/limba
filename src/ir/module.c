@@ -37,6 +37,26 @@ limba_id limba_scalar_find(const char *s, size_t len)
     return LIMBA_NONE;
 }
 
+bool limba_type_holds_str(const limba_module *m, limba_id t)
+{
+    if (t >= m->ntypes)
+        return false;
+    const limba_type *ty = &m->types[t];
+    switch (ty->kind) {
+    case LIMBA_TK_STR:
+        return true;
+    case LIMBA_TK_ARRAY:
+        return limba_type_holds_str(m, ty->elem);
+    case LIMBA_TK_STRUCT:
+        for (uint32_t i = 0; i < ty->count; i++)
+            if (limba_type_holds_str(m, m->members[ty->first + i].type))
+                return true;
+        return false;
+    default:
+        return false;
+    }
+}
+
 bool limba_type_is_int(limba_id t)
 {
     return t >= LIMBA_T_I1 && t <= LIMBA_T_I64;
@@ -372,8 +392,14 @@ limba_id limba_block_add(limba_func *f)
 
 limba_id limba_slot_add(limba_func *f, uint32_t size, uint32_t align)
 {
+    return limba_slot_add_typed(f, size, align, LIMBA_NONE);
+}
+
+limba_id limba_slot_add_typed(limba_func *f, uint32_t size, uint32_t align,
+                              limba_id t)
+{
     LIMBA_GROW(f->slots, f->nslots, f->capslots);
-    f->slots[f->nslots] = (limba_slot){size, align};
+    f->slots[f->nslots] = (limba_slot){size, align, t};
     return f->nslots++;
 }
 

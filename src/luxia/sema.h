@@ -33,7 +33,7 @@
 /* modes of a parameter, the op of a PARAM node mapped */
 enum { LXS_IN, LXS_VAR, LXS_OUT };
 
-/* the checks a pragma names (§ 9), bits of the op of a PRAGMA node */
+/* the checks a pragma names (§ 9), bits of the flags of a PRAGMA node */
 enum {
     LXS_CHECK_INDEX = 1,
     LXS_CHECK_RANGE = 2,
@@ -42,8 +42,9 @@ enum {
     LXS_CHECK_CONVERSION = 16,
     LXS_CHECK_SHIFT = 32,
     LXS_CHECK_NIL = 64,
-    LXS_CHECK_ALL = 127,
-    LXS_UNSUPPRESS = 128 /* the pragma turns them back on */
+    LXS_CHECK_DANGLING = 128,
+    LXS_CHECK_ALL = 255,
+    LXS_UNSUPPRESS = 256 /* the pragma turns them back on */
 };
 /* the bits of a check name (index_check, ..., all_checks), 0 if none */
 unsigned lxs_check_bits(const char *name, size_t len);

@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- Pointers and strings in memory made rigorous (specification of Luxia
+  § 3.10, § 9.7, § 10). Reading or writing through a pointer to a
+  disposed object is the run-time error "dangling pointer" (code 105,
+  `dangling_check`), checked at the access itself, after everything the
+  statement evaluates (`p.f := g()` with a `dispose(p)` in `g`); a
+  second `dispose` is "invalid dispose" (106), which cannot be
+  suppressed; calls nested too deeply stop with "stack overflow" (28),
+  never a crash. A dangling pointer never equals a pointer to a newer
+  object. In Luxia 0 an object reached through a pointer cannot be a
+  `var` argument, nor an `out` record or array (L0059); as an `in`
+  argument it is passed by copy.
+- IR version 3: `retain T p, n` and `release T p, n` count the strings of
+  `n` values of type `T` in memory; a slot may have a type, and a typed
+  slot is released at every return; every slot is zeroed at entry;
+  `ptr_live` (a new runtime attribute, reading which blocks are alive)
+  gives the dangling check; `mem_free` traps on what is not a live
+  block. The verifier refuses a counted type without a string or with an
+  array of 0 elements. `limba_type_holds_str` is public. Luxia copies a
+  record or an array holding a String with retain and release around the
+  `memcpy`, and releases it before `mem_free`.
+- The reference interpreter counts the references to strings from memory
+  and checks the rules of the IR on them (`check_mem`, on in every test,
+  `lir_run --check-mem`): a release below zero, the bytes of a string
+  read or written as another type or in part, counts that do not match
+  memory at the end are the status BADMEM. The count of bad frees is
+  gone: they trap.
 - Specification of Luxia 0, § 3.11: a `String` without an initial value
   (in a record, an array or the memory of `new`) is `""`, as it already
   was.

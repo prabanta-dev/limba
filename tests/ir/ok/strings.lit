@@ -1,0 +1,28 @@
+; strings in memory: typed slots, retain and release, the dangling check
+type %named = { i32 @0, str @8 } size 16 align 8
+
+func @main : fn() -> i64 {
+  slot 16 align 8 type %named
+  slot 16 align 8
+  slot 8 align 8 type str
+b0:
+  v0 = slot ptr $0
+  v1 = slot ptr $1
+  v2 = iconst i64 0
+  v3 = addr ptr v0, v2, 0, 8
+  v4 = sconst str "name"
+  store v4, v3
+  v5 = iconst i64 1
+  retain %named v0, v5
+  release %named v1, v5
+  v6 = iconst i64 16
+  memcpy v1, v0, v6
+  v7 = call.rt ptr mem_alloc(v6)
+  v8 = call.rt i1 ptr_live(v7)
+  check v8, 105
+  release [1 x %named] v7, v5
+  call.rt void mem_free(v7)
+  v9 = slot ptr $2
+  store v4, v9
+  ret v2
+}

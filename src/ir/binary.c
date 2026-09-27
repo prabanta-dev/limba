@@ -57,6 +57,9 @@ static void w_func(limba_wbuf *w, const limba_func *f)
     for (uint32_t s = 0; s < f->nslots; s++) {
         limba_w_uleb(w, f->slots[s].size);
         limba_w_uleb(w, f->slots[s].align);
+        limba_w_uleb(w, f->slots[s].type == LIMBA_NONE
+                            ? 0
+                            : (uint64_t)f->slots[s].type + 1);
     }
     limba_w_uleb(w, f->nblocks);
     for (uint32_t b = 0; b < f->nblocks; b++) {
@@ -303,10 +306,10 @@ static bool r_func(limba_rbuf *r, limba_module *m, limba_diag *d)
         return false;
     }
     limba_func *f = &m->funcs[fid];
-    uint32_t nslots = limba_r_count(r, 2);
+    uint32_t nslots = limba_r_count(r, 3);
     for (uint32_t s = 0; s < nslots && !r->bad; s++) {
         uint32_t size = r_id(r), align = r_id(r);
-        limba_slot_add(f, size, align);
+        limba_slot_add_typed(f, size, align, r_opt(r));
     }
     uint32_t nblocks = limba_r_count(r, 2);
     for (uint32_t b = 0; b < nblocks && !r->bad; b++)

@@ -41,6 +41,7 @@ bool limba_operand_kinds(const limba_func *f, const limba_inst *in,
     case LIMBA_F_CMP:
     case LIMBA_F_STORE:
     case LIMBA_F_ADDR:
+    case LIMBA_F_RC:
         return n == 2;
     case LIMBA_F_TERN:
     case LIMBA_F_MEM3:

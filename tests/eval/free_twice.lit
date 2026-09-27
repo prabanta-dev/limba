@@ -1,0 +1,17 @@
+; output: 1
+; trap: 106
+; mem_free of null does nothing, of a live block frees it, of a freed one
+; is the trap INVALID_FREE
+func @main : fn() -> i64 {
+b0:
+  v0 = null ptr
+  call.rt void mem_free(v0)
+  v1 = iconst i64 8
+  v2 = call.rt ptr mem_alloc(v1)
+  call.rt void mem_free(v2)
+  v3 = iconst i64 1
+  call.rt void print_i64(v3)
+  call.rt void print_nl()
+  call.rt void mem_free(v2)
+  ret v3
+}

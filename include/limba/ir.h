@@ -22,7 +22,7 @@
 #include <stdio.h>
 
 /* bumped whenever the binary form or the tables change incompatibly */
-#define LIMBA_IR_VERSION 2
+#define LIMBA_IR_VERSION 3
 
 typedef uint32_t limba_id;
 #define LIMBA_NONE UINT32_MAX
@@ -59,6 +59,7 @@ enum limba_format {
     LIMBA_F_TRAP,     /* imm = error code */
     LIMBA_F_CHECK,    /* condition; imm = error code */
     LIMBA_F_PARAM,    /* block parameter: nothing */
+    LIMBA_F_RC,       /* imm = type; pointer, count */
 };
 
 /* what an optimisation may assume */
@@ -129,6 +130,9 @@ enum {
     LIMBA_RTA_WRITES_MEM = 1u << 3, /* writes memory of the program */
     LIMBA_RTA_MAY_TRAP = 1u << 4,
     LIMBA_RTA_NORETURN = 1u << 5,
+    /* reads which blocks of mem_alloc are alive: not pure, changed by
+       mem_free and by any call that may free */
+    LIMBA_RTA_READS_HEAP = 1u << 6,
 };
 
 enum limba_rt {
@@ -238,9 +242,12 @@ typedef struct {
     limba_id library; /* LIMBA_NONE: resolved from the process */
 } limba_extern;
 
+/* a slot is zeroed at the entry of its function; a typed one whose type
+   holds a str is released at every exit (progetto_ir.md § 4, § 11c) */
 typedef struct {
     uint32_t size;
     uint32_t align;
+    limba_id type; /* LIMBA_NONE: untyped */
 } limba_slot;
 
 typedef struct {
@@ -337,6 +344,9 @@ bool limba_type_is_int(limba_id t); /* i1 .. i64 */
 bool limba_type_is_float(limba_id t);
 /* bits of an integer type, 0 for anything else */
 unsigned limba_type_bits(limba_id t);
+/* does a value of type t hold a str: itself, a field, an element, at any
+   depth? What retain, release and a typed slot count */
+bool limba_type_holds_str(const limba_module *m, limba_id t);
 
 limba_id limba_global_add(limba_module *m, limba_id name, limba_id type,
                           uint32_t flags);
@@ -355,6 +365,9 @@ void limba_func_clear(limba_func *f);
 
 limba_id limba_block_add(limba_func *f);
 limba_id limba_slot_add(limba_func *f, uint32_t size, uint32_t align);
+/* the same, typed: t holds a str (checked by the verifier) */
+limba_id limba_slot_add_typed(limba_func *f, uint32_t size, uint32_t align,
+                              limba_id t);
 /* append an instruction to block b; its value id is the return */
 limba_id limba_inst_add(limba_func *f, limba_id b, unsigned op, limba_id type,
                         unsigned cc, int64_t imm, int64_t imm2,

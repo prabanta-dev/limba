@@ -344,6 +344,13 @@ static bool statement(P *p)
         if (!value(p) || !lp_expect(p, TK_COMMA, "','") || !lp_integer(p, &imm))
             return false;
         break;
+    case LIMBA_F_RC: {
+        limba_id t;
+        if (!lp_type(p, &t) || !values(p, 2))
+            return false;
+        imm = t;
+        break;
+    }
     case LIMBA_F_PARAM:
         return lp_fail(p, "%s", "parameters go after the block name");
     }
@@ -473,10 +480,13 @@ bool lp_func(P *p)
 
     while (lp_accept_word(p, "slot")) {
         uint32_t size, align;
+        limba_id t = LIMBA_NONE;
         if (!lp_uinteger32(p, &size) || !lp_expect_word(p, "align") ||
             !lp_uinteger32(p, &align))
             return false;
-        limba_slot_add(f, size, align);
+        if (lp_accept_word(p, "type") && !lp_type(p, &t))
+            return false;
+        limba_slot_add_typed(f, size, align, t);
     }
     while (!lp_accept(p, TK_RBRACE)) {
         if (lp_peek(p)->kind == TK_EOF)

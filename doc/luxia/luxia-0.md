@@ -317,6 +317,21 @@ Records have the C layout.
   likewise: `p[i]` for a pointer to an array.
 - There is no pointer arithmetic and no way to take the address of a
   variable.
+- A pointer to an object that `dispose` has freed is **dangling**.
+  Reading or writing through it (`p^`, `p.f`, `p[i]`, also in a chain) is
+  checked: it is a run-time error, "dangling pointer" (`dangling_check`,
+  § 10.1). The check is made at the access itself, after everything else
+  the statement evaluates: in `p.f := g()`, a `dispose(p)` inside `g` is
+  caught.
+- Comparing pointers (`=`, `<>`) is not an access: a dangling pointer
+  compares without error, and it is **never equal** to a pointer to an
+  object created later, even one at the same address.
+- In Luxia 0 an object reached through a pointer (`p^`, `p.f`, `p[i]`,
+  `p.a[i]`, in any chain) cannot be passed as a `var` argument, nor as an
+  `out` argument of a record or array type: a compile-time error. Copy it
+  into a variable, pass the variable, then assign it back. This rule will
+  go with the ownership of pointers (Appendix A). Passed as an `in` argument,
+  such an object is always passed by copy.
 
 ### 3.11 Objects without an initial value
 
@@ -817,7 +832,9 @@ return a real of the type of their argument (§ 6.6).
 - `new(T)` creates an object of type `T` and returns a `^T`. `new(T)` is
   syntax, not a function, since `new` is a keyword. The contents of the
   new object follow § 3.11.
-- `dispose(p)` frees the object `p` points to.
+- `dispose(p)` frees the object `p` points to; `dispose(nil)` does
+  nothing. Disposing of an object already disposed is a run-time error,
+  "invalid dispose", which is not a check: it cannot be suppressed.
 
 ### 9.8 Environment
 
@@ -837,7 +854,7 @@ return a real of the type of their argument (§ 6.6).
 ### 10.1 Run-time errors
 
 The run-time checks are: overflow, index, range, `nil`, division by zero,
-conversion out of range, and shift count. A failed check stops the
+conversion out of range, shift count, and dangling pointer. A failed check stops the
 program with a message on the standard error that says which check
 failed and where:
 
@@ -852,6 +869,13 @@ When `new` cannot allocate, the program stops in the same way with the
 message "out of memory" and exit status 1 (as Ada's `Storage_Error`).
 This is not a check: it cannot be suppressed.
 
+The same holds for calls nested too deeply, recursion without end for
+example: the program stops with "stack overflow" (Ada's `Storage_Error`
+too). How deep calls may go depends on the implementation; going past it
+is always this error, never a crash. A second `dispose` of the same
+object stops the program with "invalid dispose" (§ 9.7), which is not a
+check either.
+
 As in Ada, a program sees no error codes. Internally each check has a
 code, listed here for reference:
 
@@ -859,12 +883,15 @@ code, listed here for reference:
 |---|---|---|
 | 6 | overflow | `overflow_check` |
 | 7 | out of memory | — |
+| 28 | stack overflow | — |
 | 11 | division by zero | `division_check` |
 | 100 | index out of range | `index_check` |
 | 101 | value out of range | `range_check` |
 | 102 | nil dereferenced | `nil_check` |
 | 103 | conversion out of range | `conversion_check` |
 | 104 | shift count out of range | `shift_check` |
+| 105 | dangling pointer | `dangling_check` |
+| 106 | invalid dispose | — |
 
 `range_check` includes the validity checks on components without a
 value (§ 3.11).
@@ -889,8 +916,8 @@ pragma unsuppress(index_check);
 - `pragma suppress(...)` turns the named checks off; `pragma
   unsuppress(...)` turns them back on.
 - Check names: `index_check`, `range_check`, `overflow_check`,
-  `division_check`, `conversion_check`, `shift_check`, `nil_check`, and
-  `all_checks` for all of them.
+  `division_check`, `conversion_check`, `shift_check`, `nil_check`,
+  `dangling_check`, and `all_checks` for all of them.
 - An unknown pragma name and an unknown check name are compile-time
   errors.
 - **Scope**: among the declarations of the program, a pragma applies to
@@ -1045,4 +1072,5 @@ and tools can anticipate them.
 - Types for hardware: bit layout of records, byte order, alignment,
   variables at fixed addresses, volatile access, sizes imposed on
   subtypes.
-- Ownership of pointers, making `dispose` safe at compile time.
+- Ownership of pointers, making `dispose` safe at compile time, and
+  lifting the rule of § 3.10 on arguments reached through a pointer.

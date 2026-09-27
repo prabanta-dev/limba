@@ -3,7 +3,7 @@
 /*
  * lir_run.c - run a module with the reference interpreter, by hand:
  *
- *   lir_run [-O1] [--entry=name] file.lit|file.lir
+ *   lir_run [-O1] [--check-mem] [--entry=name] file.lit|file.lir
  *
  * Prints what the program printed, then a line with how it ended and what
  * it returned, on standard error. Exit status: 0 returned, 1 anything else.
@@ -19,17 +19,19 @@
 
 static const char *const status_text[] = {
     "returned",    "trap",      "unreachable", "limit",
-    "unsupported", "bad entry", "halt",
+    "unsupported", "bad entry", "halt",        "memory rule broken",
 };
 
 int main(int argc, char **argv)
 {
     const char *path = NULL, *entry = "main";
-    bool opt = false;
+    bool opt = false, check_mem = false;
     int first_arg = argc;
     for (int i = 1; i < argc && !path; i++) {
         if (!strcmp(argv[i], "-O1"))
             opt = true;
+        else if (!strcmp(argv[i], "--check-mem"))
+            check_mem = true;
         else if (!strncmp(argv[i], "--entry=", 8))
             entry = argv[i] + 8;
         else {
@@ -38,7 +40,8 @@ int main(int argc, char **argv)
         }
     }
     if (!path) {
-        fputs("usage: lir_run [-O1] [--entry=name] file.lit|file.lir "
+        fputs("usage: lir_run [-O1] [--check-mem] [--entry=name] "
+              "file.lit|file.lir "
               "[arguments of the program]\n",
               stderr);
         return 2;
@@ -71,7 +74,8 @@ int main(int argc, char **argv)
     }
     limba_eval_result r;
     /* the program reads standard input and its own arguments */
-    limba_eval_limits lim = {0, 0, argc - first_arg, argv + first_arg, stdin};
+    limba_eval_limits lim = {
+        0, 0, argc - first_arg, argv + first_arg, stdin, check_mem};
     limba_eval(m, entry, &lim, &r);
     fwrite(r.out, 1, r.outlen, stdout);
     fprintf(stderr, "lir_run: %s", status_text[r.status]);
@@ -91,8 +95,6 @@ int main(int argc, char **argv)
     fprintf(stderr, ", %" PRIu64 " steps", r.steps);
     if (r.live)
         fprintf(stderr, ", %zu blocks never freed", r.live);
-    if (r.bad_frees)
-        fprintf(stderr, ", %zu bad frees", r.bad_frees);
     fputc('\n', stderr);
     int status = r.status == LIMBA_EVAL_OK     ? 0
                  : r.status == LIMBA_EVAL_HALT ? (int)r.code

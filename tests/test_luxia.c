@@ -520,6 +520,24 @@ static const sema_case sema_cases[] = {
     {"program p; pragma sopress(range_check); begin end.", "L0057@1:19"},
     {"program p; pragma suppress(range_chek, index_check); begin end.",
      "L0058@1:28"},
+    /* an object reached through a pointer is no var argument, nor an
+       out record or array (§ 3.10) */
+    {"program p; type R = record a: Int32; s: String; end; var q: ^R; "
+     "procedure f(var x: Int32); begin x := 1; end f; begin q := new(R); "
+     "f(q.a); end.",
+     "L0059@1:135"},
+    {"program p; type R = record a: Int32; end; var q: ^R; procedure g(var "
+     "v: R); begin v.a := 1; end g; begin q := new(R); g(q^); end.",
+     "L0059@1:122"},
+    {"program p; type R = record a: Int32; end; var q: ^R; procedure h(out "
+     "v: R); begin v.a := 1; end h; begin q := new(R); h(q^); end.",
+     "L0059@1:122"},
+    {"program p; type R = record s: String; end; var q: ^R; b: Boolean; "
+     "begin q := new(R); b := readline(q.s); end.",
+     "L0059@1:101"},
+    {"program p; type R = record a: Int32; end; var q: ^R; b: Boolean; "
+     "begin q := new(R); b := val(\"1\", q.a); end.",
+     "L0059@1:100"},
     /* statements */
     {"program p; type Col = (A, B, D); var c: Col; begin case c of when A: "
      "c := B; end; end.",
@@ -852,6 +870,60 @@ static const run_case run_cases[] = {
     {"program t; type R = record a: Int32; end; Ptr = ^R; var q: Ptr := "
      "nil; begin\n  writeln(q^.a);\nend t.",
      "", "trap 102 at 2:12"},
+    /* a dangling pointer is checked at the access itself, after all the
+       statement evaluates; a second dispose is an error (§ 3.10, § 9.7) */
+    {"program t; type R = record a: Int32; end; var q: ^R; begin q := "
+     "new(R); dispose(q);\n  writeln(q.a);\nend t.",
+     "", "trap 105 at 2:12"},
+    {"program t; type R = record a: Int32; end; var q: ^R; function g(): "
+     "Int32; begin dispose(q); return 7; end g; begin q := new(R);\n  q.a "
+     ":= g();\nend t.",
+     "", "trap 105 at 2:3"},
+    {"program t; type R = record a: Int32; end; var q: ^R; w: R; function "
+     "h(): R; begin dispose(q); return w; end h; begin q := new(R);\n  q^ "
+     ":= h();\nend t.",
+     "", "trap 105 at 2:3"},
+    {"program t; type S = record s: String; end; var q: ^S; begin q := "
+     "new(S); q.s := \"x\"; dispose(q);\n  q.s := \"y\";\nend t.",
+     "", "trap 105 at 2:3"},
+    {"program t; type R = record a: Int32; end; var q: ^R; begin q := "
+     "new(R); dispose(q);\n  dispose(q);\nend t.",
+     "", "trap 106 at 2:3"},
+    {"program t; type R = record a: Int32; end; var q, w: ^R; begin q := "
+     "nil; dispose(q); q := new(R); w := q; dispose(q); q := new(R); "
+     "writeln(w = q, \" \", w = nil); dispose(q); end t.",
+     "false false\n", "ok"},
+    {"program t; type R = record a: Int32; end; var q: ^R; procedure "
+     "show(x: R); begin dispose(q); writeln(x.a); end show; begin q := "
+     "new(R); q.a := 5; show(q^); end t.",
+     "5\n", "ok"},
+    {"program t; type R = record a: Int32; end; var q: ^R; procedure k(out "
+     "x: Int32); begin x := 2; end k; begin q := new(R); k(q.a); "
+     "writeln(q.a); dispose(q); end t.",
+     "2\n", "ok"},
+    {"program t; type R = record a: Int32; end; var q: ^R; procedure k(out "
+     "x: Int32); begin dispose(q); x := 2; end k; begin q := new(R);\n  "
+     "k(q.a);\nend t.",
+     "", "trap 105 at 2:3"},
+    {"program t; pragma suppress(dangling_check); type R = record a: Int32; "
+     "end; var q: ^R; begin q := new(R); q.a := 3; dispose(q); writeln(q.a); "
+     "end t.",
+     "3\n", "ok"},
+    /* calls without end: stack overflow, never a crash (§ 10.1) */
+    {"program t; function f(n: Int64): Int64; begin return f(n + 1) + 1; "
+     "end f; begin\n  writeln(f(0));\nend t.",
+     "", "trap 28 at 1:54"},
+    /* Strings in records, arrays and new: copied, returned, passed,
+       disposed, in a loop and in a computed array, counted right */
+    {"program t; type S = record n: Int32; s: String; end; var a: "
+     "array[Int32 range 1..3] of S; g: S; q: ^S; function mk(k: Int32): S; "
+     "var r: S; begin r.n := k; r.s := \"k\" & str(k); return r; end mk; "
+     "procedure show(x: S); begin writeln(x.n, \" \", x.s); end show; begin "
+     "for var i: Int32 := 1 to 3 do a[i] := mk(i); var l: S; l.s := l.s & "
+     "\"+\"; write(l.s); end; writeln(); g := a[2]; a[2] := a[2]; show(g); "
+     "q := new(S); q^ := a[3]; show(q^); dispose(q); var n: Int32 := 2; var "
+     "d: array[Int32 range 1..n] of S; d[1] := a[1]; show(d[1]); end t.",
+     "+++\n2 k2\n3 k3\n1 k1\n", "ok"},
     /* a record assigned is copied, from the right to the left */
     {"program t; type Pair = record a, b: Int32; end; var u, w: Pair; begin "
      "u.a := 1; u.b := 2; w := u; w.a := 5; writeln(u.a, \" \", w.a, \" \", "
@@ -981,7 +1053,7 @@ static const run_case run_cases[] = {
      "8 8\n123\n", "ok"},
     {"program p; type R = record a: Int32; end; var q: ^R; begin q := "
      "new(R); q.a := 1; end.",
-     "", "ok, 1 live, 0 bad frees"},
+     "", "ok, 1 live"},
     /* an integer to Float32 rounded once: through a double, 2^60 + 2^36
        + 1 would lose its last bit and tie down to 2^60 */
     {"program p; var i: Int64 := 1152921573326323713; u: UInt64 := "
@@ -1064,7 +1136,7 @@ static const run_case run_cases[] = {
 static char *run_module(limba_module *m, const char *in, size_t inlen, int argc,
                         char **argv, char *end, size_t size, size_t *len)
 {
-    limba_eval_limits lim = {0, 0, argc, argv, NULL};
+    limba_eval_limits lim = {0, 0, argc, argv, NULL, true};
     if (in && inlen)
         lim.in = fmemopen((void *)in, inlen, "r");
     limba_eval_result r;
@@ -1078,8 +1150,8 @@ static char *run_module(limba_module *m, const char *in, size_t inlen, int argc,
         snprintf(end, size, "halt %lld", (long long)r.code);
     else if (r.status != LIMBA_EVAL_OK)
         snprintf(end, size, "status %d", r.status);
-    else if (r.live || r.bad_frees)
-        snprintf(end, size, "ok, %zu live, %zu bad frees", r.live, r.bad_frees);
+    else if (r.live)
+        snprintf(end, size, "ok, %zu live", r.live);
     if (r.pos && r.pos <= m->npos) {
         size_t n = strlen(end);
         snprintf(end + n, size - n, " at %u:%u", m->pos[r.pos - 1].line,

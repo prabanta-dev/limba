@@ -1,0 +1,10 @@
+; trap: 101
+; retain and release of a negative count: RANGE in every engine
+func @main : fn() -> i64 {
+  slot 8 align 8 type str
+b0:
+  v0 = slot ptr $0
+  v1 = iconst i64 -1
+  retain str v0, v1
+  ret v1
+}
