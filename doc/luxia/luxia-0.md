@@ -329,7 +329,7 @@ This follows Ada's treatment of uninitialised objects in its strict form
   elements too) whose subtype is narrower than its base type receives an
   **invalid value**, outside the subtype: `lo - 1`, or `hi + 1` if `lo` is
   the minimum of the base type — even when 0 would be valid. All other
-  scalars are 0 (`false`, `nil`).
+  scalars are 0 (`false`, `nil`), and a `String` is `""`.
 - **Reading a component** of a narrow subtype (`r.f`, `a[i]`, `p.f`, `p^`,
   `p[i]`, also in a chain, also of a function result) checks its value;
   an invalid value is a range error, reported at the `.`, `^` or `[`.

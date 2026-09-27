@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Specification of Luxia 0, § 3.11: a `String` without an initial value
+  (in a record, an array or the memory of `new`) is `""`, as it already
+  was.
 - The text of a real is public API, `include/limba/fmt.h` (it was a
   private header): `limba_fmt_f64`, `limba_fmt_f32` and the new
   `limba_fmt_f64_fixed` give, byte for byte, what `print_f64`,
