@@ -1172,7 +1172,8 @@ static uint32_t heap_stmt(G *g, uint32_t *out)
             if (chance(g, 45))
                 continue;
             uint32_t ft = field_type(g, rt, k);
-            uint32_t e = init_expr(g, ft);
+            /* a String made at run time: dispose must release it */
+            uint32_t e = base(g, ft) == T_STR ? made_str(g) : init_expr(g, ft);
             uint32_t a = new_s(g, S_ASSIGN);
             g->st[a].var = (uint32_t)p;
             g->st[a].fld = k + 1;
@@ -1715,7 +1716,7 @@ static uint32_t number_text(G *g)
    digits or out of them; for a real, a text at the edges of the reals */
 static uint32_t val_text_for(G *g, uint32_t t)
 {
-    if (chance(g, 50))
+    if (chance(g, fam(base(g, t)) == 'F' ? 50 : 30))
         return number_text(g);
     if (fam(base(g, t)) == 'F') {
         static const char *const r[] = {"inf",
@@ -1736,8 +1737,10 @@ static uint32_t val_text_for(G *g, uint32_t t)
         const char *x = r[below(g, sizeof(r) / sizeof(r[0]))];
         return new_str(g, x, strlen(x));
     }
+    /* the edges of the type; below its minimum half the time, the case a
+       lower bound left unchecked would pass */
     v128 edge[4] = {lo_of(g, t) - 1, lo_of(g, t), hi_of(g, t), hi_of(g, t) + 1};
-    v128 v = edge[below(g, 4)];
+    v128 v = chance(g, 50) ? edge[0] : edge[1 + below(g, 3)];
     u128 m = v < 0 ? -(u128)v : (u128)v;
     bool hex = chance(g, 30);
     char b[64], d[48];
@@ -1796,15 +1799,25 @@ static uint32_t val_expr(G *g, int d)
     /* a real one often, as they are fewer */
     bool real = chance(g, 40);
     uint32_t n = 0, v = 0;
-    for (int pass = 0; pass < 2 && !n; pass++, real = !real)
+    /* half the integer ones into a signed type narrower than 64 bits: the
+       texts below its minimum show whether that bound is checked */
+    bool narrow = !real && chance(g, 50);
+    for (int pass = 0; pass < 3 && !n; pass++) {
+        if (pass == 1 && narrow)
+            narrow = false;
+        else if (pass)
+            real = !real;
         for (uint32_t i = 0; i < g->nscope; i++) {
             uint32_t w = g->scope[i], t = g->v[w].t;
             if (!is_scalar(g, t) || is_enum(g, t) || !writable(g, w) ||
                 !strchr(real ? "F" : "SUB", fam(base(g, t))))
                 continue;
+            if (narrow && (fam(base(g, t)) != 'S' || tbits(base(g, t)) >= 64))
+                continue;
             if (below(g, ++n) == 0)
                 v = w;
         }
+    }
     if (!n)
         return 0;
     uint32_t a;
@@ -2056,6 +2069,8 @@ static uint32_t bump(G *g, uint32_t w)
 
 /* the body of a loop, whose first statement is first (0: none) */
 static uint32_t declare_dyn(G *g);
+static uint32_t declare_agg(G *g);
+static uint32_t fill_strings(G *g, uint32_t s, uint32_t *out);
 static uint32_t read_write(G *g);
 static void append(G *g, uint32_t *b, uint32_t *n, uint32_t s, bool front);
 
@@ -2066,16 +2081,78 @@ static void loop_body(G *g, uint32_t s, uint32_t first)
     /* sometimes an array with computed bounds, alive at every exit and
        continue of the body */
     uint32_t dyn = chance(g, 30) ? declare_dyn(g) : 0;
+    /* sometimes a record or an array without a value, its Strings made
+       at once: each round declares it again from zero (§ 3.11) */
+    uint32_t agg[5], nagg = 0;
+    if (chance(g, 25) && (agg[0] = declare_agg(g)) != 0)
+        nagg = 1 + (g->st[agg[0]].e ? 0 : fill_strings(g, agg[0], agg + 1));
     uint32_t n;
     uint32_t b = block(g, 1 + (int)below(g, 4), &n);
     g->loops--;
     g->nscope = mark;
+    while (nagg)
+        append(g, &b, &n, agg[--nagg], true);
     if (dyn)
         append(g, &b, &n, dyn, true);
     if (first) /* the counter goes first, so continue cannot skip it */
         append(g, &b, &n, first, true);
     g->st[s].blk = b;
     g->st[s].nblk = n;
+}
+
+/* var s: String := a string made at run time; var t: String := s; a loop
+   of 1 to 4 rounds that changes s or shares it with t again; then s and t
+   written: one string in two variables, and Strings carried round a loop
+   and read after it (in SSA, the arguments of the jumps of the loop, which
+   an engine that counts must keep); into out, 5 statements */
+static uint32_t str_loop(G *g, uint32_t *out)
+{
+    uint32_t sv = new_v(g, T_STR, V_LOCAL);
+    uint32_t ds = new_s(g, S_VAR);
+    uint32_t e = made_str(g);
+    g->st[ds].var = sv;
+    g->st[ds].e = e;
+    show(g, sv);
+    uint32_t tv = new_v(g, T_STR, V_LOCAL);
+    uint32_t dt = new_s(g, S_VAR);
+    e = var_ref(g, sv);
+    g->st[dt].var = tv;
+    g->st[dt].e = e;
+    show(g, tv);
+    uint32_t decl, w = counter(g, &decl);
+    uint32_t loop = new_s(g, S_WHILE);
+    e = binop(g, O_LT, T_BOOL, var_ref(g, w), lit(g, T_I32, 1 + below(g, 4)));
+    g->st[loop].e = e;
+    uint32_t a = new_s(g, S_ASSIGN);
+    unsigned how = below(g, 3);
+    if (how == 2) { /* t := s: shared again */
+        e = var_ref(g, sv);
+        g->st[a].var = tv;
+    } else {
+        uint32_t l = var_ref(g, how ? tv : sv);
+        uint32_t r = made_str(g);
+        e = binop(g, O_CAT, T_STR, l, r);
+        g->st[a].var = sv;
+    }
+    g->st[a].e = e;
+    uint32_t b = 0, n = 0, bs = bump(g, w);
+    append(g, &b, &n, bs, false);
+    append(g, &b, &n, a, false);
+    g->st[loop].blk = b;
+    g->st[loop].nblk = n;
+    uint32_t items[3];
+    items[0] = var_ref(g, sv);
+    items[1] = new_e(g, E_STR, 0);
+    items[2] = var_ref(g, tv);
+    uint32_t wr = new_s(g, S_WRITE);
+    g->st[wr].args = keep_list(g, items, 3);
+    g->st[wr].nargs = 3;
+    out[0] = ds;
+    out[1] = dt;
+    out[2] = decl;
+    out[3] = loop;
+    out[4] = wr;
+    return 5;
 }
 
 static bool overlaps(const xlab *l, uint32_t n, v128 lo, v128 hi)
@@ -2302,6 +2379,8 @@ static uint32_t stmt(G *g, uint32_t *out)
            be outside */
         return halt_stmt(g, out);
     }
+    if (!pure && chance(g, 4))
+        return str_loop(g, out);
     if (!pure && chance(g, 8)) {
         uint32_t s = read_write(g);
         if (s) {
@@ -2760,7 +2839,8 @@ static uint32_t block(G *g, int n, uint32_t *count)
 static void append(G *g, uint32_t *b, uint32_t *n, uint32_t s, bool front)
 {
     uint32_t *x = limba_xmalloc((*n + 1) * sizeof(uint32_t));
-    memcpy(x + front, g->ls + *b, *n * sizeof(uint32_t));
+    if (*n) /* an empty list may have no storage yet */
+        memcpy(x + front, g->ls + *b, *n * sizeof(uint32_t));
     x[front ? 0 : *n] = s;
     *b = keep_list(g, x, *n + 1);
     (*n)++;
@@ -4646,8 +4726,10 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
        global variables of each type, so that copies show */
     for (uint32_t k = 0, n = below(&g, 3); k < n; k++) {
         uint32_t first = g.nfld, nf = 1 + below(&g, 4);
+        bool strings = false;
         for (uint32_t f = 0; f < nf; f++) {
             uint32_t ft = chance(&g, 25) ? T_STR : var_type(&g);
+            strings |= ft == T_STR;
             LIMBA_GROW(g.fld, g.nfld, g.capfld);
             g.fld[g.nfld++] = ft;
         }
@@ -4655,7 +4737,9 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
             new_type(&g, (xt){K_RECORD, T_BOOL, first, nf, 0, 0, 0, 0});
         arrays[narrays++] = rt;
         arrays[narrays++] = rt;
-        if (chance(&g, 60)) {
+        /* a pointer type often; always for Strings, which new and
+           dispose must count */
+        if (strings || chance(&g, 60)) {
             uint32_t pt = new_type(&g, (xt){K_PTR, T_BOOL, 0, rt, 0, 0, 0, 0});
             arrays[narrays++] = pt;
             arrays[narrays++] = pt;

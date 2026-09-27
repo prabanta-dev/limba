@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Two holes of the random Luxia programs, found by Meri: `val` now gets
+  a text below the minimum of a signed type narrower than 64 bits half
+  the time it reads into one; and a new pattern gives one string to two
+  variables and carries a String round a loop, read after it (in SSA,
+  strings in the arguments of jumps). A record with Strings always has a
+  pointer type, and the fields of `new` records get strings made at run
+  time, so that `dispose` has something to release.
 - The random Luxia programs put Strings in record fields, array elements
   and computed arrays, declare local records and arrays (in loops too),
   and give them strings made at run time: on their own they now catch
