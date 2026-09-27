@@ -627,8 +627,9 @@ static uint32_t var_type(G *g)
     return n && chance(g, 30) ? chosen : any_type(g);
 }
 
-/* the type of a variable that is no field or element: a String too
-   (a record or an array does not hold one in the random programs) */
+/* the type of a variable that is no field or element: a String too (the
+   records and arrays of the program choose their own, Strings among
+   them) */
 static uint32_t var_type_s(G *g)
 {
     return chance(g, 10) ? T_STR : var_type(g);
@@ -1054,6 +1055,30 @@ static int pick_field(G *g, unsigned t, bool write, uint32_t *f)
     return chosen;
 }
 
+/* the first value of a field or an element of type t: a literal, or for
+   a String often one made at run time (str of global 0, the integer one,
+   after a literal), which memory counts, unlike a literal */
+static uint32_t made_str(G *g);
+
+static uint32_t init_expr(G *g, uint32_t t)
+{
+    if (base(g, t) != T_STR || chance(g, 50))
+        return lit(g, t, init_value(g, t));
+    return made_str(g);
+}
+
+/* a String made at run time: str(g0), sometimes after a literal */
+static uint32_t made_str(G *g)
+{
+    uint32_t a = var_ref(g, 0); /* before: new_e may move g->e */
+    uint32_t i = new_e(g, E_STRF, T_STR);
+    g->e[i].a = a;
+    if (chance(g, 50))
+        return i;
+    uint32_t l = lit(g, T_STR, rand_value(g, T_STR));
+    return binop(g, O_CAT, T_STR, l, i);
+}
+
 static uint32_t field_ref(G *g, uint32_t v, uint32_t f)
 {
     uint32_t i = new_e(g, E_FIELD, field_type(g, record_of(g, g->v[v].t), f));
@@ -1147,7 +1172,7 @@ static uint32_t heap_stmt(G *g, uint32_t *out)
             if (chance(g, 45))
                 continue;
             uint32_t ft = field_type(g, rt, k);
-            uint32_t e = lit(g, ft, init_value(g, ft));
+            uint32_t e = init_expr(g, ft);
             uint32_t a = new_s(g, S_ASSIGN);
             g->st[a].var = (uint32_t)p;
             g->st[a].fld = k + 1;
@@ -2072,6 +2097,62 @@ static uint32_t declare(G *g, uint32_t t)
     return s;
 }
 
+/* var d: T, a record or an array of the program, without a value (each
+   time it runs, in a loop too: § 3.11) or a copy of a visible variable
+   of T; 0 if the program has neither */
+static uint32_t declare_agg(G *g)
+{
+    uint32_t n = 0, t = 0;
+    for (uint32_t u = NTYPES; u < g->nty; u++)
+        if ((g->ty[u].k == K_RECORD || g->ty[u].k == K_ARRAY) &&
+            below(g, ++n) == 0)
+            t = u;
+    if (!n)
+        return 0;
+    int from = chance(g, 50) ? pick_typed(g, t, false) : -1;
+    uint32_t s = new_s(g, S_VAR);
+    g->st[s].e = from >= 0 ? var_ref(g, (uint32_t)from) : 0;
+    uint32_t v = new_v(g, t, V_LOCAL);
+    g->st[s].var = v;
+    show(g, v);
+    return s;
+}
+
+/* after the declaration s of a record or an array without a value, its
+   Strings given values made at run time, which memory counts: a loop
+   declares it again, a computed array is freed; into out, at most 4 */
+static uint32_t fill_strings(G *g, uint32_t s, uint32_t *out)
+{
+    uint32_t v = g->st[s].var, t = g->v[v].t, n = 0;
+    if (is_record(g, t)) {
+        for (uint32_t f = 0; f < g->ty[t].elem && n < 4; f++) {
+            if (base(g, field_type(g, t, f)) != T_STR)
+                continue;
+            uint32_t a = new_s(g, S_ASSIGN);
+            g->st[a].var = v;
+            g->st[a].fld = f + 1;
+            uint32_t e = made_str(g);
+            g->st[a].e = e;
+            out[n++] = a;
+        }
+        return n;
+    }
+    if (base(g, g->ty[t].elem) != T_STR)
+        return 0;
+    /* the first element: the variable of the bounds of a computed array
+       (an empty one traps on it), the low bound of the index otherwise */
+    uint32_t idx = g->ty[t].k == K_DYN
+                       ? var_ref(g, g->e[g->st[s].e].var)
+                       : lit(g, base(g, g->ty[t].index), g->ty[t].lo);
+    uint32_t a = new_s(g, S_ASSIGN);
+    g->st[a].var = v;
+    g->st[a].idx = idx;
+    uint32_t e = made_str(g);
+    g->st[a].e = e;
+    out[n++] = a;
+    return n;
+}
+
 /* var v: array[B range x..x + k] of T, with x a variable and k in -1..3:
    bounds computed at run time (§ 4.5), 0 to 4 elements, on the heap; 0
    if no variable fits */
@@ -2091,7 +2172,7 @@ static uint32_t declare_dyn(G *g)
     uint32_t x = var_ref(g, (uint32_t)w);
     uint32_t n = lit(g, b, k < 0 ? 1 : k);
     uint32_t hi = binop(g, k < 0 ? O_SUB : O_ADD, b, x, n);
-    uint32_t el = var_type(g);
+    uint32_t el = chance(g, 20) ? T_STR : var_type(g);
     uint32_t t =
         new_type(g, (xt){K_DYN, (uint8_t)base(g, el), b, el, 0, 3, 0, 0});
     uint32_t v = new_v(g, t, V_LOCAL);
@@ -2289,7 +2370,14 @@ static uint32_t stmt(G *g, uint32_t *out)
         uint32_t s = declare_dyn(g);
         if (s) {
             out[0] = s;
-            return 1;
+            return 1 + fill_strings(g, s, out + 1);
+        }
+    }
+    if (c < 14 && chance(g, 25)) {
+        uint32_t s = declare_agg(g);
+        if (s) {
+            out[0] = s;
+            return 1 + (g->st[s].e ? 0 : fill_strings(g, s, out + 1));
         }
     }
     if (c < 14) {
@@ -3196,8 +3284,10 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
             break;
         }
         put_type(o, g, g->v[s.var].t);
-        put(o, " := ");
-        pexpr(g, o, s.e);
+        if (s.e) {
+            put(o, " := ");
+            pexpr(g, o, s.e);
+        }
         put(o, ";\n");
         break;
     case S_ASSIGN:
@@ -4231,8 +4321,12 @@ static int run_stmt(X *x, uint32_t si)
     }
     switch (s->k) {
     case S_VAR: {
-        v128 v = ev(x, s->e);
         uint32_t vt = g->v[s->var].t;
+        if (!s->e) { /* a record or an array without a value */
+            unassigned(g, &x->cell[x->ref[s->var]], vt);
+            return X_NEXT;
+        }
+        v128 v = ev(x, s->e);
         if (g->ty[vt].k == K_DYN) {
             /* the bounds, low first; the elements are 0 */
             v128 hi = x->trap ? 0 : ev(x, s->e2);
@@ -4542,7 +4636,8 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         uint32_t en = pick_enum(&g);
         /* an index: a short range, or an enumeration */
         uint32_t ix = en && chance(&g, 30) ? en : new_range(&g, true);
-        uint32_t el = var_type(&g);
+        /* Strings too: counted in memory, copied with the array */
+        uint32_t el = chance(&g, 20) ? T_STR : var_type(&g);
         arrays[narrays++] =
             new_type(&g, (xt){K_ARRAY, (uint8_t)base(&g, el), ix, el,
                               lo_of(&g, ix), hi_of(&g, ix), 0, 0});
@@ -4552,7 +4647,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     for (uint32_t k = 0, n = below(&g, 3); k < n; k++) {
         uint32_t first = g.nfld, nf = 1 + below(&g, 4);
         for (uint32_t f = 0; f < nf; f++) {
-            uint32_t ft = var_type(&g);
+            uint32_t ft = chance(&g, 25) ? T_STR : var_type(&g);
             LIMBA_GROW(g.fld, g.nfld, g.capfld);
             g.fld[g.nfld++] = ft;
         }
@@ -4693,7 +4788,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
                 if (is_record(&g, t) && chance(&g, 10))
                     continue; /* without a value: a read is caught */
                 uint32_t ft = field_type(&g, rt, f);
-                uint32_t e = lit(&g, ft, init_value(&g, ft));
+                uint32_t e = init_expr(&g, ft);
                 uint32_t s = new_s(&g, S_ASSIGN);
                 g.st[s].var = v;
                 g.st[s].fld = f + 1;
@@ -4720,7 +4815,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
             uint32_t el = g.ty[at].elem;
             g.st[s].var = v;
             g.st[s].idx = lit(&g, base(&g, g.ty[at].index), k);
-            g.st[s].e = lit(&g, el, init_value(&g, el));
+            g.st[s].e = init_expr(&g, el);
             append(&g, &g.main_blk, &g.main_n, s, true);
         }
     }

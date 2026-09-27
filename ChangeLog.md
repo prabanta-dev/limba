@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The random Luxia programs put Strings in record fields, array elements
+  and computed arrays, declare local records and arrays (in loops too),
+  and give them strings made at run time: on their own they now catch
+  every sabotage of the counts of strings in memory. The reference
+  interpreter checks those counts where a run stops too, at a trap or
+  halt, not only at its end.
 - IR version 4. A module may carry how its traps are presented: the name
   of its language, the prefix of their messages (`language "luxia"`), and
   texts that replace those of `traps.def` (`message 105 "..."`); the

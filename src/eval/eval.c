@@ -76,6 +76,7 @@ typedef struct {
     jmp_buf nomem;
     bool armed;
     estr **sconst; /* the string of each sconst, made once: immortal */
+    bool checked;  /* the counts checked once, at the end or at a stop */
 } E;
 
 /* the run has a thread of its own, with a stack for max_depth calls of
@@ -268,10 +269,17 @@ static uint64_t fbits(double d, limba_id t)
     return b;
 }
 
+static void end_check(E *e);
+
+/* a trap stops the program; with check_mem the counts are checked there,
+   before the calls unwind: they hold between any two instructions, and
+   most runs of a random program end in a trap */
 static bool trap(E *e, int64_t code)
 {
     e->status = LIMBA_EVAL_TRAP;
     e->code = code;
+    if (e->lim.check_mem)
+        end_check(e);
     return false;
 }
 
@@ -406,6 +414,8 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_HALT:
         e->status = LIMBA_EVAL_HALT;
         e->code = (int32_t)a[0];
+        if (e->lim.check_mem)
+            end_check(e); /* as at a trap */
         return false;
     case LIMBA_RT_MATH_TAN:
         *r = fbits(tan(dv(a[0])), LIMBA_T_F64);
@@ -838,10 +848,13 @@ static bool rc_inst(E *e, const limba_inst *in, uint64_t p, uint64_t nv)
     return true;
 }
 
-/* at the end of a run: every counted string has as many references as
-   words of memory still hold it */
+/* at the end of a run, or where it stops (a trap, halt): every counted
+   string has as many references as words of memory still hold it */
 static void end_check(E *e)
 {
+    if (e->checked)
+        return;
+    e->checked = true;
     amap *w = &e->words;
     for (int pass = 0; pass < 2; pass++)
         for (size_t k = 0; k < w->cap; k++) {
