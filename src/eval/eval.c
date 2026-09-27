@@ -14,7 +14,7 @@
  */
 #include "eval.h"
 
-#include "common/fmt_f64.h"
+#include "limba/fmt.h"
 #include "common/leb128.h"
 #include "common/xalloc.h"
 #include "ir/internal.h"
@@ -405,15 +405,9 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         *r = sv(str_make(e, buf, (size_t)n));
         return true;
     case LIMBA_RT_STR_FROM_F64_FIXED: {
-        int d = (int32_t)a[1];
-        d = d < 0 ? 0 : d > 100 ? 100 : d;
-        if (isnan(dv(a[0]))) { /* nan, never -nan, as the short form */
-            *r = sv(str_make(e, "nan", 3));
-            return true;
-        }
-        n = snprintf(buf, sizeof(buf), "%.*f", d, dv(a[0]));
-        *r = sv(str_make(e, buf,
-                         n < (int)sizeof(buf) ? (size_t)n : sizeof(buf) - 1));
+        char f[LIMBA_FMT_FIXED_MAX];
+        *r =
+            sv(str_make(e, f, limba_fmt_f64_fixed(f, dv(a[0]), (int32_t)a[1])));
         return true;
     }
     case LIMBA_RT_STR_FROM_CHAR:

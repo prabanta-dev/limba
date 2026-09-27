@@ -20,6 +20,9 @@
 
 /* console */
 LIMBA_RT(PRINT_I64, "print_i64", "(i64) -> void", LIMBA_RTA_IO)
+/* the text of a real is limba/fmt.h, byte for byte: limba_fmt_f64 for
+   print_f64 and str_from_f64, limba_fmt_f32 for print_f32 and
+   str_from_f32, limba_fmt_f64_fixed for str_from_f64_fixed */
 LIMBA_RT(PRINT_F64, "print_f64", "(f64) -> void", LIMBA_RTA_IO)
 LIMBA_RT(PRINT_STR, "print_str", "(str) -> void", LIMBA_RTA_IO)
 LIMBA_RT(PRINT_NL, "print_nl", "() -> void", LIMBA_RTA_IO)
@@ -51,6 +54,8 @@ LIMBA_RT(PRINT_CHAR, "print_char", "(i32) -> void", LIMBA_RTA_IO)
 LIMBA_RT(PRINT_BYTE, "print_byte", "(i8) -> void", LIMBA_RTA_IO)
 LIMBA_RT(PRINT_STR_W, "print_str_w", "(str, i32) -> void", LIMBA_RTA_IO)
 LIMBA_RT(STR_FROM_U64, "str_from_u64", "(i64) -> str", LIMBA_RTA_ALLOC)
+/* x:width:decimals of a real (a Float32 widened exactly): fixed notation,
+   limba_fmt_f64_fixed; the width is print_str_w, in code points */
 LIMBA_RT(STR_FROM_F64_FIXED, "str_from_f64_fixed", "(f64, i32) -> str",
          LIMBA_RTA_ALLOC)
 LIMBA_RT(STR_FROM_CHAR, "str_from_char", "(i32) -> str", LIMBA_RTA_ALLOC)
@@ -90,6 +95,7 @@ LIMBA_RT(BITS_POW, "bits_pow", "(i64, i64) -> i64", LIMBA_RTA_PURE)
 LIMBA_RT(STR_TO_U64, "str_to_u64", "(str, ptr, i64, i64) -> i1",
          LIMBA_RTA_WRITES_MEM)
 LIMBA_RT(STR_TO_F32, "str_to_f32", "(str, ptr) -> i1", LIMBA_RTA_WRITES_MEM)
-/* a Float32 in the shortest form that reads back as a Float32 */
+/* a Float32 in the shortest form that reads back as a Float32
+   (limba_fmt_f32) */
 LIMBA_RT(PRINT_F32, "print_f32", "(f32) -> void", LIMBA_RTA_IO)
 LIMBA_RT(STR_FROM_F32, "str_from_f32", "(f32) -> str", LIMBA_RTA_ALLOC)

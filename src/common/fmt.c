@@ -1,13 +1,13 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * fmt_f64.c - the shortest form of a real (see fmt_f64.h). The digits are
+ * fmt.c - the text of a real (see limba/fmt.h). The digits are
  * the fewest that printf rounds to a string strtod (strtof for a Float32)
  * reads back to the same bits; the layout is Python's: positional when the
  * exponent of the first digit is in -4..15, else d.ddde+XX with at least two
  * digits.
  */
-#include "fmt_f64.h"
+#include "limba/fmt.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -92,4 +92,14 @@ size_t limba_fmt_f64(char *buf, double v)
 size_t limba_fmt_f32(char *buf, float v)
 {
     return fmt(buf, v, true);
+}
+
+size_t limba_fmt_f64_fixed(char *buf, double v, int decimals)
+{
+    if (isnan(v)) /* nan, never -nan, as the short form */
+        return (size_t)snprintf(buf, LIMBA_FMT_FIXED_MAX, "nan");
+    int d = decimals < 0                        ? 0
+            : decimals > LIMBA_FMT_DECIMALS_MAX ? LIMBA_FMT_DECIMALS_MAX
+                                                : decimals;
+    return (size_t)snprintf(buf, LIMBA_FMT_FIXED_MAX, "%.*f", d, v);
 }

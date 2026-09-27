@@ -6,7 +6,7 @@
  * The rounding of rationals to double and float is also checked against
  * strtod and strtof, which glibc rounds correctly, on random literals.
  */
-#include "common/fmt_f64.h"
+#include "limba/fmt.h"
 #include "common/strtab.h"
 #include "front/bigint.h"
 #include "front/symtab.h"

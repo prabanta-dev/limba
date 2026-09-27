@@ -27,7 +27,7 @@
  */
 #include "gen.h"
 
-#include "common/fmt_f64.h"
+#include "limba/fmt.h"
 #include "common/xalloc.h"
 
 #include <math.h>

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The text of a real is public API, `include/limba/fmt.h` (it was a
+  private header): `limba_fmt_f64`, `limba_fmt_f32` and the new
+  `limba_fmt_f64_fixed` give, byte for byte, what `print_f64`,
+  `print_f32`, `str_from_f64`, `str_from_f32` and `str_from_f64_fixed`
+  write, so that a back end writes what the reference interpreter
+  writes. `runtime.def` names the function of each.
 - Limba builds with Clang again (`CC=clang ./build.sh`): the pass
   table of the optimizer initializes every field.
 - Diagnostics: a rule is stated as one ("the keyword 'begin' must be
