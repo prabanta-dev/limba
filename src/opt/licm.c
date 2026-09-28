@@ -280,22 +280,21 @@ static uint32_t one_loop(lctx *l, limba_id h)
             const limba_inst *in = &f->insts[id];
             if (limba_ops[in->op].flags & LIMBA_OPF_TERMINATOR)
                 break;
-            bool go = false, inv = invariant(l, in);
-            if (inv && no_effect(in))
-                go = true;
-            else if (inv && !frees && in->op == LIMBA_OP_CALLRT &&
-                     in->imm == LIMBA_RT_PTR_LIVE)
-                go = true;
-            else if (inv && prefix && in->op == LIMBA_OP_CHECK)
-                go = true;
-            else if (inv && prefix && !frees && in->op == LIMBA_OP_LOADINV)
-                go = true;
+            /* what may move at all, before asking where its operands
+               come from */
+            bool effectless = no_effect(in);
+            bool kind = effectless ||
+                        (!frees && in->op == LIMBA_OP_CALLRT &&
+                         in->imm == LIMBA_RT_PTR_LIVE) ||
+                        (prefix && (in->op == LIMBA_OP_CHECK ||
+                                    (!frees && in->op == LIMBA_OP_LOADINV)));
+            bool go = kind && invariant(l, in);
             if (go) {
                 l->hoist[id] = 1;
                 LIMBA_GROW(moved, nmoved, capmoved);
                 moved[nmoved++] = id;
                 worth += !constant(in);
-            } else if (!no_effect(in)) {
+            } else if (!effectless) {
                 prefix = false; /* an effect: what follows stays */
             }
         }
@@ -316,9 +315,45 @@ static uint32_t one_loop(lctx *l, limba_id h)
     return worth ? nmoved : 0;
 }
 
+/* can f have a loop? Not when every jump goes to a later block: the block
+   order is then a topological order. Asked before any CFG is built: most
+   functions have no loop */
+static bool may_loop(const limba_func *f)
+{
+    for (limba_id b = 0; b < f->nblocks; b++) {
+        const limba_block *bl = &f->blocks[b];
+        if (!bl->ninsts)
+            continue;
+        const limba_inst *t = &f->insts[bl->insts[bl->ninsts - 1]];
+        const uint32_t *o = f->operands + t->first;
+        if (t->op == LIMBA_OP_SWITCH) {
+            if (o[1] <= b)
+                return true;
+            for (uint32_t k = 0; k < o[2]; k++)
+                if (o[5 + 3 * k] <= b)
+                    return true;
+        } else if (t->op == LIMBA_OP_BR || t->op == LIMBA_OP_CBR) {
+            uint32_t k = t->first;
+            if (t->op == LIMBA_OP_CBR)
+                k++;
+            for (int i = 0; i < (t->op == LIMBA_OP_CBR ? 2 : 1); i++) {
+                limba_id to;
+                uint32_t na;
+                uint32_t a = limba_target(f, k, &to, &na);
+                if (to <= b)
+                    return true;
+                k = a + na;
+            }
+        }
+    }
+    return false;
+}
+
 uint32_t limba_pass_licm(limba_pass_ctx *x, limba_func *f)
 {
     uint32_t changes = 0;
+    if (!may_loop(f))
+        return 0;
     /* the headers: what an inner loop moves out, an outer one may move
        out again next round */
     const limba_cfg *c = limba_pass_cfg_of(x, f);

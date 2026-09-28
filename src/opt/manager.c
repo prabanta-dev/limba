@@ -38,14 +38,16 @@ static const struct {
     bool off;
 } pipeline[] = {
     /* constant branches, unreachable blocks */
-    [P_CFG] = {"cfg", limba_pass_cfg, ALL, false},
+    [P_CFG] = {"cfg", limba_pass_cfg, ALL & ~(1u << P_LICM), false},
     /* what gvn merges rarely proves a check more: bounds runs again
        only when cfg changes the branches, the facts it reads */
-    [P_GVN] = {"gvn", limba_pass_gvn, ALL & ~(1u << P_BOUNDS),
+    [P_GVN] = {"gvn", limba_pass_gvn, ALL & ~(1u << P_BOUNDS) & ~(1u << P_LICM),
                false}, /* folding, then equal values once */
-    /* what licm moves out, gvn may merge (a check of one hoisted value),
-       an outer loop move out again */
-    [P_LICM] = {"licm", limba_pass_licm, ALL & ~(1u << P_BOUNDS), false},
+    /* once a function, woken by no pass and waking none: run again
+       round after round, it found almost nothing more, and cost a third
+       more (-O1 on the large file: 1 555 -> 1 521 million instructions;
+       without licm 1 447) */
+    [P_LICM] = {"licm", limba_pass_licm, 0, false},
     [P_BOUNDS] = {"bounds", limba_pass_bounds, 1u << P_DCE,
                   true}, /* checks the facts before them prove */
     [P_DCE] = {"dce", limba_pass_dce, 0, false}, /* values nobody uses */

@@ -12,7 +12,8 @@
   change while its block lives (the bounds of an array made by `new`),
   which a pass may move past stores but not past what may free.
   k-nucleotide runs 8.4 % fewer steps of the reference interpreter;
-  `limba -O1` does 7.7 % more work.
+  `limba -O1` does 5.1 % more work: the pass runs once a function, and a
+  function whose jumps all go forward is skipped without a CFG.
 - Arrays made by `new` (specification § 3.10, § 9.5, § 9.7): a pointer
   may point to an open array type, and `new(A range lo..hi)` creates an
   array whose index goes from `lo` to `hi` (`range` after an open array
