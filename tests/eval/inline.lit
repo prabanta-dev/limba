@@ -1,0 +1,83 @@
+; output: 0
+; output: 1
+; output: 2
+; output: 7
+; output: 8
+; output: 9
+; output: a0
+; output: a1
+; output: a2
+; result: 0
+; short functions called in a loop, which inline puts in line: a slot of
+; the callee starts from zero at each call (zeroed each time the copy
+; runs), a slot given to a call, strings as arguments and result
+func @bump : fn(i64) -> i64 {
+  slot 8 align 8
+b0(v0: i64):
+  v1 = slot ptr $0
+  v2 = load i64 v1
+  v3 = add i64 v2, v0
+  store v3, v1
+  ret v3
+}
+
+func @seven : fn(ptr) -> void {
+b0(v0: ptr):
+  v1 = iconst i64 7
+  store v1, v0
+  ret
+}
+
+func @viacall : fn(i64) -> i64 {
+  slot 8 align 8
+b0(v0: i64):
+  v1 = slot ptr $0
+  call void @seven(v1)
+  v2 = load i64 v1
+  v3 = add i64 v2, v0
+  ret v3
+}
+
+func @tag : fn(str, i64) -> str {
+b0(v0: str, v1: i64):
+  v2 = call.rt str str_from_i64(v1)
+  v3 = call.rt str str_concat(v0, v2)
+  ret v3
+}
+
+func @main : fn() -> i64 {
+b0:
+  v0 = iconst i64 0
+  v1 = iconst i64 1
+  v2 = iconst i64 3
+  v3 = iconst i64 5
+  v4 = sconst str "a"
+  br b1(v0)
+b1(v5: i64):
+  v6 = call i64 @bump(v5)
+  call.rt void print_i64(v6)
+  call.rt void print_nl()
+  v7 = add i64 v5, v1
+  v8 = icmp.slt i1 v7, v2
+  cbr v8, b1(v7), b2(v0)
+b2(v9: i64):
+  br b3(v9)
+b3(v10: i64):
+  v11 = call i64 @viacall(v10)
+  call.rt void print_i64(v11)
+  call.rt void print_nl()
+  v12 = add i64 v10, v1
+  v13 = icmp.slt i1 v12, v2
+  cbr v13, b3(v12), b4(v0)
+b4(v14: i64):
+  br b5(v14)
+b5(v15: i64):
+  v16 = call str @tag(v4, v15)
+  call.rt void print_str(v16)
+  call.rt void print_nl()
+  v17 = add i64 v15, v1
+  v18 = icmp.slt i1 v17, v2
+  cbr v18, b5(v17), b6
+b6:
+  ret v0
+}

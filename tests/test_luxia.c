@@ -1227,6 +1227,23 @@ static const run_case run_cases[] = {
     {"program p; var s: String := \"\xc3\xa8\xe2\x82\xac\"; begin writeln(s:5, "
      "\"|\", 'x':3, \"|\"); end.",
      "   \xc3\xa8\xe2\x82\xac|  x|\n", "ok"},
+    /* short routines put in line at -O1 (OPTDIFF): a local array
+       starts from zero at each call, a trap is where it is in the
+       routine, halt stops there, strings go in and out */
+    {"program p; function f(k: Int32): Int32; var a: array[Int32 range "
+     "1..2] of Int32; begin a[1] := a[1] + k; return a[1]; end; begin for "
+     "var i: Int32 := 1 to 3 do write(f(i)); end; writeln(); end.",
+     "123\n", "ok"},
+    {"program p; function g(x: Int32): Int32; begin return 12 div x; end; "
+     "begin for var i: Int32 := 2 downto 0 do write(g(i)); end; end.",
+     "612", "trap 11 at 1:57"},
+    {"program p; procedure h(x: Int32); begin if x = 2 then halt(3); end; "
+     "write(x); end; begin for var i: Int32 := 0 to 5 do h(i); end; end.",
+     "01", "halt 3"},
+    {"program p; var t: String := \"\"; function tag(s: String; n: Int32): "
+     "String; begin return s & str(n); end; begin for var i: Int32 := 1 to "
+     "3 do t := t & tag(\"a\", i); end; writeln(t); end.",
+     "a1a2a3\n", "ok"},
 };
 
 /* run main on the input in (NULL: none); what it printed (malloc'd, *len

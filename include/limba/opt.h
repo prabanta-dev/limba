@@ -31,13 +31,18 @@ typedef struct {
     const char *enable;
 } limba_opt_options;
 
-/* 0, or -1 with d saying which pass broke the module and how */
+/* 0, or -1 with d saying which pass broke the module and how. The
+   functions are optimised each after those it calls, but on a cycle of
+   calls: inline puts in line only functions optimised before */
 int limba_optimize(limba_module *m, const limba_opt_options *o, limba_diag *d);
 
 /* the same a function at a time, as a front end completes them: each is
-   taken to its own fixed point (no pass looks at another function), so
-   the result is the one of limba_optimize. The statistics are written by
-   limba_optimizer_free, for all the functions given */
+   taken to its own fixed point, and no pass looks at another function
+   but inline, at the copies of the short ones given before (kept by the
+   optimizer, the bodies may be freed). A front end that completes each
+   routine after those it calls gets the result of limba_optimize. The
+   statistics are written by limba_optimizer_free, for all the functions
+   given */
 typedef struct limba_optimizer limba_optimizer;
 limba_optimizer *limba_optimizer_new(const limba_opt_options *o);
 /* 0, or -1 with d saying which pass broke function fid of m and how */

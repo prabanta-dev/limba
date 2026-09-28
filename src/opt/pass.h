@@ -9,6 +9,20 @@
 #include "ir/internal.h"
 #include "limba/opt.h"
 
+/* the functions that may go in line, kept by the manager as each is
+   optimised (inline.c) */
+typedef struct {
+    limba_func **body; /* a copy of the body, NULL if not to go in line */
+    uint32_t *size;    /* its instructions, the parameters not counted */
+    uint8_t *done;     /* optimised already */
+    uint32_t n;
+} limba_inline_lib;
+
+/* function fid of m is optimised: its body kept if it may go in line */
+void limba_inline_record(limba_inline_lib *lib, const limba_module *m,
+                         limba_id fid);
+void limba_inline_lib_free(limba_inline_lib *lib);
+
 /* What the passes share on one function: its module, its CFG and one
    edit. The CFG is built when a pass first asks for it and kept while no
    pass changes a branch. The edit gathers what every pass changes, and
@@ -21,6 +35,7 @@ typedef struct {
     limba_cfg cfg;
     bool have_cfg;
     bool fold; /* gvn folds too; not when "fold" is skipped */
+    const limba_inline_lib *lib;
     limba_edit e;
 } limba_pass_ctx;
 
@@ -36,6 +51,7 @@ void limba_pass_cfg_drop(limba_pass_ctx *x);
    must be on exit. */
 typedef uint32_t (*limba_pass_fn)(limba_pass_ctx *x, limba_func *f);
 
+uint32_t limba_pass_inline(limba_pass_ctx *x, limba_func *f);
 uint32_t limba_pass_cfg(limba_pass_ctx *x, limba_func *f);
 uint32_t limba_pass_gvn(limba_pass_ctx *x, limba_func *f);
 uint32_t limba_pass_licm(limba_pass_ctx *x, limba_func *f);

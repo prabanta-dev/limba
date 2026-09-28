@@ -1,0 +1,308 @@
+; inline: short functions optimised before go in line; not a recursive
+; one, nor through call.ind, nor one with a typed slot, nor one whose slot
+; address leaves by ret or store (given to a call it may); a caller grows
+; to n0 + max(n0, 60) instructions at most: two copies of @big in @many,
+; not three
+global @keep : ptr
+
+func @sq : fn(i64) -> i64 {
+b0(v0: i64):
+  v1 = mul i64 v0, v0
+  ret v1
+}
+
+func @rec : fn(i64) -> i64 {
+b0(v0: i64):
+  v1 = iconst i64 0
+  v2 = icmp.sgt i1 v0, v1
+  cbr v2, b1, b2
+b1:
+  v3 = iconst i64 1
+  v4 = sub i64 v0, v3
+  v5 = call i64 @rec(v4)
+  ret v5
+b2:
+  ret v0
+}
+
+func @typed : fn(str) -> str {
+  slot 8 align 8 type str
+b0(v0: str):
+  ret v0
+}
+
+func @leak : fn() -> ptr {
+  slot 8 align 8
+b0:
+  v0 = slot ptr $0
+  ret v0
+}
+
+func @stash : fn() -> void {
+  slot 8 align 8
+b0:
+  v0 = slot ptr $0
+  v1 = iconst i64 8
+  v2 = addr ptr v0, v1, 0, 0
+  v3 = gaddr ptr @keep
+  store v2, v3
+  ret
+}
+
+func @sink : fn(ptr) -> void {
+b0(v0: ptr):
+  v1 = iconst i64 7
+  store v1, v0
+  ret
+}
+
+func @give : fn() -> i64 {
+  slot 8 align 8
+b0:
+  v0 = slot ptr $0
+  call void @sink(v0)
+  v1 = load i64 v0
+  ret v1
+}
+
+func @use : fn(i64, str) -> i64 {
+b0(v0: i64, v1: str):
+  v2 = call i64 @sq(v0)
+  v3 = call i64 @rec(v2)
+  v4 = faddr ptr @sq
+  v5 = call.ind i64 fn(i64) -> i64 v4(v3)
+  v6 = call str @typed(v1)
+  v7 = call ptr @leak()
+  call void @stash()
+  v8 = call i64 @give()
+  v9 = add i64 v5, v8
+  ret v9
+}
+
+func @big : fn(i64) -> i64 {
+b0(v0: i64):
+  v1 = add i64 v0, v0
+  v2 = add i64 v1, v0
+  v3 = add i64 v2, v0
+  v4 = add i64 v3, v0
+  v5 = add i64 v4, v0
+  v6 = add i64 v5, v0
+  v7 = add i64 v6, v0
+  v8 = add i64 v7, v0
+  v9 = add i64 v8, v0
+  v10 = add i64 v9, v0
+  v11 = add i64 v10, v0
+  v12 = add i64 v11, v0
+  v13 = add i64 v12, v0
+  v14 = add i64 v13, v0
+  v15 = add i64 v14, v0
+  v16 = add i64 v15, v0
+  v17 = add i64 v16, v0
+  v18 = add i64 v17, v0
+  v19 = add i64 v18, v0
+  v20 = add i64 v19, v0
+  v21 = add i64 v20, v0
+  v22 = add i64 v21, v0
+  v23 = add i64 v22, v0
+  v24 = add i64 v23, v0
+  v25 = add i64 v24, v0
+  v26 = add i64 v25, v0
+  v27 = add i64 v26, v0
+  v28 = add i64 v27, v0
+  v29 = add i64 v28, v0
+  ret v29
+}
+
+func @many : fn(i64, i64, i64) -> i64 {
+b0(v0: i64, v1: i64, v2: i64):
+  v3 = call i64 @big(v0)
+  v4 = call i64 @big(v1)
+  v5 = call i64 @big(v2)
+  v6 = add i64 v3, v4
+  v7 = add i64 v6, v5
+  ret v7
+}
+;; expect
+global @keep : ptr
+
+func @sq : fn(i64) -> i64 {
+b0(v0: i64):
+  v1 = mul i64 v0, v0
+  ret v1
+}
+
+func @rec : fn(i64) -> i64 {
+b0(v0: i64):
+  v1 = iconst i64 0
+  v2 = icmp.sgt i1 v0, v1
+  cbr v2, b1, b2
+b1:
+  v3 = iconst i64 1
+  v4 = sub i64 v0, v3
+  v5 = call i64 @rec(v4)
+  ret v5
+b2:
+  ret v0
+}
+
+func @typed : fn(str) -> str {
+  slot 8 align 8 type str
+b0(v0: str):
+  ret v0
+}
+
+func @leak : fn() -> ptr {
+  slot 8 align 8
+b0:
+  v0 = slot ptr $0
+  ret v0
+}
+
+func @stash : fn() -> void {
+  slot 8 align 8
+b0:
+  v0 = slot ptr $0
+  v1 = iconst i64 8
+  v2 = addr ptr v0, v1, 0, 0
+  v3 = gaddr ptr @keep
+  store v2, v3
+  ret
+}
+
+func @sink : fn(ptr) -> void {
+b0(v0: ptr):
+  v1 = iconst i64 7
+  store v1, v0
+  ret
+}
+
+func @give : fn() -> i64 {
+  slot 8 align 8
+b0:
+  v0 = slot ptr $0
+  v1 = iconst i64 7
+  store v1, v0
+  v2 = load i64 v0
+  ret v2
+}
+
+func @use : fn(i64, str) -> i64 {
+  slot 8 align 8
+b0(v0: i64, v1: str):
+  v2 = mul i64 v0, v0
+  v3 = call i64 @rec(v2)
+  v4 = faddr ptr @sq
+  v5 = call.ind i64 fn(i64) -> i64 v4(v3)
+  v6 = call str @typed(v1)
+  v7 = call ptr @leak()
+  call void @stash()
+  v8 = iconst i8 0
+  v9 = slot ptr $0
+  v10 = iconst i64 8
+  memset v9, v8, v10
+  v11 = iconst i64 7
+  store v11, v9
+  v12 = load i64 v9
+  v13 = add i64 v5, v12
+  ret v13
+}
+
+func @big : fn(i64) -> i64 {
+b0(v0: i64):
+  v1 = add i64 v0, v0
+  v2 = add i64 v1, v0
+  v3 = add i64 v2, v0
+  v4 = add i64 v3, v0
+  v5 = add i64 v4, v0
+  v6 = add i64 v5, v0
+  v7 = add i64 v6, v0
+  v8 = add i64 v7, v0
+  v9 = add i64 v8, v0
+  v10 = add i64 v9, v0
+  v11 = add i64 v10, v0
+  v12 = add i64 v11, v0
+  v13 = add i64 v12, v0
+  v14 = add i64 v13, v0
+  v15 = add i64 v14, v0
+  v16 = add i64 v15, v0
+  v17 = add i64 v16, v0
+  v18 = add i64 v17, v0
+  v19 = add i64 v18, v0
+  v20 = add i64 v19, v0
+  v21 = add i64 v20, v0
+  v22 = add i64 v21, v0
+  v23 = add i64 v22, v0
+  v24 = add i64 v23, v0
+  v25 = add i64 v24, v0
+  v26 = add i64 v25, v0
+  v27 = add i64 v26, v0
+  v28 = add i64 v27, v0
+  v29 = add i64 v28, v0
+  ret v29
+}
+
+func @many : fn(i64, i64, i64) -> i64 {
+b0(v0: i64, v1: i64, v2: i64):
+  v3 = add i64 v0, v0
+  v4 = add i64 v3, v0
+  v5 = add i64 v4, v0
+  v6 = add i64 v5, v0
+  v7 = add i64 v6, v0
+  v8 = add i64 v7, v0
+  v9 = add i64 v8, v0
+  v10 = add i64 v9, v0
+  v11 = add i64 v10, v0
+  v12 = add i64 v11, v0
+  v13 = add i64 v12, v0
+  v14 = add i64 v13, v0
+  v15 = add i64 v14, v0
+  v16 = add i64 v15, v0
+  v17 = add i64 v16, v0
+  v18 = add i64 v17, v0
+  v19 = add i64 v18, v0
+  v20 = add i64 v19, v0
+  v21 = add i64 v20, v0
+  v22 = add i64 v21, v0
+  v23 = add i64 v22, v0
+  v24 = add i64 v23, v0
+  v25 = add i64 v24, v0
+  v26 = add i64 v25, v0
+  v27 = add i64 v26, v0
+  v28 = add i64 v27, v0
+  v29 = add i64 v28, v0
+  v30 = add i64 v29, v0
+  v31 = add i64 v30, v0
+  v32 = add i64 v1, v1
+  v33 = add i64 v32, v1
+  v34 = add i64 v33, v1
+  v35 = add i64 v34, v1
+  v36 = add i64 v35, v1
+  v37 = add i64 v36, v1
+  v38 = add i64 v37, v1
+  v39 = add i64 v38, v1
+  v40 = add i64 v39, v1
+  v41 = add i64 v40, v1
+  v42 = add i64 v41, v1
+  v43 = add i64 v42, v1
+  v44 = add i64 v43, v1
+  v45 = add i64 v44, v1
+  v46 = add i64 v45, v1
+  v47 = add i64 v46, v1
+  v48 = add i64 v47, v1
+  v49 = add i64 v48, v1
+  v50 = add i64 v49, v1
+  v51 = add i64 v50, v1
+  v52 = add i64 v51, v1
+  v53 = add i64 v52, v1
+  v54 = add i64 v53, v1
+  v55 = add i64 v54, v1
+  v56 = add i64 v55, v1
+  v57 = add i64 v56, v1
+  v58 = add i64 v57, v1
+  v59 = add i64 v58, v1
+  v60 = add i64 v59, v1
+  v61 = call i64 @big(v2)
+  v62 = add i64 v31, v60
+  v63 = add i64 v62, v61
+  ret v63
+}

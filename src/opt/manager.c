@@ -6,7 +6,8 @@
  * drifted apart). A pass runs on a function again only when a pass that
  * may give it work has changed the function since its last run (the
  * wakes of the table), at most MAX_ROUNDS rounds: no pass looks at
- * another function, so a front end can optimise each as it completes it.
+ * another function but inline, at the copies of those optimised before,
+ * so a front end can optimise each as it completes it.
  */
 #include "limba/opt.h"
 #include "pass.h"
@@ -23,7 +24,7 @@
    which leaves their conditions unused; dce only
    drops values nobody uses, which gives no pass work, its own work list
    leaving nothing dead behind */
-enum { P_CFG, P_GVN, P_LICM, P_BOUNDS, P_DCE };
+enum { P_INLINE, P_CFG, P_GVN, P_LICM, P_BOUNDS, P_DCE };
 #define ALL                                                                    \
     ((1u << P_CFG) | (1u << P_GVN) | (1u << P_LICM) | (1u << P_BOUNDS) |       \
      (1u << P_DCE))
@@ -37,6 +38,9 @@ static const struct {
     unsigned wakes;
     bool off;
 } pipeline[] = {
+    /* short functions optimised before, in line; first, and once: every
+       other pass runs after it anyway, and the copies are optimised */
+    [P_INLINE] = {"inline", limba_pass_inline, 0, false},
     /* constant branches, unreachable blocks */
     [P_CFG] = {"cfg", limba_pass_cfg, ALL & ~(1u << P_LICM), false},
     /* what gvn merges rarely proves a check more: bounds runs again
@@ -82,6 +86,7 @@ struct limba_optimizer {
     uint64_t total[NPASSES];
     unsigned rounds; /* the most a function took */
     limba_verifier *v;
+    limba_inline_lib lib; /* the functions optimised, for inline */
 };
 
 limba_optimizer *limba_optimizer_new(const limba_opt_options *o)
@@ -172,7 +177,7 @@ int limba_optimizer_func(limba_optimizer *z, limba_module *m, limba_id fid,
 int limba_optimizer_func_edit(limba_optimizer *z, limba_module *m, limba_id fid,
                               limba_edit *e, limba_diag *d)
 {
-    limba_pass_ctx x = {.m = m, .fold = !z->no_fold};
+    limba_pass_ctx x = {.m = m, .fold = !z->no_fold, .lib = &z->lib};
     limba_func *f = &m->funcs[fid];
     bool edited = e != NULL; /* what the maker left is to apply too */
     if (e)
@@ -243,6 +248,8 @@ int limba_optimizer_func_edit(limba_optimizer *z, limba_module *m, limba_id fid,
     limba_pass_cfg_drop(&x);
     if (r)
         return r;
+    if (!z->skip[P_INLINE])
+        limba_inline_record(&z->lib, m, fid);
     unsigned rounds = active ? (runs + active - 1) / active : 0;
     if (rounds > z->rounds)
         z->rounds = rounds;
@@ -261,15 +268,58 @@ void limba_optimizer_free(limba_optimizer *z)
         fprintf(z->o.stats, "rounds %u\n", z->rounds);
     }
     limba_verifier_free(z->v);
+    limba_inline_lib_free(&z->lib);
     free(z);
+}
+
+/* the functions of m, each after those it calls (but on a cycle of
+   calls): the order a front end completes them in, when it asks for a
+   routine to be declared before it is called; main, function 0 of a
+   front end, is last */
+static uint32_t *callees_first(const limba_module *m)
+{
+    uint32_t n = m->nfuncs, nout = 0, depth = 0;
+    uint32_t *out = limba_xmalloc(((size_t)n + 1) * sizeof(*out));
+    uint8_t *seen = limba_xcalloc((size_t)n + 1, 1);
+    uint32_t *stack = limba_xmalloc(((size_t)n + 1) * sizeof(*stack));
+    uint32_t *at = limba_xmalloc(((size_t)n + 1) * sizeof(*at));
+    for (uint32_t root = 0; root < n; root++) {
+        if (seen[root])
+            continue;
+        seen[root] = 1;
+        stack[depth] = root;
+        at[depth++] = 0;
+        while (depth) {
+            const limba_func *f = &m->funcs[stack[depth - 1]];
+            uint32_t *i = &at[depth - 1];
+            while (*i < f->ninsts &&
+                   (f->insts[*i].op != LIMBA_OP_CALL ||
+                    (uint64_t)f->insts[*i].imm >= n || seen[f->insts[*i].imm]))
+                (*i)++;
+            if (*i < f->ninsts) {
+                uint32_t g = (uint32_t)f->insts[(*i)++].imm;
+                seen[g] = 1;
+                stack[depth] = g;
+                at[depth++] = 0;
+            } else {
+                out[nout++] = stack[--depth];
+            }
+        }
+    }
+    free(at);
+    free(stack);
+    free(seen);
+    return out;
 }
 
 int limba_optimize(limba_module *m, const limba_opt_options *o, limba_diag *d)
 {
     limba_optimizer *z = limba_optimizer_new(o);
+    uint32_t *order = callees_first(m);
     int r = 0;
     for (uint32_t i = 0; i < m->nfuncs && r == 0; i++)
-        r = limba_optimizer_func(z, m, i, d);
+        r = limba_optimizer_func(z, m, order[i], d);
+    free(order);
     limba_optimizer_free(z);
     return r;
 }

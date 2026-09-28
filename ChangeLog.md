@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Short functions go in line (`inline`, the first pass of `-O1`;
+  `LIMBA_OPTSKIP=inline` turns it off). A direct call goes in line when
+  its callee was optimised before the caller and, optimised, has at most
+  30 instructions, calls only functions optimised before it (so no
+  recursion), has no slot holding strings and lets no address of a slot
+  out by return or store. Its instructions keep their positions in the
+  callee, so a run-time error points where the check is; its slots are
+  zeroed each time the copy runs, as a frame would be. A caller grows to
+  twice its size, at least 60 instructions more. Without a front end the
+  functions are optimised after those they call; the optimizer keeps the
+  short ones, so `limba` still frees each function once written.
+  spectral-norm runs 25.9 % fewer steps of the reference interpreter,
+  fasta 10.4 %; `limba -O1` does 10.4 % more work, most of it in the
+  passes after inline, on 8 % more code. The
+  specification (§ 10.1) now says how much memory the local variables of
+  calls take depends on the implementation.
 - Limba builds with `-ffp-contract=off`: `a * b + c` keeps the two
   roundings the IR gives it on every CPU, never fused into one FMA, as
   the reference interpreter must.
