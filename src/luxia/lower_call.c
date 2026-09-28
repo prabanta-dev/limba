@@ -608,9 +608,9 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         if (heap) {
             limba_id zero = lxl_iconst(L, LIMBA_T_I64, 0);
             uint32_t a8[2] = {v, zero}, a16[2] = {v, zero};
-            limba_id lo = un(L, LIMBA_OP_LOAD, LIMBA_T_I64, v);
+            limba_id lo = un(L, LIMBA_OP_LOADINV, LIMBA_T_I64, v);
             limba_id hi =
-                un(L, LIMBA_OP_LOAD, LIMBA_T_I64,
+                un(L, LIMBA_OP_LOADINV, LIMBA_T_I64,
                    lxl_emit(L, LIMBA_OP_ADDR, LIMBA_T_PTR, 0, 0, 8, a8, 2));
             limba_id n = length64(L, lo, hi);
             lxl_rc(L, LIMBA_OP_RELEASE,

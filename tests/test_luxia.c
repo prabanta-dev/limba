@@ -991,6 +991,22 @@ static const run_case run_cases[] = {
     {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
      "new(A range 1..3); dispose(p);\n  writeln(p[99]);\nend t.",
      "", "trap 105 at 2:12"},
+    /* licm keeps what the program sees: a dispose in the loop is seen at
+       the next access; a write before a dangling access comes first */
+    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+     "new(A range 1..3); var q := new(A range 1..3); p[1] := 7;\n  for var "
+     "i: Int32 := 1 to 3 do if i = 2 then dispose(q); dispose(p); end; "
+     "writeln(p[1]); end;\nend t.",
+     "7\n", "trap 105 at 2:85"},
+    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+     "new(A range 1..3); dispose(p); var i: Int32 := 0;\n  while i < 2 do "
+     "writeln(i); i := p[1]; end;\nend t.",
+     "0\n", "trap 105 at 2:36"},
+    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+     "new(A range 1..3); dispose(p); var s: Int32 := 0; var n: Int32 := 0; "
+     "for var i: Int32 := 1 to n do s := s + p[i]; end; writeln(s);\nend "
+     "t.",
+     "0\n", "ok"},
     /* calls without end: stack overflow, never a crash (§ 10.1) */
     {"program t; function f(n: Int64): Int64; begin return f(n + 1) + 1; "
      "end f; begin\n  writeln(f(0));\nend t.",

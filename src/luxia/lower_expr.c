@@ -598,8 +598,8 @@ void lxl_array_parts(lxl *L, uint32_t base, uint32_t at, limba_id *p,
         lxl_at(L, at);
         nil_checked(L, pv);
         lxl_live(L, pv);
-        *lo = un(L, LIMBA_OP_LOAD, LIMBA_T_I64, pv);
-        *hi = un(L, LIMBA_OP_LOAD, LIMBA_T_I64,
+        *lo = un(L, LIMBA_OP_LOADINV, LIMBA_T_I64, pv);
+        *hi = un(L, LIMBA_OP_LOADINV, LIMBA_T_I64,
                  addr(L, pv, lxl_iconst(L, LIMBA_T_I64, 0), 0, 8));
         *p = pv;
         L->heap_disp = 16;

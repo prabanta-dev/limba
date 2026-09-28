@@ -23,8 +23,10 @@
    which leaves their conditions unused; dce only
    drops values nobody uses, which gives no pass work, its own work list
    leaving nothing dead behind */
-enum { P_CFG, P_GVN, P_BOUNDS, P_DCE };
-#define ALL ((1u << P_CFG) | (1u << P_GVN) | (1u << P_BOUNDS) | (1u << P_DCE))
+enum { P_CFG, P_GVN, P_LICM, P_BOUNDS, P_DCE };
+#define ALL                                                                    \
+    ((1u << P_CFG) | (1u << P_GVN) | (1u << P_LICM) | (1u << P_BOUNDS) |       \
+     (1u << P_DCE))
 /* off: runs only when named in enable (or LIMBA_OPTON). bounds removes
    few checks the programs run often yet, for 5 % of the time of -O1:
    it waits for mem2reg and the relations between the variables of a
@@ -41,6 +43,9 @@ static const struct {
        only when cfg changes the branches, the facts it reads */
     [P_GVN] = {"gvn", limba_pass_gvn, ALL & ~(1u << P_BOUNDS),
                false}, /* folding, then equal values once */
+    /* what licm moves out, gvn may merge (a check of one hoisted value),
+       an outer loop move out again */
+    [P_LICM] = {"licm", limba_pass_licm, ALL & ~(1u << P_BOUNDS), false},
     [P_BOUNDS] = {"bounds", limba_pass_bounds, 1u << P_DCE,
                   true}, /* checks the facts before them prove */
     [P_DCE] = {"dce", limba_pass_dce, 0, false}, /* values nobody uses */

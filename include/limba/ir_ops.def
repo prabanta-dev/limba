@@ -136,3 +136,10 @@ LIMBA_OP(RETAIN, "retain", LIMBA_F_RC,
 LIMBA_OP(RELEASE, "release", LIMBA_F_RC,
          LIMBA_OPF_READS_MEM | LIMBA_OPF_WRITES_MEM | LIMBA_OPF_MAY_TRAP |
              LIMBA_OPF_NO_RESULT)
+
+/* a load of memory that does not change while the block that holds it is
+   alive: the bounds at the head of an array made by new (progetto_ir.md
+   § 4). An engine runs it as load; an optimisation may move it past
+   stores, never past what may free the block (mem_free, a call) */
+LIMBA_OP(LOADINV, "load.inv", LIMBA_F_LOAD,
+         LIMBA_OPF_READS_MEM | LIMBA_OPF_MAY_TRAP)

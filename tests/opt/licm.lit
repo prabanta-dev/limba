@@ -1,0 +1,154 @@
+; licm: the head of an array made by new, checked and read once before a
+; rotated loop (a preheader made on the edge); nothing leaves a loop that
+; may free; a check after an effect stays; a pure value leaves from
+; anywhere in the loop
+func @sum : fn(ptr, i64) -> i64 {
+b0(v0: ptr, v1: i64):
+  v2 = iconst i64 0
+  v3 = icmp.sgt i1 v1, v2
+  cbr v3, b1(v2, v2), b2(v2)
+b1(v4: i64, v5: i64):
+  v6 = call.rt i1 ptr_live(v0)
+  check v6, 105
+  v7 = load.inv i64 v0
+  v8 = iconst i64 0
+  v9 = addr ptr v0, v8, 0, 8
+  v10 = load.inv i64 v9
+  v11 = icmp.sle i1 v5, v10
+  check v11, 100
+  v12 = sub i64 v5, v7
+  v13 = addr ptr v0, v12, 8, 16
+  v14 = load i64 v13
+  v15 = add i64 v4, v14
+  v16 = iconst i64 1
+  v17 = add i64 v5, v16
+  v18 = icmp.slt i1 v17, v1
+  cbr v18, b1(v15, v17), b2(v15)
+b2(v19: i64):
+  ret v19
+}
+
+func @frees : fn(ptr, ptr, i64) -> void {
+b0(v0: ptr, v1: ptr, v2: i64):
+  br b1(v2)
+b1(v3: i64):
+  v4 = call.rt i1 ptr_live(v0)
+  check v4, 105
+  v5 = load.inv i64 v0
+  call.rt void print_i64(v5)
+  call.rt void mem_free(v1)
+  v6 = iconst i64 1
+  v7 = sub i64 v3, v6
+  v8 = icmp.sgt i1 v7, v6
+  cbr v8, b1(v7), b2
+b2:
+  ret
+}
+
+func @after : fn(ptr, i64) -> void {
+b0(v0: ptr, v1: i64):
+  br b1(v1)
+b1(v2: i64):
+  call.rt void print_i64(v2)
+  v3 = call.rt i1 ptr_live(v0)
+  check v3, 105
+  v4 = load.inv i64 v0
+  call.rt void print_i64(v4)
+  v5 = iconst i64 1
+  v6 = sub i64 v2, v5
+  v7 = icmp.sgt i1 v6, v5
+  cbr v7, b1(v6), b2
+b2:
+  ret
+}
+
+func @nocheck : fn(ptr, ptr, i64) -> void {
+b0(v0: ptr, v1: ptr, v2: i64):
+  br b1(v2)
+b1(v3: i64):
+  v4 = load.inv i64 v0
+  call.rt void print_i64(v4)
+  call.rt void mem_free(v1)
+  v5 = iconst i64 1
+  v6 = sub i64 v3, v5
+  v7 = icmp.sgt i1 v6, v5
+  cbr v7, b1(v6), b2
+b2:
+  ret
+}
+;; expect
+func @sum : fn(ptr, i64) -> i64 {
+b0(v0: ptr, v1: i64):
+  v2 = iconst i64 0
+  v3 = icmp.sgt i1 v1, v2
+  cbr v3, b3, b2(v2)
+b1(v4: i64, v5: i64):
+  v6 = icmp.sle i1 v5, v17
+  check v6, 100
+  v7 = sub i64 v5, v15
+  v8 = addr ptr v0, v7, 8, 16
+  v9 = load i64 v8
+  v10 = add i64 v4, v9
+  v11 = add i64 v5, v18
+  v12 = icmp.slt i1 v11, v1
+  cbr v12, b1(v10, v11), b2(v10)
+b2(v13: i64):
+  ret v13
+b3:
+  v14 = call.rt i1 ptr_live(v0)
+  check v14, 105
+  v15 = load.inv i64 v0
+  v16 = addr ptr v0, v2, 0, 8
+  v17 = load.inv i64 v16
+  v18 = iconst i64 1
+  br b1(v2, v2)
+}
+
+func @frees : fn(ptr, ptr, i64) -> void {
+b0(v0: ptr, v1: ptr, v2: i64):
+  br b1(v2)
+b1(v3: i64):
+  v4 = call.rt i1 ptr_live(v0)
+  check v4, 105
+  v5 = load.inv i64 v0
+  call.rt void print_i64(v5)
+  call.rt void mem_free(v1)
+  v6 = iconst i64 1
+  v7 = sub i64 v3, v6
+  v8 = icmp.sgt i1 v7, v6
+  cbr v8, b1(v7), b2
+b2:
+  ret
+}
+
+func @after : fn(ptr, i64) -> void {
+b0(v0: ptr, v1: i64):
+  v2 = call.rt i1 ptr_live(v0)
+  v3 = iconst i64 1
+  br b1(v1)
+b1(v4: i64):
+  call.rt void print_i64(v4)
+  check v2, 105
+  v5 = load.inv i64 v0
+  call.rt void print_i64(v5)
+  v6 = sub i64 v4, v3
+  v7 = icmp.sgt i1 v6, v3
+  cbr v7, b1(v6), b2
+b2:
+  ret
+}
+
+func @nocheck : fn(ptr, ptr, i64) -> void {
+b0(v0: ptr, v1: ptr, v2: i64):
+  br b1(v2)
+b1(v3: i64):
+  v4 = load.inv i64 v0
+  call.rt void print_i64(v4)
+  call.rt void mem_free(v1)
+  v5 = iconst i64 1
+  v6 = sub i64 v3, v5
+  v7 = icmp.sgt i1 v6, v5
+  cbr v7, b1(v6), b2
+b2:
+  ret
+}

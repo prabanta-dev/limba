@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- A pass that moves out of loops what does not change in them (`licm`,
+  after `gvn`): pure values and `ptr_live` of a pointer from outside
+  when nothing in the loop may free a block; the checks and the bounds
+  of an array made by `new` when they open the header, before any effect,
+  so that a loop over such an array checks it once, not every round. A
+  preheader is made on the edge into a loop only when something worth it
+  goes into it. The IR gains `load.inv`, a load of memory that does not
+  change while its block lives (the bounds of an array made by `new`),
+  which a pass may move past stores but not past what may free.
+  k-nucleotide runs 8.4 % fewer steps of the reference interpreter;
+  `limba -O1` does 7.7 % more work.
 - Arrays made by `new` (specification § 3.10, § 9.5, § 9.7): a pointer
   may point to an open array type, and `new(A range lo..hi)` creates an
   array whose index goes from `lo` to `hi` (`range` after an open array

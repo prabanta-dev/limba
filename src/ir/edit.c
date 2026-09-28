@@ -23,6 +23,26 @@ void limba_edit_begin(limba_edit *e, limba_func *f)
     e->dead_block = limba_xcalloc((size_t)f->nblocks + 1, 1);
 }
 
+void limba_edit_sync(limba_edit *e)
+{
+    limba_func *f = e->f;
+    if (f->ninsts > e->ninsts) {
+        e->map = limba_xrealloc(e->map, (size_t)f->ninsts + 1, sizeof(*e->map));
+        e->dead = limba_xrealloc(e->dead, (size_t)f->ninsts + 1, 1);
+        for (uint32_t i = e->ninsts; i < f->ninsts; i++) {
+            e->map[i] = i;
+            e->dead[i] = 0;
+        }
+        e->ninsts = f->ninsts;
+    }
+    if (f->nblocks > e->nblocks) {
+        e->dead_block =
+            limba_xrealloc(e->dead_block, (size_t)f->nblocks + 1, 1);
+        memset(e->dead_block + e->nblocks, 0, f->nblocks - e->nblocks);
+        e->nblocks = f->nblocks;
+    }
+}
+
 uint32_t limba_edit_resolve(limba_edit *e, uint32_t x)
 {
     if (x >= e->ninsts)

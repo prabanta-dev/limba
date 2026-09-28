@@ -105,6 +105,9 @@ uint32_t limba_edit_resolve(limba_edit *e, uint32_t x);
 /* every use of from becomes a use of to; from is then dead */
 void limba_edit_replace(limba_edit *e, uint32_t from, uint32_t to);
 void limba_edit_end(limba_edit *e);
+/* instructions and blocks added to e->f after limba_edit_begin: the edit
+   takes them in, alive and unchanged */
+void limba_edit_sync(limba_edit *e);
 /* forget the edit: nothing recorded is applied */
 void limba_edit_cancel(limba_edit *e);
 
