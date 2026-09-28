@@ -57,6 +57,65 @@ static limba_id length64(lxl *L, limba_id l, limba_id h)
     return lxl_emit(L, LIMBA_OP_SELECT, LIMBA_T_I64, 0, 0, 0, sel, 3);
 }
 
+/* array node a of move: the address of its elements and its bounds as
+   i64 values, whatever it is (static, computed, an open parameter, made
+   by new); the dangling pointer it may be reached by stays on the address
+   (lxl_via) */
+static void span(lxl *L, uint32_t a, uint32_t at, limba_id *base, limba_id *lo,
+                 limba_id *hi)
+{
+    const limba_typeinfo *x = ti(L, L->S->type[a]);
+    limba_id p, len, l, h;
+    lxl_array_parts(L, a, at, &p, &len, &l, &h);
+    int64_t disp = L->heap_disp;
+    if (x->kind == LIMBA_LTK_OPEN) {
+        *lo = l;
+        *hi = h;
+    } else if (x->flags & LIMBA_TF_DYNAMIC) {
+        *lo = lxl_to_i64(L, l, x->index);
+        *hi = lxl_to_i64(L, h, x->index);
+    } else {
+        const limba_typeinfo *ix = ti(L, x->index);
+        *lo = lxl_iconst(L, LIMBA_T_I64, (int64_t)ix->lo);
+        *hi = lxl_iconst(L, LIMBA_T_I64, (int64_t)(uint64_t)ix->hi);
+    }
+    *base = p;
+    if (disp) {
+        uint32_t o[2] = {p, lxl_iconst(L, LIMBA_T_I64, 0)};
+        *base = lxl_emit(L, LIMBA_OP_ADDR, LIMBA_T_PTR, 0, 0, disp, o, 2);
+        if (lxl_via(L, p) != LIMBA_NONE)
+            lxl_via_set(L, *base, lxl_via(L, p));
+    }
+}
+
+/* the address of element i (an i64) of an array whose elements start at
+   base and whose low bound is lo */
+static limba_id element_at(lxl *L, limba_id base, limba_id lo, limba_id i,
+                           uint64_t size)
+{
+    uint32_t o[2] = {base, bin(L, LIMBA_OP_SUB, LIMBA_T_I64, i, lo)};
+    limba_id e =
+        lxl_emit(L, LIMBA_OP_ADDR, LIMBA_T_PTR, 0, (int64_t)size, 0, o, 2);
+    if (lxl_via(L, base) != LIMBA_NONE)
+        lxl_via_set(L, e, lxl_via(L, base));
+    return e;
+}
+
+/* count elements from index i of an array lo..hi are inside it: i in
+   lo..hi and count - 1 <= hi - i (no sum that could overflow) */
+static limba_id inside(lxl *L, bool sg, limba_id i, limba_id lo, limba_id hi,
+                       limba_id count)
+{
+    limba_id a = icmp(L, sg ? LIMBA_CC_SGE : LIMBA_CC_UGE, i, lo);
+    limba_id b = icmp(L, sg ? LIMBA_CC_SLE : LIMBA_CC_ULE, i, hi);
+    limba_id c = icmp(
+        L, LIMBA_CC_ULE,
+        bin(L, LIMBA_OP_SUB, LIMBA_T_I64, count, lxl_iconst(L, LIMBA_T_I64, 1)),
+        bin(L, LIMBA_OP_SUB, LIMBA_T_I64, hi, i));
+    return bin(L, LIMBA_OP_AND, LIMBA_T_I1,
+               bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b), c);
+}
+
 /* the length of a computed array, whose bounds are values of type it */
 static limba_id dyn_length(lxl *L, limba_id lo, limba_id hi, limba_ltype it)
 {
@@ -152,14 +211,10 @@ static void routine(lxl *L, uint32_t node, limba_sym s, limba_id *result)
             lxl_at(L, node); /* a range is checked at the call */
             v[0] = lxl_coerce(L, v[0], S->type[a], p.type);
         }
+        /* a record or an array reached through a pointer is no argument
+           (§ 3.10, sema): only a scalar out one comes here */
         bool through = by_addr && lxl_via(L, v[0]) != LIMBA_NONE;
-        if (through && p.mode == LXS_IN) {
-            /* an object reached through a pointer goes by copy: a
-               dispose during the call leaves the routine its own */
-            limba_id tmp = lxl_temp(L, at, node);
-            lxl_copy(L, tmp, v[0], at);
-            v[0] = tmp;
-        } else if (through && p.mode == LXS_OUT) {
+        if (through && p.mode == LXS_OUT) {
             /* a scalar (a var argument, an aggregate out one, cannot be
                reached through a pointer: § 3.10): copy-out goes back
                through the pointer after the call, checked there */
@@ -483,10 +538,55 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         v = lxl_value(L, a0);
         *result = un(L, LIMBA_OP_FROUND, lxl_type(L, t0), v);
         return;
+    case LXB_MOVE: {
+        /* move(src, from, dst, to, count), from the left (§ 9.5): count
+           below 0 a range error; otherwise, unless count is 0, both
+           ranges inside their arrays (index error), checked before any
+           byte moves; the dangling checks at the copy; then the Strings
+           counted and one memcpy, which may overlap (memmove) */
+        uint32_t src = a0, dst = arg(L, node, 2);
+        limba_ltype st = S->type[src];
+        limba_ltype el = ti(L, st)->elem;
+        limba_ltype ib = lxs_base(S, ti(L, st)->index);
+        bool sg = lxl_signed(L, ib);
+        limba_id sb, slo, shi, db, dlo, dhi;
+        span(L, src, node, &sb, &slo, &shi);
+        limba_id from = lxl_to_i64(L, lxl_value(L, arg(L, node, 1)), ib);
+        span(L, dst, node, &db, &dlo, &dhi);
+        limba_id to = lxl_to_i64(L, lxl_value(L, arg(L, node, 3)), ib);
+        limba_id count = lxl_to_i64(L, lxl_value(L, arg(L, node, 4)), ib);
+        lxl_at(L, node);
+        limba_id zero = lxl_iconst(L, LIMBA_T_I64, 0);
+        if (sg)
+            lxl_check(L, icmp(L, LIMBA_CC_SGE, count, zero), LXR_RANGE);
+        lxl_check(L,
+                  bin(L, LIMBA_OP_OR, LIMBA_T_I1,
+                      icmp(L, LIMBA_CC_EQ, count, zero),
+                      bin(L, LIMBA_OP_AND, LIMBA_T_I1,
+                          inside(L, sg, from, slo, shi, count),
+                          inside(L, sg, to, dlo, dhi, count))),
+                  LXR_INDEX);
+        uint64_t esize = ti(L, el)->size;
+        limba_id sa = element_at(L, sb, slo, from, esize);
+        limba_id da = element_at(L, db, dlo, to, esize);
+        lxl_live(L, sa);
+        lxl_live(L, da);
+        lxl_rc(L, LIMBA_OP_RETAIN, sa, el, count);
+        lxl_rc(L, LIMBA_OP_RELEASE, da, el, count);
+        uint32_t m[3] = {da, sa,
+                         bin(L, LIMBA_OP_MUL, LIMBA_T_I64, count,
+                             lxl_iconst(L, LIMBA_T_I64, (int64_t)esize))};
+        lxl_emit(L, LIMBA_OP_MEMCPY, LIMBA_T_VOID, 0, 0, 0, m, 3);
+        return;
+    }
     case LXB_DISPOSE: {
         v = lxl_value(L, a0);
         limba_ltype target = ti(L, t0)->elem;
-        if (!lxl_holds_str(L, target)) {
+        /* an array made by new: its elements, from the bounds in its
+           block */
+        bool heap = ti(L, target)->kind == LIMBA_LTK_OPEN;
+        limba_ltype counted = heap ? ti(L, target)->elem : target;
+        if (!lxl_holds_str(L, counted)) {
             /* nil: nothing; freed already: invalid dispose, in mem_free */
             lxl_rt(L, LIMBA_RT_MEM_FREE, LIMBA_T_VOID, &v, 1);
             return;
@@ -505,7 +605,21 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         limba_ssa_cbr(L->ssa, L->cur, live, rel, fr);
         limba_ssa_seal(L->ssa, rel);
         L->cur = rel;
-        lxl_rc(L, LIMBA_OP_RELEASE, v, target, lxl_iconst(L, LIMBA_T_I64, 1));
+        if (heap) {
+            limba_id zero = lxl_iconst(L, LIMBA_T_I64, 0);
+            uint32_t a8[2] = {v, zero}, a16[2] = {v, zero};
+            limba_id lo = un(L, LIMBA_OP_LOAD, LIMBA_T_I64, v);
+            limba_id hi =
+                un(L, LIMBA_OP_LOAD, LIMBA_T_I64,
+                   lxl_emit(L, LIMBA_OP_ADDR, LIMBA_T_PTR, 0, 0, 8, a8, 2));
+            limba_id n = length64(L, lo, hi);
+            lxl_rc(L, LIMBA_OP_RELEASE,
+                   lxl_emit(L, LIMBA_OP_ADDR, LIMBA_T_PTR, 0, 0, 16, a16, 2),
+                   counted, n);
+        } else {
+            lxl_rc(L, LIMBA_OP_RELEASE, v, target,
+                   lxl_iconst(L, LIMBA_T_I64, 1));
+        }
         limba_ssa_br(L->ssa, L->cur, fr);
         limba_ssa_seal(L->ssa, fr);
         L->cur = fr;

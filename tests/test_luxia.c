@@ -532,6 +532,23 @@ static const sema_case sema_cases[] = {
     {"program p; type R = record a: Int32; end; var q: ^R; procedure h(out "
      "v: R); begin v.a := 1; end h; begin q := new(R); h(q^); end.",
      "L0059@1:122"},
+    /* arrays made by new (§ 3.10, § 9.7) and move (§ 9.5) */
+    {"program p; type R = record x: Int32; end; procedure s(r: R); begin "
+     "end s; begin var q := new(R); s(q^); end.",
+     "L0059@1:101"},
+    {"program p; type A = array[Int32 range <>] of Int32; begin var p := "
+     "new(A range 1..3); var q := new(A range 1..3); p^ := q^; end.",
+     "L0049@1:116 L0049@1:122"},
+    {"program p; type A = array[Int32 range <>] of Int32; begin var p := "
+     "new(A); end.",
+     "L0049@1:68"},
+    {"program p; type A = array[Int32 range <>] of Int32; B = "
+     "array[Int32 range <>] of Int64; begin var p := new(A range 1..3); "
+     "var q := new(B range 1..3); move(p^, 1, q^, 1, 3); end.",
+     "L0027@1:164"},
+    {"program p; type A = array[Int32 range <>] of Int32; procedure f(a: "
+     "A); begin move(a, low(a), a, low(a), 0); end f; begin end.",
+     "L0034@1:94"},
     {"program p; type R = record s: String; end; var q: ^R; b: Boolean; "
      "begin q := new(R); b := readline(q.s); end.",
      "L0059@1:101"},
@@ -717,9 +734,9 @@ static const run_case run_cases[] = {
      "0;\nbegin\n"
      "  for var i := 0 to high(a) do s := s + Int64(a[i]); end;\n"
      "  return s;\nend;\n"
-     "procedure Move(var p: Pt; dx: Int32);\nbegin p.x := p.x + dx; end;\n"
+     "procedure Shift(var p: Pt; dx: Int32);\nbegin p.x := p.x + dx; end;\n"
      "begin\n  Fill(v);\n  writeln(Sum(v), \" \", v[4]);\n"
-     "  q.x := 1; q.y := 2;\n  Move(q, 5);\n  var r: Pt := q;\n  r.y := 9;\n"
+     "  q.x := 1; q.y := 2;\n  Shift(q, 5);\n  var r: Pt := q;\n  r.y := 9;\n"
      "  writeln(q.x, \" \", q.y, \" \", r.x, \" \", r.y);\nend.",
      "100 40\n6 2 6 9\n", "ok"},
     {"program p;\ntype PN = ^Node; Node = record v: Int32; next: PN; end;\n"
@@ -893,9 +910,11 @@ static const run_case run_cases[] = {
      "nil; dispose(q); q := new(R); w := q; dispose(q); q := new(R); "
      "writeln(w = q, \" \", w = nil); dispose(q); end t.",
      "false false\n", "ok"},
+    /* a record reached through a pointer is no argument (§ 3.10): pass
+       a copy made in a variable */
     {"program t; type R = record a: Int32; end; var q: ^R; procedure "
      "show(x: R); begin dispose(q); writeln(x.a); end show; begin q := "
-     "new(R); q.a := 5; show(q^); end t.",
+     "new(R); q.a := 5; var c := q^; show(c); end t.",
      "5\n", "ok"},
     {"program t; type R = record a: Int32; end; var q: ^R; procedure k(out "
      "x: Int32); begin x := 2; end k; begin q := new(R); k(q.a); "
@@ -909,6 +928,69 @@ static const run_case run_cases[] = {
      "end; var q: ^R; begin q := new(R); q.a := 3; dispose(q); writeln(q.a); "
      "end t.",
      "3\n", "ok"},
+    /* arrays made by new: a vector that grows with move, Strings,
+       overlapping moves, bounds, an empty one (§ 3.10, § 9.5, § 9.7) */
+    {"program t;\ntype Items = array[Int64 range <>] of Int64; ItemsRef = "
+     "^Items; Words = array[Int32 range <>] of String;\nprocedure Push(var "
+     "v: ItemsRef; var n: Int64; x: Int64);\nbegin\n  if n = length(v^) "
+     "then\n    var bigger := new(Items range 0..2 * length(v^) - 1);\n "
+     "   move(v^, 0, bigger^, 0, n);\n    dispose(v);\n    v := "
+     "bigger;\n  end;\n  v[n] := x;\n  n := n + 1;\nend Push;\nbegin\n  "
+     "var v := new(Items range 0..1);\n  var n: Int64 := 0;\n  for var "
+     "i: Int64 := 1 to 20 do Push(v, n, i * i); end;\n  writeln(n, \" \", "
+     "low(v^), \" \", high(v^), \" \", length(v^), \" \", v[19]);\n  "
+     "move(v^, 0, v^, 1, 5);\n  writeln(v[0], \" \", v[1], \" \", v[2], "
+     "\" \", v[5]);\n  move(v^, 3, v^, 0, 4);\n  writeln(v[0], \" \", "
+     "v[3]);\n  dispose(v);\n  var w := new(Words range 5..7);\n  w[5] := "
+     "\"a\" & str(1);\n  w[6] := w[5] & \"b\";\n  var u := new(Words "
+     "range 1..3);\n  move(w^, 5, u^, 1, 3);\n  writeln(u[1], \" \", "
+     "u[2], \" [\", u[3], \"]\");\n  dispose(w);\n  writeln(u[2]);\n  "
+     "dispose(u);\n  var e := new(Items range 1..0);\n  "
+     "writeln(length(e^));\n  dispose(e);\nend t.",
+     "20 0 31 32 400\n1 1 4 25\n9 49\na1 a1b []\na1b\n0\n", "ok"},
+    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+     "new(A range 1..3);\n  p[4] := 1;\nend t.",
+     "", "trap 100 at 2:4"},
+    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+     "new(A range 1..3); dispose(p);\n  writeln(p[1]);\nend t.",
+     "", "trap 105 at 2:12"},
+    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+     "new(A range 1..3); dispose(p);\n  dispose(p);\nend t.",
+     "", "trap 106 at 2:3"},
+    {"program t; type A = array[Int32 range <>] of Int32; S = Int32 range "
+     "1..10; B = array[S range <>] of Int32; begin var n: Int32 := 11;\n  "
+     "var p := new(B range 1..n);\nend t.",
+     "", "trap 101 at 2:12"},
+    {"program t; type A = array[Int32 range <>] of Int32; begin var n: "
+     "Int32 := 2147483647;\n  var p := new(A range -n..n);\nend t.",
+     "", "trap 101 at 2:12"},
+    {"program t; type A = array[Int64 range <>] of Int64; begin var n: "
+     "Int64 := 4611686018427387904;\n  var p := new(A range 0..n);\nend "
+     "t.",
+     "", "trap 7 at 2:12"},
+    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+     "new(A range 1..3); var c: Int32 := -1;\n  move(p^, 1, p^, 1, "
+     "c);\nend t.",
+     "", "trap 101 at 2:3"},
+    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+     "new(A range 1..3);\n  move(p^, 2, p^, 1, 3);\nend t.",
+     "", "trap 100 at 2:3"},
+    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+     "new(A range 1..3); var q := p; dispose(p);\n  move(q^, 1, q^, 2, "
+     "0);\nend t.",
+     "", "trap 105 at 2:3"},
+    /* the destination out of its bounds; a dispose between the bounds
+       and the copy; the bounds of a freed array are not read */
+    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+     "new(A range 1..3);\n  move(p^, 1, p^, 2, 3);\nend t.",
+     "", "trap 100 at 2:3"},
+    {"program t; type A = array[Int32 range <>] of Int32; var q: ^A; "
+     "function f(): Int32; begin dispose(q); return 1; end f; begin q := "
+     "new(A range 1..3);\n  move(q^, 1, q^, 1, f());\nend t.",
+     "", "trap 105 at 2:3"},
+    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+     "new(A range 1..3); dispose(p);\n  writeln(p[99]);\nend t.",
+     "", "trap 105 at 2:12"},
     /* calls without end: stack overflow, never a crash (§ 10.1) */
     {"program t; function f(n: Int64): Int64; begin return f(n + 1) + 1; "
      "end f; begin\n  writeln(f(0));\nend t.",
@@ -921,7 +1003,7 @@ static const run_case run_cases[] = {
      "procedure show(x: S); begin writeln(x.n, \" \", x.s); end show; begin "
      "for var i: Int32 := 1 to 3 do a[i] := mk(i); var l: S; l.s := l.s & "
      "\"+\"; write(l.s); end; writeln(); g := a[2]; a[2] := a[2]; show(g); "
-     "q := new(S); q^ := a[3]; show(q^); dispose(q); var n: Int32 := 2; var "
+     "q := new(S); q^ := a[3]; var c := q^; show(c); dispose(q); var n: Int32 := 2; var "
      "d: array[Int32 range 1..n] of S; d[1] := a[1]; show(d[1]); end t.",
      "+++\n2 k2\n3 k3\n1 k1\n", "ok"},
     /* a record assigned is copied, from the right to the left */

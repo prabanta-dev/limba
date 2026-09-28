@@ -134,6 +134,8 @@ limba_id lxl_emit(lxl *L, unsigned op, limba_id type, unsigned cc, int64_t imm,
                   int64_t imm2, const uint32_t *ops, uint32_t nops)
 {
     limba_func *f = limba_ssa_func(L->ssa);
+    if (limba_ops[op].flags & LIMBA_OPF_CALL)
+        L->ncalls++; /* it may free: a dangling check is due again */
     if (!(limba_ops[op].flags & LIMBA_OPF_PURE) || op == LIMBA_OP_PARAM ||
         op == LIMBA_OP_UNDEF || type == LIMBA_T_VOID || nops > 3)
         return limba_inst_add(f, L->cur, op, type, cc, imm, imm2, ops, nops);
@@ -220,7 +222,13 @@ void lxl_live(lxl *L, limba_id a)
     limba_id p = lxl_via(L, a);
     if (p == LIMBA_NONE || (L->suppress & LXS_CHECK_DANGLING))
         return;
+    if (p == L->live_ptr && L->live_calls == L->ncalls &&
+        L->live_block == L->cur)
+        return; /* checked here already, and nothing freed since */
     lxl_check(L, lxl_rt(L, LIMBA_RT_PTR_LIVE, LIMBA_T_I1, &p, 1), LXR_DANGLING);
+    L->live_ptr = p;
+    L->live_calls = L->ncalls;
+    L->live_block = L->cur;
 }
 
 bool lxl_holds_str(lxl *L, limba_ltype t)
@@ -387,7 +395,7 @@ static void free_dyns(lxl *L, uint32_t n)
 
 /* the elements of type et in the bytes at p, none assigned: the first
    made invalid (§ 4.5), then copies that double what is done */
-static void fill_dyn(lxl *L, limba_id p, limba_id bytes, limba_ltype et)
+void lxl_fill_dyn(lxl *L, limba_id p, limba_id bytes, limba_ltype et)
 {
     int64_t esize = (int64_t)ti(L, et)->size;
     limba_id first = limba_ssa_block(L->ssa), head = limba_ssa_block(L->ssa),
@@ -460,7 +468,7 @@ static void dynamic(lxl *L, limba_sym s, uint32_t tnode)
     uint32_t o5[3] = {st->addr, lxl_iconst(L, LIMBA_T_I8, 0), bytes};
     lxl_emit(L, LIMBA_OP_MEMSET, LIMBA_T_VOID, 0, 0, 0, o5, 3);
     if (lxl_has_narrow(L, x->elem))
-        fill_dyn(L, st->addr, bytes, x->elem);
+        lxl_fill_dyn(L, st->addr, bytes, x->elem);
     LIMBA_GROW(L->dyns, L->ndyns, L->capdyns);
     L->dyns[L->ndyns++] = s;
 }
@@ -1028,6 +1036,7 @@ static void begin_function(lxl *L, limba_id fid)
     L->nout_place = 0;
     L->ndyns = 0;
     L->ret_ptr = LIMBA_NONE;
+    L->live_ptr = LIMBA_NONE;
     if (L->capvia)
         memset(L->via, 0xff, (size_t)L->capvia * sizeof(*L->via));
 }

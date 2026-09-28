@@ -1,10 +1,11 @@
 // The Computer Language Benchmarks Game
 // https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
 //
-// k-nucleotide in Luxia 0: reads the output of fasta, keeps the sequence THREE and
-// counts its fragments in a hash table written by hand, with open
-// addressing. A fragment of k nucleotides is a key of 2k bits; for one k
-// the order of the keys is the alphabetical order of the fragments.
+// k-nucleotide in Luxia 0: reads the output of fasta, keeps the sequence
+// THREE and counts its fragments in a hash table written by hand, with
+// open addressing, made by new and twice as large each time it is half
+// full. A fragment of k nucleotides is a key of 2k bits; for one k the
+// order of the keys is the alphabetical order of the fragments.
 program KNucleotide;
 
 type
@@ -15,55 +16,82 @@ type
   end;
   Codes = array[Byte] of Bits64;
   Sequence = array[Int64 range <>] of Bits64;
-  Counts = array[Int64 range <>] of Int64;
-  Flags = array[Int64 range <>] of Boolean;
+  // a slot of the table: a count of 0 is a free one
+  Entry = record
+    key: Bits64;
+    count: Int64;
+  end;
+  Table = array[Int64 range <>] of Entry;
+  TableRef = ^Table;
 
 var
   code: Codes;
 
-// the slot of key k, or of the free place where it would go; the table
-// starts at 0 and its length is a power of two
-function Slot(k: Bits64; keys: Sequence; used: Flags): Int64;
+// the table twice as large, its keys hashed again; the old one freed
+function Grow(old: TableRef): TableRef;
 begin
-  var mask := Bits64(length(keys) - 1);
-  var p := Int64((k * 2654435761) and mask);
-  while used[p] and (keys[p] <> k) do
-    p := Int64((Bits64(p) + 1) and mask);
+  var t := new(Table range 0..2 * length(old^) - 1);
+  var mask := Bits64(length(t^) - 1);
+  for var i := low(old^) to high(old^) do
+    var e := old[i];
+    if e.count <> 0 then
+      var p := Int64((e.key * 2654435761) and mask);
+      while t[p].count <> 0 do
+        p := Int64((Bits64(p) + 1) and mask);
+      end;
+      t[p] := e;
+    end;
   end;
-  return p;
-end Slot;
+  dispose(old);
+  return t;
+end Grow;
 
-// counts every fragment of k nucleotides of the sequence
-procedure CountFrames(dna: Sequence; k: Int32;
-                      var keys: Sequence; var counts: Counts;
-                      var used: Flags);
+// counts every fragment of k nucleotides of the sequence in a table of
+// 64 slots at first, twice as large each time it is half full; a slot
+// is read once per probe
+function CountFrames(dna: Sequence; k: Int32): TableRef;
 begin
-  for var i := low(used) to high(used) do
-    used[i] := false;
-  end;
-  var mask := (Bits64(1) shl (2 * k)) - 1;
+  var t := new(Table range 0..63);
+  var mask: Bits64 := 63;
+  var filled: Int64 := 0;
+  var bits := (Bits64(1) shl (2 * k)) - 1;
   var acc: Bits64 := 0;
   for var i := low(dna) to high(dna) do
-    acc := ((acc shl 2) or dna[i]) and mask;
+    acc := ((acc shl 2) or dna[i]) and bits;
     if i - low(dna) >= Int64(k) - 1 then
-      var p := Slot(acc, keys, used);
-      if used[p] then
-        counts[p] := counts[p] + 1;
+      var p := Int64((acc * 2654435761) and mask);
+      var e := t[p];
+      while e.count <> 0 and e.key <> acc do
+        p := Int64((Bits64(p) + 1) and mask);
+        e := t[p];
+      end;
+      if e.count = 0 then
+        t[p].key := acc;
+        t[p].count := 1;
+        filled := filled + 1;
+        if 2 * filled > length(t^) then
+          t := Grow(t);
+          mask := Bits64(length(t^) - 1);
+        end;
       else
-        used[p] := true;
-        keys[p] := acc;
-        counts[p] := 1;
+        t[p].count := e.count + 1;
       end;
     end;
   end;
+  return t;
 end CountFrames;
 
-function Count(k: Bits64; keys: Sequence; counts: Counts;
-               used: Flags): Int64;
+function Count(k: Bits64; t: TableRef): Int64;
 begin
-  var p := Slot(k, keys, used);
-  if used[p] then
-    return counts[p];
+  var mask := Bits64(length(t^) - 1);
+  var p := Int64((k * 2654435761) and mask);
+  var e := t[p];
+  while e.count <> 0 do
+    if e.key = k then
+      return e.count;
+    end;
+    p := Int64((Bits64(p) + 1) and mask);
+    e := t[p];
   end;
   return 0;
 end Count;
@@ -87,11 +115,9 @@ begin
 end KeyOf;
 
 // every fragment of k nucleotides with its share, the most frequent first
-procedure Frequency(dna: Sequence; k: Int32;
-                    var keys: Sequence; var counts: Counts;
-                    var used: Flags);
+procedure Frequency(dna: Sequence; k: Int32);
 begin
-  CountFrames(dna, k, keys, counts, used);
+  var t := CountFrames(dna, k);
   var total: Int64 := 1;
   for var i := 1 to k do
     total := total * 4;
@@ -100,7 +126,7 @@ begin
   var times: array[Int64 range 0..total - 1] of Int64;
   for var i := 0 to total - 1 do
     names[i] := Bits64(i);
-    times[i] := Count(Bits64(i), keys, counts, used);
+    times[i] := Count(Bits64(i), t);
   end;
   // insertion sort: more frequent first, then alphabetical
   for var i := 1 to total - 1 do
@@ -123,14 +149,14 @@ begin
             Float64(times[i]) * 100.0 / frames:0:3);
   end;
   writeln();
+  dispose(t);
 end Frequency;
 
-procedure CountFragment(dna: Sequence; s: String;
-                        var keys: Sequence; var counts: Counts;
-                        var used: Flags);
+procedure CountFragment(dna: Sequence; s: String);
 begin
-  CountFrames(dna, Int32(length(s)), keys, counts, used);
-  writeln(Count(KeyOf(s), keys, counts, used), TAB, s);
+  var t := CountFrames(dna, Int32(length(s)));
+  writeln(Count(KeyOf(s), t), TAB, s);
+  dispose(t);
 end CountFragment;
 
 begin
@@ -178,20 +204,11 @@ begin
     dispose(done);
   end;
 
-  // a power of two, at least twice the fragments of any length
-  var slots: Int64 := 16;
-  while slots < 2 * size do
-    slots := slots * 2;
-  end;
-  var keys: array[Int64 range 0..slots - 1] of Bits64;
-  var counts: array[Int64 range 0..slots - 1] of Int64;
-  var used: array[Int64 range 0..slots - 1] of Boolean;
-
-  Frequency(dna, 1, keys, counts, used);
-  Frequency(dna, 2, keys, counts, used);
-  CountFragment(dna, "GGT", keys, counts, used);
-  CountFragment(dna, "GGTA", keys, counts, used);
-  CountFragment(dna, "GGTATT", keys, counts, used);
-  CountFragment(dna, "GGTATTTTAATT", keys, counts, used);
-  CountFragment(dna, "GGTATTTTAATTTATAGT", keys, counts, used);
+  Frequency(dna, 1);
+  Frequency(dna, 2);
+  CountFragment(dna, "GGT");
+  CountFragment(dna, "GGTA");
+  CountFragment(dna, "GGTATT");
+  CountFragment(dna, "GGTATTTTAATT");
+  CountFragment(dna, "GGTATTTTAATTTATAGT");
 end KNucleotide.

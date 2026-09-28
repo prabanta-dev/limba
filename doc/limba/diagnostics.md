@@ -1022,10 +1022,15 @@ prog.luxia:2:22: error[L0048]: 'x:width:decimals' is allowed only in write and w
 
 ### L0049 — OPEN ARRAY OUTSIDE A PARAMETER
 
-An open array `array[I range <>] of T` is only the type of a parameter;
-a variable, a field or a function result cannot have it. `range <>`
-outside the index of an array gives "'range <>' is the index of an array
-parameter only" (§ 3.7.1).
+An open array `array[I range <>] of T` is the type of a parameter or
+the type a pointer points to; a variable, a field or a function result
+cannot have it. `range <>` outside the index of an array gives "'range
+<>' is the index of an array parameter only" (§ 3.7.1). The same code
+reports `new(A)` without the bounds of an open array ("an open array
+needs the bounds of its index: new(A range low..high)") and an array
+made by `new` used as a whole, outside `low`, `high`, `length` and
+`move` ("an array made by new is used through its elements, low, high,
+length and move: not as a whole", § 3.10).
 
 ```pascal
 program p;
@@ -1035,7 +1040,7 @@ end.
 ```
 
 ```
-prog.luxia:2:8: error[L0049]: an array with the bounds of its argument is a type for parameters only
+prog.luxia:2:8: error[L0049]: an array with the bounds of its argument is a type for parameters and pointers only
 ```
 
 ### L0051 — COMPUTED BOUNDS OUT OF PLACE
@@ -1184,12 +1189,14 @@ prog.luxia:2:17: error[L0058]: 'range_chek' is no check: index_check, range_chec
 
 ### L0059 — ARGUMENT THROUGH A POINTER
 
-In Luxia 0 an object reached through a pointer (`p^`, `p.f`, `p[i]`,
-`p.a[i]`, in any chain) cannot be passed as a `var` argument, nor as an
-`out` argument of a record or array type (§ 3.10): the routine would
-write through its address after a `dispose`, where no check can see it.
-This includes `readline` and `val`. Copy the object into a variable, pass
-that, then assign it back. A scalar `out` argument is allowed.
+In Luxia 0 a record or an array reached through a pointer (`p^`, `p.f`,
+`p[i]`, `p.a[i]`, in any chain) is never an argument, in any mode, and a
+scalar reached so is no `var` argument, `readline` and `val` included
+(§ 3.10): a `dispose` during the call would leave the routine on freed
+memory, where no check can see it, or cost a hidden copy. Pass the
+pointer itself, or copy the object into a variable first. A scalar `in`
+or `out` argument is allowed; only `move` takes arrays reached through a
+pointer (§ 9.5).
 
 ```pascal
 program p;
@@ -1209,10 +1216,11 @@ end p.
 prog.luxia:10:8: error[L0059]: an object reached through a pointer cannot be a var argument: copy it into a variable, pass that, then assign it back
 ```
 
-With `procedure fill(out r: R)`, `fill(q^)` gives:
+With `procedure fill(out r: R)`, `fill(q^)` gives (as `show(q^)` for a
+`procedure show(r: R)`):
 
 ```
-prog.luxia:10:9: error[L0059]: an object reached through a pointer cannot be an out argument of a record or array type: pass a variable, then assign it
+prog.luxia:10:9: error[L0059]: a record or an array reached through a pointer cannot be an argument: pass the pointer, or copy it into a variable first
 ```
 
 ## All the codes
@@ -1277,4 +1285,4 @@ prog.luxia:10:9: error[L0059]: an object reached through a pointer cannot be an 
 | L0056 | OUT_UNASSIGNED | an `out` parameter left without a value |
 | L0057 | PRAGMA_NAME | a pragma that is not `suppress` or `unsuppress` |
 | L0058 | CHECK_NAME | a check that has no such name |
-| L0059 | THROUGH_POINTER | an object reached through a pointer as a `var` argument, or an `out` record or array |
+| L0059 | THROUGH_POINTER | a record or an array reached through a pointer as an argument, or a scalar as a `var` one |

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Arrays made by `new` (specification § 3.10, § 9.5, § 9.7): a pointer
+  may point to an open array type, and `new(A range lo..hi)` creates an
+  array whose index goes from `lo` to `hi` (`range` after an open array
+  type gives bounds, after a scalar type it constrains a value: said in
+  § 3.7.1 and § 9.7). `p[i]` is checked for `nil`, a dangling pointer and
+  the index; `low`, `high` and `length` take `p^`, which is never used as
+  a whole; `dispose` frees the array and its Strings; a size in bytes past
+  the address space is "out of memory". `move(src, from, dst, to, count)`
+  copies elements between arrays as Ada's slice assignment, overlapping
+  ranges allowed, every bound checked before a byte moves.
+- A record or an array reached through a pointer is no longer an
+  argument in any mode (L0059): the copy `in` arguments made is gone, a
+  hidden cost; pass the pointer. `move` is a predefined name.
+- The IR contract: `memcpy` has the semantics of `memmove`; an array made
+  by `new` is a block `{lo, hi, elements}` accessed in one canonical
+  sequence (nil, `ptr_live`, the bounds, the index).
+- k-nucleotide keeps its counts in a table made by `new` that doubles
+  when half full, one slot of 16 bytes read once per probe, instead of
+  three arrays sized on the sequence and cleared for every k.
+- The random Luxia programs make, fill, write, move within and dispose
+  of arrays made by `new`, dangling and invalid disposes included.
 - Two holes of the random Luxia programs, found by Meri: `val` now gets
   a text below the minimum of a signed type narrower than 64 bits half
   the time it reads into one; and a new pattern gives one string to two

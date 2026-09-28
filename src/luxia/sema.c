@@ -154,6 +154,7 @@ static const struct {
     {"argcount", LXB_ARGCOUNT},
     {"arg", LXB_ARG},
     {"halt", LXB_HALT},
+    {"move", LXB_MOVE},
 };
 
 static void universe(limba_lxs *S)
@@ -599,10 +600,10 @@ static limba_ltype type_node(limba_lxs *S, uint32_t node, uint32_t scope,
     case LXN_TNAME: {
         limba_ltype t = named(S, node, scope, false, &dyn);
         if (t && lxs_ty(S, t)->kind == LIMBA_LTK_OPEN &&
-            !(where & (LXT_PARAM | LXT_DECL))) {
+            !(where & (LXT_PARAM | LXT_DECL | LXT_PTR))) {
             lxs_error(S, LXE_OPEN_ARRAY_PLACE, node,
                       "an array with the bounds of its argument is a type "
-                      "for parameters only");
+                      "for parameters and pointers only");
             return 0;
         }
         return t;
@@ -673,10 +674,10 @@ static limba_ltype type_node(limba_lxs *S, uint32_t node, uint32_t scope,
     }
     case LXN_TOPEN: {
         /* array[I range <>] of T: the bounds come with the argument */
-        if (!(where & (LXT_PARAM | LXT_DECL))) {
+        if (!(where & (LXT_PARAM | LXT_DECL | LXT_PTR))) {
             lxs_error(S, LXE_OPEN_ARRAY_PLACE, node,
                       "an array with the bounds of its argument is a type "
-                      "for parameters only");
+                      "for parameters and pointers only");
             return 0;
         }
         limba_ltype index = named(S, x->a, scope, false, &dyn);
@@ -741,7 +742,8 @@ static limba_ltype type_node(limba_lxs *S, uint32_t node, uint32_t scope,
         limba_ltype p = limba_types_pointer(&S->ts, 0);
         if (self)
             S->st.sym[self].type = p;
-        limba_ltype target = type_node(S, x->a, scope, 0, 0);
+        /* ^A with A an open array: the array new makes (§ 3.10) */
+        limba_ltype target = type_node(S, x->a, scope, LXT_PTR, 0);
         limba_types_set_target(&S->ts, p, target);
         return p;
     }

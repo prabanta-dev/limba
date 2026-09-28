@@ -21,7 +21,8 @@ enum {
     LXN_NKINDS
 };
 
-#define LXN_F_BIG 1u /* INT: past 64 bits, read the text again */
+#define LXN_F_BIG 1u  /* INT: past 64 bits, read the text again */
+#define LXN_F_HEAP 2u /* NEW: new(A range lo..hi), an open array A */
 
 typedef struct {
     uint8_t kind;

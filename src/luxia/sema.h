@@ -84,6 +84,7 @@ enum {
     LXB_ARGCOUNT,
     LXB_ARG,
     LXB_HALT,
+    LXB_MOVE,
 };
 
 /* a constant: every number and discrete value is a rational (integers,
@@ -123,6 +124,9 @@ typedef struct {
     /* the checks turned off for the whole file from outside (limba
        --suppress), LXS_CHECK_* bits; the pragmas add to them */
     unsigned suppress;
+    /* p^ of an array created by new may be read here as a whole: the
+       argument of low, high, length and move (§ 3.10) */
+    bool open_ok;
 } limba_lxs;
 
 void limba_lxs_init(limba_lxs *S, limba_lx_ast *t, limba_lx *lx,
@@ -158,6 +162,7 @@ void lxs_force(limba_lxs *S, limba_sym s);
 #define LXT_VAR 1u
 #define LXT_PARAM 2u
 #define LXT_DECL 4u
+#define LXT_PTR 8u /* the target of a pointer: an open array may be */
 limba_ltype lxs_type(limba_lxs *S, uint32_t node, uint32_t scope,
                      unsigned where);
 /* the spelling of a symbol, as declared */

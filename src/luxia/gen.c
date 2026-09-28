@@ -133,7 +133,19 @@ static v128 tmax(unsigned t)
 /* K_ENUM: elem values 0..elem-1; its base is the type itself */
 /* K_DYN: an array variable whose bounds are computed, index a scalar
    type like K_OPEN; lo..hi is 0..3, room for its 0 to 4 elements */
-enum { K_BASE, K_RANGE, K_ARRAY, K_OPEN, K_RECORD, K_PTR, K_ENUM, K_DYN };
+/* K_HEAP: a pointer to the open array elem, whose arrays new makes with
+   their bounds (§ 3.10, § 9.7) */
+enum {
+    K_BASE,
+    K_RANGE,
+    K_ARRAY,
+    K_OPEN,
+    K_RECORD,
+    K_PTR,
+    K_ENUM,
+    K_DYN,
+    K_HEAP
+};
 
 typedef struct {
     uint8_t k, base;      /* base: the scalar type of a range or of itself */
@@ -226,7 +238,9 @@ enum {
     E_VAL,    /* val(a, var): true when the string a is a number */
     E_READ,   /* readline(var) */
     E_ARGC,   /* argcount() */
-    E_ARG     /* arg(a) */
+    E_ARG,    /* arg(a) */
+    E_HIDX,   /* element a of the array made by new variable var points to */
+    E_HLEN    /* low (op 0), high (1) or length (2) of var^, made by new */
 };
 
 /* a call of a function whose result is a record or an array has in var
@@ -257,7 +271,14 @@ enum {
     S_NEW,     /* var := new(its record) */
     S_COPY,    /* var := the record variable of e */
     S_DISPOSE, /* dispose(var) */
-    S_HALT     /* halt(e) */
+    S_HALT,    /* halt(e) */
+    /* arrays made by new: var := new(its open array range e..e2); var[idx]
+       := e; move(var^, e, idx^, e2, fld) with idx the destination
+       variable and fld the count; dispose(var) */
+    S_HNEW,
+    S_HSET,
+    S_MOVE,
+    S_HFREE
 };
 
 typedef struct {
@@ -2341,6 +2362,180 @@ static uint32_t selector_type(const G *g, uint32_t e)
 
 /* one statement, or two when a loop needs its counter declared first;
    they go to out, and the count is returned */
+/* a visible variable of a pointer type to an array made by new, of type t
+   exactly (0: any); -1 if none */
+static int pick_heap(G *g, uint32_t t)
+{
+    uint32_t n = 0, chosen = 0;
+    for (uint32_t i = 0; i < g->nscope; i++) {
+        uint32_t v = g->scope[i], vt = g->v[v].t;
+        if (vt < NTYPES || g->ty[vt].k != K_HEAP || (t && vt != t))
+            continue;
+        if (below(g, ++n) == 0)
+            chosen = v;
+    }
+    return n ? (int)chosen : -1;
+}
+
+/* an index near the bounds new gives (-2..4): inside or just outside */
+static v128 near_index(G *g, unsigned ix)
+{
+    return fam(ix) == 'S' ? (v128)below(g, 7) - 3 : (v128)below(g, 6);
+}
+
+/* the value for an element: a String made at run time, counted */
+static uint32_t element_value(G *g, uint32_t el)
+{
+    return base(g, el) == T_STR ? made_str(g) : value_for(g, el, depth(g));
+}
+
+/* an index of an array lo..hi (known when lo <= hi): inside it most of
+   the time, near its bounds otherwise */
+static v128 some_index(G *g, unsigned ix, v128 lo, v128 hi)
+{
+    if (lo <= hi && chance(g, 85))
+        return lo + (v128)below(g, (uint32_t)(hi - lo + 1));
+    return near_index(g, ix);
+}
+
+/* writeln(h[i], " ", low/high/length(h^)) in some order; lo..hi the
+   bounds of h if known (else lo > hi) */
+static uint32_t heap_write(G *g, uint32_t h, bool bounds, v128 lo, v128 hi)
+{
+    uint32_t ot = g->ty[g->v[h].t].elem, el = g->ty[ot].elem;
+    unsigned ix = g->ty[ot].index;
+    uint32_t idx = lit(g, ix, some_index(g, ix, lo, hi));
+    uint32_t it = new_e(g, E_HIDX, el);
+    g->e[it].var = h;
+    g->e[it].a = idx;
+    uint32_t items[3] = {it, 0, 0}, n = 1;
+    if (bounds) {
+        uint32_t sep = new_e(g, E_STR, 0);
+        uint32_t len = new_e(g, E_HLEN, ix);
+        g->e[len].var = h;
+        g->e[len].op = (uint8_t)below(g, 3);
+        bool first = chance(g, 50);
+        items[0] = first ? len : it;
+        items[1] = sep;
+        items[2] = first ? it : len;
+        n = 3;
+    }
+    uint32_t w = new_s(g, S_WRITE);
+    g->st[w].args = keep_list(g, items, n);
+    g->st[w].nargs = n;
+    return w;
+}
+
+/* move(h^, from, d^, to, count), count -1..4; lo..hi as heap_write */
+static uint32_t heap_move(G *g, uint32_t h, uint32_t d, v128 lo, v128 hi)
+{
+    unsigned ix = g->ty[g->ty[g->v[h].t].elem].index;
+    v128 k = fam(ix) == 'S' ? (v128)below(g, 6) - 1 : (v128)below(g, 5);
+    if (lo <= hi && k > hi - lo + 1 && chance(g, 80))
+        k = hi - lo + 1;
+    uint32_t from = lit(g, ix, some_index(g, ix, lo, hi));
+    uint32_t to = lit(g, ix, some_index(g, ix, lo, hi));
+    uint32_t count = lit(g, ix, k);
+    uint32_t m = new_s(g, S_MOVE);
+    g->st[m].var = h;
+    g->st[m].idx = d;
+    g->st[m].e = from;
+    g->st[m].e2 = to;
+    g->st[m].fld = count;
+    return m;
+}
+
+/* dispose(h), sometimes followed at once by a second dispose (invalid)
+   or a read (dangling); into out, the count */
+static uint32_t heap_free(G *g, uint32_t h, uint32_t *out)
+{
+    uint32_t f = new_s(g, S_HFREE);
+    g->st[f].var = h;
+    out[0] = f;
+    if (chance(g, 50))
+        return 1;
+    if (chance(g, 40)) {
+        uint32_t f2 = new_s(g, S_HFREE);
+        g->st[f2].var = h;
+        out[1] = f2;
+        return 2;
+    }
+    out[1] = heap_write(g, h, false, 1, 0);
+    return 2;
+}
+
+/* an array made by new (§ 3.10, § 9.7): declared with small bounds,
+   filled, written, often moved within and disposed of; or on one in
+   scope, an element set or written, a move between two of one type, a
+   dispose; into out, at most 11 */
+static uint32_t heap_array(G *g, uint32_t *out)
+{
+    uint32_t nh = 0, ht = 0;
+    for (uint32_t u = NTYPES; u < g->nty; u++)
+        if (g->ty[u].k == K_HEAP && below(g, ++nh) == 0)
+            ht = u;
+    if (!nh)
+        return 0;
+    int h = pick_heap(g, 0);
+    unsigned c = below(g, 10);
+    if (h < 0 || c < 2) {
+        uint32_t ot = g->ty[ht].elem, el = g->ty[ot].elem;
+        unsigned ix = g->ty[ot].index;
+        v128 lo = fam(ix) == 'S' ? (v128)below(g, 5) - 2 : (v128)below(g, 3);
+        v128 hi = lo + (v128)below(g, 6) - 1;
+        if (hi < tmin(ix))
+            hi = lo;
+        uint32_t el_lo = lit(g, ix, lo), el_hi = lit(g, ix, hi);
+        uint32_t v = new_v(g, ht, V_LOCAL);
+        uint32_t s = new_s(g, S_HNEW);
+        g->st[s].var = v;
+        g->st[s].e = el_lo;
+        g->st[s].e2 = el_hi;
+        show(g, v);
+        uint32_t n = 0;
+        out[n++] = s;
+        for (v128 i = lo; i <= hi && n < 6; i++) {
+            if (chance(g, 20))
+                continue; /* without a value: a read of it is caught */
+            uint32_t idx = lit(g, ix, i), e = element_value(g, el);
+            uint32_t a = new_s(g, S_HSET);
+            g->st[a].var = v;
+            g->st[a].idx = idx;
+            g->st[a].e = e;
+            out[n++] = a;
+        }
+        out[n++] = heap_write(g, v, true, lo, hi);
+        if (chance(g, 40)) {
+            out[n++] = heap_move(g, v, v, lo, hi);
+            out[n++] = heap_write(g, v, false, lo, hi);
+        }
+        if (chance(g, 30))
+            n += heap_free(g, v, out + n);
+        return n;
+    }
+    ht = g->v[h].t;
+    uint32_t ot = g->ty[ht].elem, el = g->ty[ot].elem;
+    unsigned ix = g->ty[ot].index;
+    if (c < 4) {
+        uint32_t idx = lit(g, ix, near_index(g, ix)), e = element_value(g, el);
+        uint32_t a = new_s(g, S_HSET);
+        g->st[a].var = (uint32_t)h;
+        g->st[a].idx = idx;
+        g->st[a].e = e;
+        out[0] = a;
+        return 1;
+    }
+    if (c < 6) {
+        out[0] = heap_write(g, (uint32_t)h, true, 1, 0);
+        return 1;
+    }
+    if (c < 8) {
+        out[0] = heap_move(g, (uint32_t)h, (uint32_t)pick_heap(g, ht), 1, 0);
+        return 1;
+    }
+    return heap_free(g, (uint32_t)h, out);
+}
+
 static uint32_t stmt(G *g, uint32_t *out)
 {
     g->budget--;
@@ -2381,6 +2576,11 @@ static uint32_t stmt(G *g, uint32_t *out)
     }
     if (!pure && chance(g, 4))
         return str_loop(g, out);
+    if (!pure && chance(g, 8)) {
+        uint32_t k = heap_array(g, out);
+        if (k)
+            return k;
+    }
     if (!pure && chance(g, 8)) {
         uint32_t s = read_write(g);
         if (s) {
@@ -3069,7 +3269,7 @@ static void put_type(text *o, const G *g, uint32_t t)
     if (t < NTYPES)
         put(o, tname[t]);
     else
-        putf(o, "%c%u", "RRYOTPED"[g->ty[t].k], t);
+        putf(o, "%c%u", "RRYOTPEDH"[g->ty[t].k], t);
 }
 
 static void put_value(text *o, unsigned t, v128 v)
@@ -3181,11 +3381,18 @@ static void pexpr(G *g, text *o, uint32_t i)
         put(o, ")");
         break;
     case E_INDEX:
+    case E_HIDX:
         put_name(o, g, x->var);
         here(x, o);
         put(o, "[");
         pexpr(g, o, g->e[i].a);
         put(o, "]");
+        break;
+    case E_HLEN:
+        here(x, o); /* nil and dangling at the name of the function */
+        put(o, x->op == 0 ? "low(" : x->op == 1 ? "high(" : "length(");
+        put_name(o, g, x->var);
+        put(o, "^)");
         break;
     case E_FIELD:
         put_name(o, g, x->var);
@@ -3511,8 +3718,45 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         put(o, ";\n");
         break;
     case S_DISPOSE:
+    case S_HFREE:
         put(o, "dispose(");
         put_name(o, g, s.var);
+        put(o, ");\n");
+        break;
+    case S_HNEW:
+        put(o, "var ");
+        g->st[si].nline = o->line;
+        g->st[si].ncol = o->col;
+        put_name(o, g, s.var);
+        put(o, " := new(");
+        put_type(o, g, g->ty[g->v[s.var].t].elem);
+        put(o, " range ");
+        pexpr(g, o, s.e);
+        put(o, "..");
+        pexpr(g, o, s.e2);
+        put(o, ");\n");
+        break;
+    case S_HSET:
+        put_name(o, g, s.var);
+        g->st[si].iline = o->line; /* nil, dangling and index at the [ */
+        g->st[si].icol = o->col;
+        put(o, "[");
+        pexpr(g, o, s.idx);
+        put(o, "] := ");
+        pexpr(g, o, s.e);
+        put(o, ";\n");
+        break;
+    case S_MOVE:
+        put(o, "move(");
+        put_name(o, g, s.var);
+        put(o, "^, ");
+        pexpr(g, o, s.e);
+        put(o, ", ");
+        put_name(o, g, s.idx);
+        put(o, "^, ");
+        pexpr(g, o, s.e2);
+        put(o, ", ");
+        pexpr(g, o, s.fld);
         put(o, ");\n");
         break;
     case S_HALT:
@@ -3571,7 +3815,7 @@ static void program(G *g, text *o, uint32_t nglob)
                     put(o, ";");
                 }
                 put(o, " end");
-            } else if (x->k == K_PTR) {
+            } else if (x->k == K_PTR || x->k == K_HEAP) {
                 put(o, "^");
                 put_type(o, g, x->elem);
             } else if (x->k == K_ENUM) {
@@ -3653,6 +3897,16 @@ typedef struct {
                         the first field plus 1, nil is 0 */
     uint32_t nheap, capheap;
     uint32_t live; /* the records made by new and not disposed of */
+    /* the arrays made by new: a pointer is the index plus 1; the cells of
+       each from first */
+    struct xh {
+        v128 lo, hi;
+        uint32_t first;
+        bool dead;
+    } *harr;
+    uint32_t nharr, capharr;
+    v128 *hcell;
+    uint32_t nhcell, caphcell;
     text out;
     bool trap, toolong;
     bool halt; /* the trap is a halt, code its status */
@@ -3689,6 +3943,23 @@ static v128 fail(X *x, uint32_t at, int code)
 {
     stop(x, code, x->g->e[at].line, x->g->e[at].col);
     return 0;
+}
+
+/* the array made by new that variable v points to; nil (102) and a freed
+   one (105) stop the run at line:col */
+static struct xh *heap_at(X *x, uint32_t v, uint32_t line, uint32_t col)
+{
+    v128 pv = x->cell[x->ref[v]];
+    if (pv == 0) {
+        stop(x, 102, line, col);
+        return NULL;
+    }
+    struct xh *a = &x->harr[pv - 1];
+    if (a->dead) {
+        stop(x, 105, line, col);
+        return NULL;
+    }
+    return a;
 }
 
 /* v stored where type t is: a range is checked, reported at line:col */
@@ -4316,6 +4587,29 @@ static v128 ev(X *x, uint32_t i)
             return fail(x, i, 100);
         return valid(x, i, e->t, x->cell[c]);
     }
+    case E_HIDX: {
+        /* nil, dangling, then the index: the bounds of the block */
+        struct xh *a = heap_at(x, e->var, e->line, e->col);
+        if (!a)
+            return 0;
+        uint32_t h = (uint32_t)(a - x->harr);
+        v128 k = ev(x, e->a);
+        if (x->trap)
+            return 0;
+        a = &x->harr[h];
+        if (k < a->lo || k > a->hi)
+            return fail(x, i, 100);
+        return valid(x, i, e->t, x->hcell[a->first + (uint32_t)(k - a->lo)]);
+    }
+    case E_HLEN: {
+        struct xh *a = heap_at(x, e->var, e->line, e->col);
+        if (!a)
+            return 0;
+        return e->op == 0      ? a->lo
+               : e->op == 1    ? a->hi
+               : a->hi < a->lo ? 0
+                               : a->hi - a->lo + 1;
+    }
     case E_FIELD: {
         uint32_t vt = g->v[e->var].t;
         if (is_record(g, vt))
@@ -4620,6 +4914,97 @@ static int run_stmt(X *x, uint32_t si)
     case S_DISPOSE:
         x->live--; /* the variable points to a record new made, alone */
         return X_NEXT;
+    case S_HNEW: {
+        /* the elements without values (§ 3.11), then the pointer */
+        v128 lo = ev(x, s->e), hi = ev(x, s->e2);
+        uint32_t el = g->ty[g->ty[g->v[s->var].t].elem].elem;
+        uint32_t first = x->nhcell;
+        for (v128 k = lo; k <= hi; k++) {
+            v128 bad = 0;
+            narrow_bad(g, el, &bad);
+            LIMBA_GROW(x->hcell, x->nhcell, x->caphcell);
+            x->hcell[x->nhcell++] = bad;
+        }
+        LIMBA_GROW(x->harr, x->nharr, x->capharr);
+        x->harr[x->nharr] = (struct xh){lo, hi, first, false};
+        x->cell[x->ref[s->var]] = (v128)++x->nharr;
+        x->live++;
+        return X_NEXT;
+    }
+    case S_HSET: {
+        /* the target first: nil, dangling, index at the [; the value,
+           its range at the assignment */
+        struct xh *a = heap_at(x, s->var, s->iline, s->icol);
+        if (!a)
+            return X_RET;
+        uint32_t h = (uint32_t)(a - x->harr);
+        uint32_t el = g->ty[g->ty[g->v[s->var].t].elem].elem;
+        v128 k = ev(x, s->idx);
+        if (x->trap)
+            return X_RET;
+        a = &x->harr[h];
+        if (k < a->lo || k > a->hi) {
+            stop(x, 100, s->iline, s->icol);
+            return X_RET;
+        }
+        uint32_t c = a->first + (uint32_t)(k - a->lo);
+        v128 v = ev(x, s->e);
+        if (x->trap || !store_ok(x, el, v, s->line, s->col))
+            return X_RET;
+        x->hcell[c] = v;
+        return X_NEXT;
+    }
+    case S_MOVE: {
+        /* from the left: the source (nil, dangling), from, the target,
+           to, count; count < 0 a range error, the two ranges inside
+           their arrays unless count is 0, then a copy that may overlap */
+        unsigned ix = g->ty[g->ty[g->v[s->var].t].elem].index;
+        struct xh *a = heap_at(x, s->var, s->line, s->col);
+        if (!a)
+            return X_RET;
+        uint32_t sh = (uint32_t)(a - x->harr);
+        v128 from = ev(x, s->e);
+        if (x->trap)
+            return X_RET;
+        struct xh *b = heap_at(x, s->idx, s->line, s->col);
+        if (!b)
+            return X_RET;
+        uint32_t dh = (uint32_t)(b - x->harr);
+        v128 to = ev(x, s->e2);
+        v128 count = x->trap ? 0 : ev(x, s->fld);
+        if (x->trap)
+            return X_RET;
+        a = &x->harr[sh];
+        b = &x->harr[dh];
+        if (fam(ix) == 'S' && count < 0) {
+            stop(x, 101, s->line, s->col);
+            return X_RET;
+        }
+        if (count > 0 &&
+            !(from >= a->lo && from <= a->hi && count - 1 <= a->hi - from &&
+              to >= b->lo && to <= b->hi && count - 1 <= b->hi - to)) {
+            stop(x, 100, s->line, s->col);
+            return X_RET;
+        }
+        if (count > 0)
+            memmove(&x->hcell[b->first + (uint32_t)(to - b->lo)],
+                    &x->hcell[a->first + (uint32_t)(from - a->lo)],
+                    (size_t)count * sizeof(v128));
+        return X_NEXT;
+    }
+    case S_HFREE: {
+        v128 pv = x->cell[x->ref[s->var]];
+        if (!pv)
+            return X_NEXT;
+        struct xh *a = &x->harr[pv - 1];
+        if (a->dead) {
+            stop(x, 106, s->line, s->col);
+            return X_RET;
+        }
+        a->dead = true;
+        x->live--;
+        return X_NEXT;
+    }
     case S_HALT: {
         /* 0 or 2..255, checked at the name: 1 is for the errors (§ 9) */
         v128 v = ev(x, s->e);
@@ -4744,6 +5129,17 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
             arrays[narrays++] = pt;
             arrays[narrays++] = pt;
         }
+    }
+
+    /* arrays made by new: an open array with an integer index, Strings
+       among its elements, and a pointer to it; their variables are local
+       (§ 3.10, § 9.7) */
+    for (uint32_t k = 0, n = below(&g, 3); k < n; k++) {
+        unsigned ix = int_type(&g);
+        uint32_t el = chance(&g, 20) ? T_STR : var_type(&g);
+        uint32_t ot = new_type(
+            &g, (xt){K_OPEN, (uint8_t)base(&g, el), ix, el, 0, 0, 0, 0});
+        new_type(&g, (xt){K_HEAP, T_BOOL, 0, ot, 0, 0, 0, 0});
     }
 
     /* the globals: one of an integer type and one Boolean at least, then
@@ -5016,6 +5412,8 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     free(x.alo);
     free(x.ahi);
     free(x.heap);
+    free(x.harr);
+    free(x.hcell);
     g_free(&g);
     return ok;
 }

@@ -49,20 +49,24 @@ static bool scalar_kind(limba_lxs *S, limba_ltype t)
     return k != LIMBA_LTK_RECORD && k != LIMBA_LTK_ARRAY && k != LIMBA_LTK_OPEN;
 }
 
-/* an argument the routine writes through its address (a var one, an out
-   record or array) is no object reached through a pointer in Luxia 0: a
-   dispose during the call would leave the address dangling, unchecked */
-static void by_reference(limba_lxs *S, uint32_t a, bool var)
+/* § 3.10: a record or an array reached through a pointer is no argument,
+   in any mode (a dispose during the call would leave the routine on freed
+   memory, or cost a hidden copy); a scalar reached so is no var one */
+static void pointer_arg(limba_lxs *S, uint32_t a, unsigned mode)
 {
     if (!reached_by_pointer(S, a))
         return;
-    lxs_error(S, LXE_THROUGH_POINTER, a,
-              var ? "an object reached through a pointer cannot be a var "
-                    "argument: copy it into a variable, pass that, then "
-                    "assign it back"
-                  : "an object reached through a pointer cannot be an out "
-                    "argument of a record or array type: pass a variable, "
-                    "then assign it");
+    limba_ltype t = S->type[a];
+    if (t && !scalar_kind(S, t))
+        lxs_error(S, LXE_THROUGH_POINTER, a,
+                  "a record or an array reached through a pointer cannot "
+                  "be an argument: pass the pointer, or copy it into a "
+                  "variable first");
+    else if (mode == LXS_VAR)
+        lxs_error(S, LXE_THROUGH_POINTER, a,
+                  "an object reached through a pointer cannot be a var "
+                  "argument: copy it into a variable, pass that, then "
+                  "assign it back");
 }
 
 static bool is_int(const limba_lxs *S, limba_ltype t)
@@ -618,6 +622,7 @@ static limba_ltype routine_call(limba_lxs *S, uint32_t node, uint32_t scope,
         } else if (p.mode == LXS_IN) {
             lxs_expr(S, a, scope, p.type);
             lxs_assign_to(S, a, p.type, "the parameter");
+            pointer_arg(S, a, LXS_IN);
             continue;
         } else {
             limba_ltype at = lxs_expr(S, a, scope, 0);
@@ -626,9 +631,8 @@ static limba_ltype routine_call(limba_lxs *S, uint32_t node, uint32_t scope,
                           "this is %s, the parameter is %s",
                           lxs_tname(S, at, ta), lxs_tname(S, p.type, tb));
         }
-        if (p.mode != LXS_IN && lxs_writable(S, a, true) &&
-            (p.mode == LXS_VAR || !scalar_kind(S, p.type)))
-            by_reference(S, a, p.mode == LXS_VAR);
+        if (p.mode == LXS_IN || lxs_writable(S, a, true))
+            pointer_arg(S, a, p.mode);
     }
     return set(S, node, result);
 }
@@ -742,7 +746,7 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
                 lxs_error(S, LXE_TYPE_MISMATCH, a,
                           "readline reads into a String variable");
             if (lxs_writable(S, a, true))
-                by_reference(S, a, true);
+                pointer_arg(S, a, LXS_VAR);
         }
         return set(S, node, S->ts.bool_);
     case LXB_LENGTH:
@@ -770,7 +774,9 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
             S->val[node] = lxs_value_int(S, id == LXB_LOW ? ti->lo : ti->hi);
             return set(S, node, tt);
         }
+        S->open_ok = true; /* low(p^) of an array made by new */
         limba_ltype t = lxs_expr(S, a, scope, 0);
+        S->open_ok = false;
         if (!t)
             return set(S, node, 0);
         const limba_typeinfo *ti = lxs_ty(S, t);
@@ -865,7 +871,7 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
             if (t && !is_numeric(S, t))
                 lxs_error(S, LXE_TYPE_MISMATCH, a, "val reads a number");
             if (lxs_writable(S, a, true))
-                by_reference(S, a, true);
+                pointer_arg(S, a, LXS_VAR);
         }
         return set(S, node, S->ts.bool_);
     case LXB_SQRT:
@@ -904,6 +910,47 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         }
         return set(S, node, lxs_base(S, t));
     }
+    case LXB_MOVE:
+        /* move(src, from, dst, to, count): arrays of one element type
+           and one index base; they may be reached through a pointer,
+           checked by move itself at the copy (§ 9.5) */
+        if (arity(S, node, 5, nm, scope)) {
+            char ta[128];
+            uint32_t src = arg_at(S, node, 0), dst = arg_at(S, node, 2);
+            S->open_ok = true;
+            limba_ltype st = lxs_expr(S, src, scope, 0);
+            S->open_ok = false;
+            unsigned sk = st ? kind(S, st) : 0;
+            limba_ltype ib = 0;
+            if (st && sk != LIMBA_LTK_ARRAY && sk != LIMBA_LTK_OPEN)
+                lxs_error(S, LXE_TYPE_MISMATCH, src,
+                          "move copies between arrays, not from %s",
+                          lxs_tname(S, st, ta));
+            else if (st)
+                ib = lxs_base(S, lxs_ty(S, st)->index);
+            arg_of(S, arg_at(S, node, 1), scope, ib);
+            S->open_ok = true;
+            limba_ltype dt = lxs_expr(S, dst, scope, 0);
+            S->open_ok = false;
+            unsigned dk = dt ? kind(S, dt) : 0;
+            if (dt && dk != LIMBA_LTK_ARRAY && dk != LIMBA_LTK_OPEN)
+                lxs_error(S, LXE_TYPE_MISMATCH, dst,
+                          "move copies between arrays, not into %s",
+                          lxs_tname(S, dt, ta));
+            else if (dt && ib &&
+                     (!lxs_compatible(S, lxs_ty(S, dt)->elem,
+                                      lxs_ty(S, st)->elem) ||
+                      lxs_base(S, lxs_ty(S, dt)->index) != ib))
+                lxs_error(S, LXE_TYPE_MISMATCH, dst,
+                          "move copies between arrays of the same elements "
+                          "and index: this is %s, the source %s",
+                          lxs_tname(S, dt, ta), lxs_tname(S, st, tb));
+            else if (dt)
+                lxs_writable(S, dst, true);
+            arg_of(S, arg_at(S, node, 3), scope, ib);
+            arg_of(S, arg_at(S, node, 4), scope, ib);
+        }
+        return set(S, node, S->ts.void_);
     case LXB_DISPOSE:
         if (arity(S, node, 1, nm, scope)) {
             uint32_t a = arg_at(S, node, 0);
@@ -1076,7 +1123,14 @@ limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
                       lxs_tname(S, t, tb));
             return set(S, node, 0);
         }
-        return set(S, node, t ? lxs_ty(S, t)->elem : 0);
+        limba_ltype e = t ? lxs_ty(S, t)->elem : 0;
+        if (e && kind(S, e) == LIMBA_LTK_OPEN && !S->open_ok) {
+            lxs_error(S, LXE_OPEN_ARRAY_PLACE, node,
+                      "an array made by new is used through its elements, "
+                      "low, high, length and move: not as a whole");
+            return set(S, node, 0);
+        }
+        return set(S, node, e);
     }
     case LXN_CALL: {
         limba_ltype t = call(S, node, scope, expected);
@@ -1088,6 +1142,28 @@ limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
         return t;
     }
     case LXN_NEW: {
+        /* new(A range lo..hi), A an open array: range gives the bounds
+           of the index, not a constraint on a value (§ 9.7) */
+        limba_lx_node *tn = lxs_node(S, x->a);
+        limba_sym ts =
+            tn->kind == LXN_TNAME ? limba_sym_lookup(&S->st, scope, tn->a) : 0;
+        limba_ltype ot = ts && S->st.sym[ts].kind == LIMBA_LSYM_TYPE
+                             ? (lxs_force(S, ts), S->st.sym[ts].type)
+                             : 0;
+        if (ot && kind(S, ot) == LIMBA_LTK_OPEN) {
+            lxs_lookup(S, scope, x->a);
+            if (!tn->b) {
+                lxs_error(S, LXE_OPEN_ARRAY_PLACE, node,
+                          "an open array needs the bounds of its index: "
+                          "new(A range low..high)");
+                return set(S, node, 0);
+            }
+            limba_ltype ib = lxs_base(S, lxs_ty(S, ot)->index);
+            arg_of(S, tn->b, scope, ib);
+            arg_of(S, tn->c, scope, ib);
+            x->flags |= LXN_F_HEAP;
+            return set(S, node, limba_types_pointer(&S->ts, ot));
+        }
         limba_ltype t = lxs_type(S, x->a, scope, 0);
         return set(S, node, t ? limba_types_pointer(&S->ts, t) : 0);
     }

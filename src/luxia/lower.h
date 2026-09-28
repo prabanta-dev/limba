@@ -125,6 +125,13 @@ typedef struct {
        checked with ptr_live first (§ 3.10) */
     limba_id *via;
     uint32_t capvia;
+    /* the last dangling check: of pointer live_ptr, in block live_block,
+       with ncalls calls emitted before it; no call since (a dispose is
+       one) and the same block, a second one would be the same */
+    uint32_t ncalls, live_calls;
+    limba_id live_ptr, live_block;
+    /* lxl_array_parts of an array made by new: its elements from p + 16 */
+    uint32_t heap_disp;
     void (*done)(void *ctx, limba_module *m, limba_id fid, limba_edit *e);
     void *ctx;
 } lxl;
@@ -188,6 +195,8 @@ bool lxl_in_bounds(const lxl *L, uint32_t base, uint32_t idx);
    narrower than its base, in the object of type t at p + off, gets a
    value outside it; the rest stays 0 */
 bool lxl_has_narrow(lxl *L, limba_ltype t);
+/* the elements of type et in the bytes at p, none assigned (§ 3.11) */
+void lxl_fill_dyn(lxl *L, limba_id p, limba_id bytes, limba_ltype et);
 void lxl_invalidate(lxl *L, limba_id p, uint64_t off, limba_ltype t);
 bool lxl_signed(const lxl *L, limba_ltype t);
 

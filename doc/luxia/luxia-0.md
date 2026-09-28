@@ -267,9 +267,16 @@ type Vector = array[Int32 range <>] of Float64;
 - An open array is written `array[I range <>] of T`, where `I` is a
   discrete type (integer, enumeration or subtype) and `<>` means "bounds
   to be defined" (Ada's "box").
-- In Luxia 0 an open array is **only the type of a parameter**, written
-  there or named with `type`. A variable, a field or a function result
-  cannot have an open-array type (compile-time error).
+- In Luxia 0 an open array is **the type of a parameter**, written there
+  or named with `type`, or **the type a pointer points to** (§ 3.10,
+  § 9.7). A variable, a field or a function result cannot have an
+  open-array type (compile-time error).
+- **`range` after an open array type gives the bounds of its index**:
+  `new(Vector range 1..n)` creates a `Vector` whose index goes from 1 to
+  `n` (§ 9.7). After a scalar type the same words constrain a value
+  (`Int32 range 1..10`, § 3.4). Two meanings, told apart by the type
+  `range` follows: an open array type has no values to constrain, only
+  bounds to fix.
 - The argument is any array whose elements have the **same type** `T` and
   whose index has the **same base type** as `I`. The parameter **takes the
   bounds of the argument**: inside the routine `low(a)`, `high(a)` and
@@ -315,6 +322,14 @@ Records have the C layout.
 - Dereferencing is checked (`nil` error).
 - Field access dereferences implicitly: `p.x` rather than `p^.x`; indexing
   likewise: `p[i]` for a pointer to an array.
+- `^A`, with `A` an open array type (`array[I range <>] of T`), points to
+  an array whose bounds are fixed when `new` creates it (`new(A range
+  lo..hi)`, § 9.7) and never change, as Ada's access to an unconstrained array.
+  `p[i]` is checked against those bounds (index error), after the `nil`
+  and the dangling checks; `low(p^)`, `high(p^)` and `length(p^)` give
+  them, in the base type of `I`. As for an open-array parameter, `p^` is
+  neither assigned nor read as a whole: the program works on its
+  elements, or copies them with `move` (§ 9.5).
 - There is no pointer arithmetic and no way to take the address of a
   variable.
 - A pointer to an object that `dispose` has freed is **dangling**.
@@ -326,19 +341,26 @@ Records have the C layout.
 - Comparing pointers (`=`, `<>`) is not an access: a dangling pointer
   compares without error, and it is **never equal** to a pointer to an
   object created later, even one at the same address.
-- In Luxia 0 an object reached through a pointer (`p^`, `p.f`, `p[i]`,
-  `p.a[i]`, in any chain) cannot be passed as a `var` argument, nor as an
-  `out` argument of a record or array type: a compile-time error. Copy it
-  into a variable, pass the variable, then assign it back. This rule will
-  go with the ownership of pointers (Appendix A). Passed as an `in` argument,
-  such an object is always passed by copy.
+- In Luxia 0 a record or an array reached through a pointer (`p^`, `p.f`,
+  `p[i]`, `p.a[i]`, in any chain) is **never an argument**, in any mode: a
+  compile-time error. Pass the pointer itself, or copy the object into a
+  variable first. A scalar reached through a pointer may be an `in`
+  argument (its value) or an `out` one (it goes back through the pointer
+  after the call, checked there), not a `var` one (`readline` and `val`
+  included). Only `move` takes arrays reached through a pointer: it runs
+  no code of the program while it copies, and checks them itself
+  (§ 9.5). Ada allows such arguments, and a deallocation during the call
+  makes the execution erroneous; SPARK allows them without a copy through
+  the ownership of pointers. This rule will go with that ownership
+  (Appendix A).
 
 ### 3.11 Objects without an initial value
 
 This follows Ada's treatment of uninitialised objects in its strict form
 (`Normalize_Scalars` with validity checks), applied to all objects.
 
-- `new(T)` and a record or array variable declared without an initial
+- `new(T)`, `new(A range lo..hi)` and a record or array variable declared
+  without an initial
   value (global, local, including one with computed bounds) receive no
   values from the program. Every scalar inside them (in fields and
   elements too) whose subtype is narrower than its base type receives an
@@ -814,7 +836,22 @@ At the end of the file `s` becomes `""`: `s` always has a value, like an
 ### 9.5 Arrays and discrete types
 
 - `low(a)`, `high(a)`, `length(a)` of an array or a string, in the base
-  type of the index (§ 3.7, § 3.8).
+  type of the index (§ 3.7, § 3.8); `low(p^)`, `high(p^)`, `length(p^)`
+  of an array created by `new` (§ 3.10).
+- `move(src, from, dst, to, count)` copies `count` elements of the array
+  `src`, from index `from`, into the array `dst`, from index `to`, as
+  Ada's slice assignment `dst(to .. to + count - 1) := src(from ..
+  from + count - 1)`. The two arrays have elements of the same type and
+  indices of the same base type `I`; `from`, `to` and `count` are values
+  of `I`, computed from the left. `count < 0` is a range error; `count =
+  0` copies nothing and checks no bound; otherwise both ranges must lie
+  within the bounds of their array (index error), checked before
+  anything is copied. The ranges may overlap: the result is as if the
+  elements were first copied aside. `dst` must be writable (a variable, a
+  `var` or `out` parameter, an array reached through a pointer); an
+  element without a value carries its invalid value (§ 3.11). `src` and
+  `dst` may be reached through a pointer: `move` checks `nil` and a
+  dangling pointer itself, at the copy.
 - `low(T)`, `high(T)` of a discrete type `T` (an integer type, a subtype
   with a range, an enumeration, `Char`, `Boolean`): the first and the last
   value of `T`, a constant of type `T` (as Ada's `T'First` and `T'Last`).
@@ -832,9 +869,34 @@ return a real of the type of their argument (§ 6.6).
 - `new(T)` creates an object of type `T` and returns a `^T`. `new(T)` is
   syntax, not a function, since `new` is a keyword. The contents of the
   new object follow § 3.11.
-- `dispose(p)` frees the object `p` points to; `dispose(nil)` does
-  nothing. Disposing of an object already disposed is a run-time error,
-  "invalid dispose", which is not a check: it cannot be suppressed.
+- `new(A range lo..hi)`, with `A` an open array type `array[I range <>]
+  of T`, creates an array of `T` whose index goes from `lo` to `hi`, and
+  returns a `^A`. **Here `range` gives the bounds of the index, not a
+  constraint on a value**: after an open array type it fixes where the
+  index of the new array goes; after a scalar type (`new(Int32 range
+  1..10)`, `var x: Int32 range 1..10`) it constrains the value, as
+  everywhere else (§ 3.4). The same words have two meanings, told apart
+  by the type they follow (§ 3.7.1):
+
+  ```pascal
+  type Vector = array[Int64 range <>] of Float64;
+  var v: ^Vector := new(Vector range 0..n - 1);  // n elements, 0 to n - 1
+  var k := new(Int32 range 1..10);               // one Int32, from 1 to 10
+  ```
+
+  `lo` and `hi` are values of the base type of `I`, computed in this
+  order; `hi < lo` gives an empty array. If `I` is a subtype, the bounds
+  of a non-empty array must belong to it (range error); if the length
+  does not fit in the base type of `I`, it is a range error (§ 3.7). If
+  the memory for it cannot be had, the program stops with "out of
+  memory" (§ 10.1), also when its size in bytes would not fit in the
+  address space: never a silent overflow. The elements follow § 3.11.
+  `new(A)` without a range, for an open array type, is a compile-time
+  error.
+- `dispose(p)` frees the object `p` points to (a whole array created by
+  `new(A range lo..hi)`); `dispose(nil)` does nothing. Disposing of an
+  object already disposed is a run-time error, "invalid dispose", which
+  is not a check: it cannot be suppressed.
 
 ### 9.8 Environment
 
