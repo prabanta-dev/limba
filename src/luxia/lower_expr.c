@@ -6,7 +6,10 @@
  */
 #include "lower.h"
 
+#include "common/xalloc.h"
+
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const limba_typeinfo *ti(const lxl *L, limba_ltype t)
@@ -41,6 +44,11 @@ static bool is_modular(const lxl *L, limba_ltype t)
 static bool is_float(const lxl *L, limba_ltype t)
 {
     return ti(L, t)->kind == LIMBA_LTK_FLOAT;
+}
+
+static bool is_big(const lxl *L, limba_ltype t)
+{
+    return ti(L, t)->kind == LIMBA_LTK_BIGINT;
 }
 
 static limba_id bin(lxl *L, unsigned op, limba_id type, limba_id a, limba_id b)
@@ -128,6 +136,22 @@ static limba_id constant(lxl *L, uint32_t node)
     }
     if (v->kind == LXV_NIL)
         return lxl_emit(L, LIMBA_OP_NULLV, LIMBA_T_PTR, 0, 0, 0, NULL, 0);
+    if (is_big(L, t)) {
+        /* a BigInt: from an i64 when it fits, else from its digits */
+        int64_t k;
+        if (limba_big_to_i64(&v->num.num, &k)) {
+            limba_id c = lxl_iconst(L, LIMBA_T_I64, k);
+            return lxl_rt(L, LIMBA_RT_BIG_FROM_I64, LIMBA_T_REF, &c, 1);
+        }
+        size_t size = limba_big_bits(&v->num.num) / 3 + 5;
+        char *buf = limba_xmalloc(size);
+        limba_big_str(&v->num.num, buf, size);
+        limba_id s =
+            lxl_emit(L, LIMBA_OP_SCONST, LIMBA_T_STR, 0,
+                     limba_str_intern(L->m, buf, strlen(buf)), 0, NULL, 0);
+        free(buf);
+        return lxl_rt(L, LIMBA_RT_BIG_LIT, LIMBA_T_REF, &s, 1);
+    }
     if (is_float(L, t)) {
         double d;
         float f;
@@ -181,6 +205,69 @@ limba_id lxl_coerce(lxl *L, limba_id v, limba_ltype from, limba_ltype to)
 }
 
 /* ---- conversions T(x) ---- */
+
+/* T(b) of a BigInt b (luxia_0.md § 6.6): a real rounded once, straight
+   to its type; a Bits type without a range takes the low bits; any other
+   integer type must hold the value, through Int64 or UInt64 */
+static limba_id big_to(lxl *L, limba_id v, limba_ltype to, uint32_t node)
+{
+    limba_lxs *S = L->S;
+    limba_id toi = lxl_type(L, to);
+    const limba_typeinfo *tx = ti(L, to);
+    if (is_big(L, to))
+        return v;
+    if (is_float(L, to))
+        return lxl_rt(
+            L, toi == LIMBA_T_F32 ? LIMBA_RT_BIG_TO_F32 : LIMBA_RT_BIG_TO_F64,
+            toi, &v, 1);
+    if (is_modular(L, to) && !(tx->flags & LIMBA_TF_RANGE)) {
+        limba_id w = lxl_rt(L, LIMBA_RT_BIG_TO_BITS, LIMBA_T_I64, &v, 1);
+        return lxl_conv(L, w, S->ty_bits[3], to);
+    }
+    limba_ltype via = tx->lo < 0 ? S->ty_int[3] : S->ty_uint[3];
+    limba_id slot = lxl_temp(L, via, node);
+    uint32_t args[2] = {v, slot};
+    limba_id ok =
+        lxl_rt(L, tx->lo < 0 ? LIMBA_RT_BIG_TO_I64 : LIMBA_RT_BIG_TO_U64,
+               LIMBA_T_I1, args, 2);
+    lxl_check(L, ok, LXR_CONVERSION);
+    limba_id w = un(L, LIMBA_OP_LOAD, LIMBA_T_I64, slot);
+    return lxl_conv(L, w, via, to);
+}
+
+/* BigInt(x) of an integer or a real */
+static limba_id to_big(lxl *L, limba_id v, limba_ltype from)
+{
+    limba_id fi = lxl_type(L, from);
+    if (is_big(L, from))
+        return v;
+    if (is_float(L, from)) {
+        /* as Int32(x): half away from zero; a NaN or an infinity is a
+           conversion error, any other integral value is exact */
+        v = un(L, LIMBA_OP_FROUNDA, fi, v);
+        double inf = INFINITY;
+        limba_id a = cmp(L, true, LIMBA_CC_OGT, v, fconst(L, fi, -inf));
+        limba_id b = cmp(L, true, LIMBA_CC_OLT, v, fconst(L, fi, inf));
+        lxl_check(L, bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b), LXR_CONVERSION);
+        if (fi == LIMBA_T_F32)
+            v = un(L, LIMBA_OP_FPEXT, LIMBA_T_F64, v);
+        return lxl_rt(L, LIMBA_RT_BIG_FROM_F64, LIMBA_T_REF, &v, 1);
+    }
+    limba_id w = lxl_to_i64(L, v, from);
+    return lxl_rt(
+        L, lxl_signed(L, from) ? LIMBA_RT_BIG_FROM_I64 : LIMBA_RT_BIG_FROM_U64,
+        LIMBA_T_REF, &w, 1);
+}
+
+limba_id lxl_conv_at(lxl *L, limba_id v, limba_ltype from, limba_ltype to,
+                     uint32_t node)
+{
+    if (is_big(L, from))
+        return big_to(L, v, to, node);
+    if (is_big(L, to))
+        return to_big(L, v, from);
+    return lxl_conv(L, v, from, to);
+}
 
 limba_id lxl_conv(lxl *L, limba_id v, limba_ltype from, limba_ltype to)
 {
@@ -280,6 +367,23 @@ static limba_id arith(lxl *L, uint32_t node, unsigned op, limba_ltype t,
 {
     limba_id it = lxl_type(L, t);
     (void)node;
+    if (is_big(L, t)) {
+        uint32_t args[2] = {a, b};
+        if (op == LX_KW_DIV || op == LX_KW_MOD || op == LX_KW_REM) {
+            limba_id sg = lxl_rt(L, LIMBA_RT_BIG_SIGN, LIMBA_T_I32, &b, 1);
+            lxl_check(
+                L,
+                cmp(L, false, LIMBA_CC_NE, sg, lxl_iconst(L, LIMBA_T_I32, 0)),
+                LXR_DIVZERO);
+        }
+        unsigned rt = op == LX_PLUS     ? LIMBA_RT_BIG_ADD
+                      : op == LX_MINUS  ? LIMBA_RT_BIG_SUB
+                      : op == LX_STAR   ? LIMBA_RT_BIG_MUL
+                      : op == LX_KW_DIV ? LIMBA_RT_BIG_DIV
+                      : op == LX_KW_MOD ? LIMBA_RT_BIG_MOD
+                                        : LIMBA_RT_BIG_REM;
+        return lxl_rt(L, rt, LIMBA_T_REF, args, 2);
+    }
     if (is_float(L, t)) {
         unsigned fop = op == LX_PLUS    ? LIMBA_OP_FADD
                        : op == LX_MINUS ? LIMBA_OP_FSUB
@@ -391,6 +495,16 @@ static limba_id power(lxl *L, uint32_t node, limba_ltype t, limba_id a,
         limba_id r = lxl_rt(L, LIMBA_RT_MATH_POW, LIMBA_T_F64, args, 2);
         return it == LIMBA_T_F64 ? r : un(L, LIMBA_OP_FPTRUNC, it, r);
     }
+    if (is_big(L, t)) {
+        /* the exponent a Natural too, then read without a sign */
+        uint32_t args[2] = {a, lxl_to_i64(L, e, et)};
+        if (lxl_signed(L, et))
+            lxl_check(L,
+                      cmp(L, false, LIMBA_CC_SGE, args[1],
+                          lxl_iconst(L, LIMBA_T_I64, 0)),
+                      LXR_RANGE);
+        return lxl_rt(L, LIMBA_RT_BIG_POW, LIMBA_T_REF, args, 2);
+    }
     /* in 64 bits, then the width of t: past it is an overflow, except
        for a Bits type, which wraps */
     (void)node;
@@ -478,9 +592,13 @@ static limba_id compare(lxl *L, unsigned op, limba_ltype t, limba_id a,
     const limba_typeinfo *x = ti(L, t);
     if (x->kind == LIMBA_LTK_FLOAT)
         return cmp(L, true, float_cc(op), a, b);
-    if (x->kind == LIMBA_LTK_STRING) {
+    if (x->kind == LIMBA_LTK_STRING || x->kind == LIMBA_LTK_BIGINT) {
+        /* by value, never by the handle */
         uint32_t args[2] = {a, b};
-        limba_id c = lxl_rt(L, LIMBA_RT_STR_CMP, LIMBA_T_I32, args, 2);
+        limba_id c = lxl_rt(L,
+                            x->kind == LIMBA_LTK_STRING ? LIMBA_RT_STR_CMP
+                                                        : LIMBA_RT_BIG_CMP,
+                            LIMBA_T_I32, args, 2);
         return cmp(L, false, int_cc(op, true), c,
                    lxl_iconst(L, LIMBA_T_I32, 0));
     }
@@ -826,6 +944,9 @@ static limba_id unary(lxl *L, uint32_t node)
         return bool_value(L, node);
     limba_id v = lxl_value(L, x->a), it = lxl_type(L, t);
     lxl_at(L, node);
+    if (is_big(L, t) && op != LX_PLUS)
+        return lxl_rt(L, op == LX_MINUS ? LIMBA_RT_BIG_NEG : LIMBA_RT_BIG_ABS,
+                      LIMBA_T_REF, &v, 1);
     switch (op) {
     case LX_PLUS:
         return v;

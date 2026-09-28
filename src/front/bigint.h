@@ -8,8 +8,10 @@
  * A number is a sign and a magnitude in 32-bit words. Every operation
  * that could grow a number past LIMBA_BIG_MAXBITS fails (returns false)
  * instead: a constant like 2 ** 1000000 is an error of the program, not a
- * reason to exhaust the memory of the compiler. The result may be one of
- * the operands.
+ * reason to exhaust the memory of the compiler. The _lim functions take
+ * the limit as an argument: the reference interpreter runs BigInt with
+ * them, its memory the only bound. The result may be one of the
+ * operands.
  */
 #ifndef LIMBA_FRONT_BIGINT_H
 #define LIMBA_FRONT_BIGINT_H
@@ -57,6 +59,20 @@ void limba_big_divmod(limba_big *q, limba_big *m, const limba_big *a,
                       const limba_big *b);
 bool limba_big_shl(limba_big *r, const limba_big *a, uint32_t bits);
 bool limba_big_pow(limba_big *r, const limba_big *a, uint64_t e);
+/* the same up to maxbits bits instead of LIMBA_BIG_MAXBITS; pow is exact
+   for the bases 0, 1 and -1 with any exponent */
+bool limba_big_add_lim(limba_big *r, const limba_big *a, const limba_big *b,
+                       uint64_t maxbits);
+bool limba_big_sub_lim(limba_big *r, const limba_big *a, const limba_big *b,
+                       uint64_t maxbits);
+bool limba_big_mul_lim(limba_big *r, const limba_big *a, const limba_big *b,
+                       uint64_t maxbits);
+bool limba_big_shl_lim(limba_big *r, const limba_big *a, uint32_t bits,
+                       uint64_t maxbits);
+bool limba_big_pow_lim(limba_big *r, const limba_big *a, uint64_t e,
+                       uint64_t maxbits);
+bool limba_big_parse_lim(limba_big *r, const char *s, size_t n, unsigned base,
+                         uint64_t maxbits);
 void limba_big_gcd(limba_big *r, const limba_big *a, const limba_big *b);
 
 /* the value if it fits */

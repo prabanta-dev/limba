@@ -108,6 +108,24 @@ bool limba_val_int(const char *s, size_t len, uint64_t *mag, bool *neg)
     return ok;
 }
 
+bool limba_val_big(const char *s, size_t len, char *digits, size_t *n,
+                   unsigned *base, bool *neg)
+{
+    const char *p;
+    size_t k;
+    char sign;
+    if (!num_body(s, len, &p, &k, &sign))
+        return false;
+    *neg = sign == '-';
+    char *buf = limba_xmalloc(k + 1);
+    bool ok = num_literal(p, k, buf, base) == 1;
+    *n = ok ? strlen(buf) : 0;
+    if (ok)
+        memcpy(digits, buf, *n);
+    free(buf);
+    return ok;
+}
+
 bool limba_val_real(const char *s, size_t len, bool f32, uint64_t *bits)
 {
     const char *p;

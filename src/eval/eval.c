@@ -6,7 +6,9 @@
  * Every value is 64 bits: integers in their canonical form (sign-extended
  * from their width, 0 or 1 for i1), floats as the bits of a double (an f32
  * is a double holding a float value, computed in float), pointers as the
- * address, strings as a pointer to an immutable string of this file.
+ * address, strings as a pointer to an immutable string of this file, a
+ * BigInt (ref) as a pointer to an immutable number in the same box (0 is
+ * the number 0, as it is the string "").
  * Memory is real: slots and globals are allocated, load and store touch
  * them. The arithmetic here is written again on purpose rather than shared
  * with the constant folder: an oracle that reuses the code it judges would
@@ -18,6 +20,7 @@
 #include "limba/val.h"
 #include "common/leb128.h"
 #include "common/xalloc.h"
+#include "front/bigint.h"
 #include "ir/internal.h"
 
 #include <errno.h>
@@ -30,7 +33,8 @@
 #include <string.h>
 
 /* a string of the program: length, the counts of check_mem, bytes, a NUL
-   for str_ptr */
+   for str_ptr. A BigInt is one too, its bytes a limba_big (read with
+   memcpy: they are not aligned), so that check_mem counts both alike */
 typedef struct {
     size_t len;
     int64_t mrefs;    /* references from memory: store str, retain... */
@@ -318,6 +322,240 @@ static size_t utf8(uint32_t c, char *buf)
     return n;
 }
 
+/* ---- BigInt (luxia_0.md § 3.12) ---- */
+
+/* the number of a handle: its words are the box's, read only */
+static limba_big big_get(uint64_t v)
+{
+    limba_big b;
+    limba_big_init(&b);
+    if (v)
+        memcpy(&b, ((const estr *)(uintptr_t)v)->data, sizeof(b));
+    return b;
+}
+
+/* the bits the budget still has room for: how large a result may grow */
+static uint64_t big_room(const E *e)
+{
+    uint64_t left = e->budget - e->used;
+    return left > UINT64_MAX / 8 ? UINT64_MAX / 8 : left * 8;
+}
+
+/* t boxed as a new value (0 for zero), its words taken; past the budget
+   the trap NOMEM, t freed */
+static bool big_box(E *e, limba_big *t, uint64_t *r)
+{
+    if (!t->n) {
+        limba_big_free(t);
+        *r = 0;
+        return true;
+    }
+    size_t box = sizeof(estr) + sizeof(limba_big) + 1;
+    if (!take(e, box + (uint64_t)t->cap * sizeof(uint32_t))) {
+        limba_big_free(t);
+        return trap(e, LIMBA_TRAP_NOMEM);
+    }
+    estr *x = keep(e, limba_xmalloc(box));
+    x->len = sizeof(limba_big);
+    x->mrefs = x->seen = 0;
+    x->immortal = x->listed = 0;
+    x->data[x->len] = 0;
+    keep(e, t->w);
+    memcpy(x->data, t, sizeof(*t));
+    *r = sv(x);
+    return true;
+}
+
+/* the result of an operation of the _lim functions: false is NOMEM */
+static bool big_done(E *e, bool ok, limba_big *t, uint64_t *r)
+{
+    if (!ok) {
+        limba_big_free(t);
+        return trap(e, LIMBA_TRAP_NOMEM);
+    }
+    return big_box(e, t, r);
+}
+
+/* the decimal digits of v, malloc'd */
+static char *big_text(uint64_t v, size_t *len)
+{
+    limba_big b = big_get(v);
+    /* a digit for every 3.3 bits, the sign, room for the NUL past it */
+    size_t size = limba_big_bits(&b) / 3 + 5;
+    char *buf = limba_xmalloc(size);
+    limba_big_str(&b, buf, size);
+    *len = strlen(buf);
+    return buf;
+}
+
+static bool runtime_big(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
+{
+    limba_big t, x, y;
+    limba_big_init(&t);
+    /* the functions whose first operand is a BigInt */
+    bool first_big = rt != LIMBA_RT_BIG_FROM_I64 &&
+                     rt != LIMBA_RT_BIG_FROM_U64 && rt != LIMBA_RT_BIG_LIT &&
+                     rt != LIMBA_RT_BIG_FROM_F64 && rt != LIMBA_RT_STR_TO_BIG;
+    x = big_get(first_big ? a[0] : 0);
+    switch (rt) {
+    case LIMBA_RT_BIG_FROM_I64:
+        limba_big_set_i64(&t, (int64_t)a[0]);
+        return big_box(e, &t, r);
+    case LIMBA_RT_BIG_FROM_U64:
+        limba_big_set_u64(&t, a[0]);
+        return big_box(e, &t, r);
+    case LIMBA_RT_BIG_LIT: {
+        const estr *s = str_of(a[0]);
+        bool neg = s->len && s->data[0] == '-';
+        bool ok = limba_big_parse_lim(&t, s->data + neg, s->len - neg, 10,
+                                      big_room(e));
+        if (ok && neg)
+            limba_big_neg(&t, &t);
+        return big_done(e, ok, &t, r);
+    }
+    case LIMBA_RT_BIG_TO_I64: {
+        int64_t v;
+        *r = limba_big_to_i64(&x, &v);
+        return !*r || mem_store(e, a[1], LIMBA_T_I64, (uint64_t)v);
+    }
+    case LIMBA_RT_BIG_TO_U64: {
+        uint64_t v;
+        *r = limba_big_to_u64(&x, &v);
+        return !*r || mem_store(e, a[1], LIMBA_T_I64, v);
+    }
+    case LIMBA_RT_BIG_TO_BITS: {
+        uint64_t low = x.n == 0   ? 0
+                       : x.n == 1 ? x.w[0]
+                                  : (uint64_t)x.w[1] << 32 | x.w[0];
+        *r = x.neg ? 0 - low : low;
+        return true;
+    }
+    case LIMBA_RT_BIG_FROM_F64: {
+        /* finite and integral, checked before (else the module is wrong):
+           exact */
+        double d = fabs(dv(a[0]));
+        if (!isfinite(d) || d != trunc(d)) {
+            e->status = LIMBA_EVAL_BAD;
+            return false;
+        }
+        if (d < 18446744073709551616.0) {
+            limba_big_set_u64(&t, (uint64_t)d);
+        } else {
+            int ex;
+            double frac = frexp(d, &ex); /* d = frac 2^ex, frac in [0.5, 1) */
+            limba_big_set_u64(&t, (uint64_t)ldexp(frac, 53));
+            limba_big_shl_lim(&t, &t, (uint32_t)(ex - 53), UINT64_MAX);
+        }
+        if (signbit(dv(a[0])))
+            limba_big_neg(&t, &t);
+        return big_box(e, &t, r);
+    }
+    case LIMBA_RT_BIG_TO_F64:
+    case LIMBA_RT_BIG_TO_F32: {
+        /* once, straight to the type: limba_rat rounds to its bits */
+        limba_rat q;
+        limba_rat_init(&q);
+        limba_rat_set_big(&q, &x);
+        if (rt == LIMBA_RT_BIG_TO_F64) {
+            double d;
+            if (!limba_rat_to_f64(&q, &d))
+                d = x.neg ? -INFINITY : INFINITY;
+            *r = fbits(d, LIMBA_T_F64);
+        } else {
+            float f;
+            if (!limba_rat_to_f32(&q, &f))
+                f = x.neg ? -INFINITY : INFINITY;
+            *r = f32bits(f);
+        }
+        limba_rat_free(&q);
+        return true;
+    }
+    case LIMBA_RT_BIG_ADD:
+        y = big_get(a[1]);
+        return big_done(e, limba_big_add_lim(&t, &x, &y, big_room(e)), &t, r);
+    case LIMBA_RT_BIG_SUB:
+        y = big_get(a[1]);
+        return big_done(e, limba_big_sub_lim(&t, &x, &y, big_room(e)), &t, r);
+    case LIMBA_RT_BIG_MUL:
+        y = big_get(a[1]);
+        return big_done(e, limba_big_mul_lim(&t, &x, &y, big_room(e)), &t, r);
+    case LIMBA_RT_BIG_NEG:
+        limba_big_neg(&t, &x);
+        return big_box(e, &t, r);
+    case LIMBA_RT_BIG_ABS:
+        limba_big_abs(&t, &x);
+        return big_box(e, &t, r);
+    case LIMBA_RT_BIG_DIV:
+    case LIMBA_RT_BIG_REM:
+    case LIMBA_RT_BIG_MOD: {
+        y = big_get(a[1]);
+        if (limba_big_is_zero(&y)) { /* the IR checks it before: a module
+                                        that does not is wrong */
+            e->status = LIMBA_EVAL_BAD;
+            return false;
+        }
+        limba_big m;
+        limba_big_init(&m);
+        limba_big_divmod(&t, &m, &x, &y);
+        if (rt == LIMBA_RT_BIG_DIV) {
+            limba_big_free(&m);
+            return big_box(e, &t, r);
+        }
+        limba_big_free(&t);
+        /* mod: the sign of the divisor */
+        if (rt == LIMBA_RT_BIG_MOD && !limba_big_is_zero(&m) &&
+            limba_big_sign(&m) != limba_big_sign(&y))
+            limba_big_add_lim(&m, &m, &y, UINT64_MAX / 8);
+        return big_box(e, &m, r);
+    }
+    case LIMBA_RT_BIG_POW:
+        return big_done(e, limba_big_pow_lim(&t, &x, a[1], big_room(e)), &t, r);
+    case LIMBA_RT_BIG_CMP:
+        y = big_get(a[1]);
+        *r = norm((uint64_t)(int64_t)limba_big_cmp(&x, &y), LIMBA_T_I32);
+        return true;
+    case LIMBA_RT_BIG_SIGN:
+        *r = norm((uint64_t)(int64_t)limba_big_sign(&x), LIMBA_T_I32);
+        return true;
+    case LIMBA_RT_PRINT_BIG:
+    case LIMBA_RT_STR_FROM_BIG: {
+        size_t n;
+        char *text = big_text(a[0], &n);
+        bool ok = true;
+        if (rt == LIMBA_RT_PRINT_BIG) {
+            limba_w_bytes(&e->out, text, n);
+        } else if (!take(e, sizeof(estr) + (uint64_t)n + 1)) {
+            ok = trap(e, LIMBA_TRAP_NOMEM); /* str_make would jump */
+        } else {
+            e->used -= sizeof(estr) + (uint64_t)n + 1;
+            *r = sv(str_make(e, text, n));
+        }
+        free(text);
+        return ok;
+    }
+    case LIMBA_RT_STR_TO_BIG: {
+        const estr *s = str_of(a[0]);
+        char *digits = limba_xmalloc(s->len + 1);
+        size_t n;
+        unsigned base;
+        bool neg;
+        *r = limba_val_big(s->data, s->len, digits, &n, &base, &neg);
+        if (!*r) {
+            free(digits);
+            return true;
+        }
+        bool ok = limba_big_parse_lim(&t, digits, n, base, big_room(e));
+        free(digits);
+        if (ok && neg)
+            limba_big_neg(&t, &t);
+        uint64_t v;
+        return big_done(e, ok, &t, &v) && mem_store(e, a[1], LIMBA_T_REF, v);
+    }
+    }
+    e->status = LIMBA_EVAL_UNSUPPORTED;
+    return false;
+}
+
 /* a whole string as a number: optional blanks around, nothing else */
 static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
 {
@@ -465,9 +703,9 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         *r = acc;
         return true;
     }
+    default:
+        return runtime_big(e, rt, a, r);
     }
-    e->status = LIMBA_EVAL_UNSUPPORTED;
-    return false;
 }
 
 static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
@@ -738,7 +976,7 @@ static bool mem_load(E *e, uintptr_t p, limba_id t, uint64_t *r)
     *r = load((void *)p, t);
     if (!e->lim.check_mem)
         return true;
-    if (t == LIMBA_T_STR) /* zero is "": bytes never written */
+    if (t == LIMBA_T_STR || t == LIMBA_T_REF) /* zero: never written */
         return !*r || amap_find(&e->words, p) != AMAP_NONE || badmem(e);
     return no_str(e, p, e->m->types[t].size);
 }
@@ -747,7 +985,7 @@ static bool mem_load(E *e, uintptr_t p, limba_id t, uint64_t *r)
 static bool mem_store(E *e, uintptr_t p, limba_id t, uint64_t v)
 {
     if (e->lim.check_mem) {
-        if (t == LIMBA_T_STR) {
+        if (t == LIMBA_T_STR || t == LIMBA_T_REF) {
             if (p & 7)
                 return badmem(e);
             uint64_t old = amap_find(&e->words, p) != AMAP_NONE
@@ -803,7 +1041,8 @@ static bool rc_walk(E *e, uintptr_t p, limba_id t, int d)
     const limba_module *m = e->m;
     const limba_type *ty = &m->types[t];
     switch (ty->kind) {
-    case LIMBA_TK_STR: {
+    case LIMBA_TK_STR:
+    case LIMBA_TK_REF: {
         uint64_t v = load((void *)p, LIMBA_T_STR);
         if (v && amap_find(&e->words, p) == AMAP_NONE)
             return badmem(e);
@@ -811,7 +1050,7 @@ static bool rc_walk(E *e, uintptr_t p, limba_id t, int d)
     }
     case LIMBA_TK_ARRAY: {
         uint32_t size = m->types[ty->elem].size;
-        if (!limba_type_holds_str(m, ty->elem))
+        if (!limba_type_counted(m, ty->elem))
             return true;
         for (uint32_t i = 0; i < ty->count; i++)
             if (!rc_walk(e, p + (uintptr_t)i * size, ty->elem, d))
@@ -821,7 +1060,7 @@ static bool rc_walk(E *e, uintptr_t p, limba_id t, int d)
     case LIMBA_TK_STRUCT:
         for (uint32_t i = 0; i < ty->count; i++) {
             const limba_member *f = &m->members[ty->first + i];
-            if (limba_type_holds_str(m, f->type) &&
+            if (limba_type_counted(m, f->type) &&
                 !rc_walk(e, p + f->offset, f->type, d))
                 return false;
         }

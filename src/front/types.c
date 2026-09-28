@@ -44,6 +44,7 @@ void limba_types_init(limba_types *ts)
     ts->char_ = add(ts, LIMBA_LTK_CHAR, 0, 4, 4);
     ts->t[ts->char_].hi = 0x10ffff;
     ts->string = add(ts, LIMBA_LTK_STRING, 0, PTR_SIZE, PTR_SIZE);
+    ts->bigint = add(ts, LIMBA_LTK_BIGINT, LIMBA_TF_SIGNED, PTR_SIZE, PTR_SIZE);
 }
 
 void limba_types_free(limba_types *ts)
@@ -323,6 +324,8 @@ static size_t show(const limba_types *ts, limba_ltype id, limba_name_fn name,
         return put(buf, size, len, "an enumeration", 14);
     case LIMBA_LTK_ROUTINE:
         return put(buf, size, len, "a routine", 9);
+    case LIMBA_LTK_BIGINT:
+        return put(buf, size, len, "an integer of any size", 22);
     }
     if (t->flags & LIMBA_TF_RANGE) {
         len = show(ts, t->base, name, ctx, buf, size, len, depth + 1);

@@ -69,15 +69,22 @@ static void pointer_arg(limba_lxs *S, uint32_t a, unsigned mode)
                   "assign it back");
 }
 
+/* an integer of a fixed size (or a constant): an exponent, a count, a
+   code point */
 static bool is_int(const limba_lxs *S, limba_ltype t)
 {
     return t == S->ts.uint || kind(S, t) == LIMBA_LTK_INT;
 }
 
+static bool is_big(const limba_lxs *S, limba_ltype t)
+{
+    return kind(S, t) == LIMBA_LTK_BIGINT;
+}
+
 static bool is_numeric(const limba_lxs *S, limba_ltype t)
 {
     return untyped(S, t) || kind(S, t) == LIMBA_LTK_INT ||
-           kind(S, t) == LIMBA_LTK_FLOAT;
+           kind(S, t) == LIMBA_LTK_FLOAT || is_big(S, t);
 }
 
 static bool is_float(const limba_lxs *S, limba_ltype t)
@@ -130,7 +137,8 @@ static bool convert_const(limba_lxs *S, uint32_t node, limba_ltype target)
                       lxs_tname(S, target, tb));
             return false;
         }
-    } else if (!(t == S->ts.uint && tk == LIMBA_LTK_INT) &&
+    } else if (!(t == S->ts.uint &&
+                 (tk == LIMBA_LTK_INT || tk == LIMBA_LTK_BIGINT)) &&
                !(t == S->ts.ureal && tk == LIMBA_LTK_FLOAT)) {
         lxs_error(S, LXE_TYPE_MISMATCH, node, "%s where %s is expected",
                   t == S->ts.uint ? "an integer constant" : "a real constant",
@@ -220,14 +228,22 @@ static bool unify(limba_lxs *S, uint32_t node, uint32_t l, uint32_t r,
     return true;
 }
 
-static limba_ltype op_error(limba_lxs *S, uint32_t node, limba_ltype t,
-                            const char *what)
+/* operator op of node does not apply to t, reported at node at (an
+   operand, or the operator itself) */
+static limba_ltype op_error_at(limba_lxs *S, uint32_t node, uint32_t at,
+                               limba_ltype t, const char *what)
 {
     char tb[128];
-    lxs_error(S, LXE_OPERATOR_TYPE, node, "'%s' %s: it does not apply to %s",
+    lxs_error(S, LXE_OPERATOR_TYPE, at, "'%s' %s: it does not apply to %s",
               limba_lx_kind_text(lxs_node(S, node)->op), what,
               lxs_tname(S, t, tb));
     return set(S, node, 0);
+}
+
+static limba_ltype op_error(limba_lxs *S, uint32_t node, limba_ltype t,
+                            const char *what)
+{
+    return op_error_at(S, node, node, t, what);
 }
 
 /* the type an operation on t yields: the base of a range */
@@ -251,7 +267,9 @@ static limba_ltype binary(limba_lxs *S, uint32_t node, uint32_t scope)
         if (!is_numeric(S, lt))
             return op_error(S, node, lt, "raises numbers");
         if (!is_int(S, rt))
-            return op_error(S, r, rt, "takes an integer exponent");
+            return op_error_at(S, node, r, rt,
+                               "takes an exponent of an integer type of a "
+                               "fixed size");
         if (untyped(S, rt) && !untyped(S, lt))
             convert_const(S, r, S->ty_int[3]);
         res = result_of(S, lt);
@@ -268,7 +286,8 @@ static limba_ltype binary(limba_lxs *S, uint32_t node, uint32_t scope)
         if (!is_modular(S, lt))
             return op_error(S, node, lt, "shifts Bits types only");
         if (!is_int(S, rt))
-            return op_error(S, r, rt, "shifts by an integer");
+            return op_error_at(S, node, r, rt,
+                               "shifts by an integer of a fixed size");
         if (untyped(S, rt))
             convert_const(S, r, S->ty_int[3]);
         res = result_of(S, lt);
@@ -326,7 +345,7 @@ static limba_ltype binary(limba_lxs *S, uint32_t node, uint32_t scope)
         case LX_KW_DIV:
         case LX_KW_MOD:
         case LX_KW_REM:
-            if (!is_int(S, lt))
+            if (!is_int(S, lt) && !is_big(S, lt))
                 return op_error(S, node, lt,
                                 "divides integers only (for reals, '/')");
             res = result_of(S, lt);
@@ -680,7 +699,7 @@ static void printable(limba_lxs *S, uint32_t a, uint32_t scope)
     }
     unsigned k = kind(S, t);
     if (k != LIMBA_LTK_INT && k != LIMBA_LTK_FLOAT && k != LIMBA_LTK_BOOL &&
-        k != LIMBA_LTK_CHAR && k != LIMBA_LTK_STRING) {
+        k != LIMBA_LTK_CHAR && k != LIMBA_LTK_STRING && k != LIMBA_LTK_BIGINT) {
         char tb[128];
         lxs_error(S, LXE_TYPE_MISMATCH, a,
                   "write prints numbers, Booleans, characters and strings, "

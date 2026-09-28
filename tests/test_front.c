@@ -141,6 +141,105 @@ static void test_integers(void)
     limba_big_free(&m);
 }
 
+/* a random number of 1 to max words, the words chosen to trouble the
+   estimates of a division: all ones, a top bit alone, zero, or any */
+static void rand_big(limba_big *r, uint64_t *s, uint32_t max)
+{
+    static const uint32_t pick[] = {0,           1,           0x7fffffffu,
+                                    0x80000000u, 0xfffffffeu, 0xffffffffu};
+    *s ^= *s << 13, *s ^= *s >> 7, *s ^= *s << 17;
+    uint32_t n = 1 + (uint32_t)(*s % max);
+    char hex[8 * 64 + 1];
+    for (uint32_t i = 0; i < n; i++) {
+        *s ^= *s << 13, *s ^= *s >> 7, *s ^= *s << 17;
+        uint32_t w = *s % 3 ? pick[(*s >> 8) % 6] : (uint32_t)(*s >> 32);
+        snprintf(hex + 8 * i, 9, "%08x", w);
+    }
+    limba_big_parse(r, hex, 8 * n, 16);
+    *s ^= *s << 13, *s ^= *s >> 7, *s ^= *s << 17;
+    if (*s & 1)
+        limba_big_neg(r, r);
+}
+
+/* the division checked by what it must satisfy: a = q b + m, |m| < |b|,
+   q with the sign of a b, m with the sign of a; then numbers past the
+   limit of the constants, through the _lim functions */
+static void test_division(unsigned count)
+{
+    const uint64_t huge = (uint64_t)1 << 40;
+    uint64_t s = 0x2545f4914f6cdd1dull;
+    limba_big a, b, q, m, t, abs_m, abs_b, r_pow;
+    limba_big_init(&r_pow);
+    limba_big_init(&a);
+    limba_big_init(&b);
+    limba_big_init(&q);
+    limba_big_init(&m);
+    limba_big_init(&t);
+    limba_big_init(&abs_m);
+    limba_big_init(&abs_b);
+    unsigned wrong = 0;
+    for (unsigned k = 0; k < count; k++) {
+        rand_big(&a, &s, 40);
+        do
+            rand_big(&b, &s, 20);
+        while (limba_big_is_zero(&b));
+        limba_big_divmod(&q, &m, &a, &b);
+        limba_big_mul_lim(&t, &q, &b, huge);
+        limba_big_add_lim(&t, &t, &m, huge);
+        limba_big_abs(&abs_m, &m);
+        limba_big_abs(&abs_b, &b);
+        bool ok =
+            limba_big_cmp(&t, &a) == 0 && limba_big_cmp(&abs_m, &abs_b) < 0 &&
+            (limba_big_is_zero(&q) ||
+             (limba_big_sign(&q) < 0) ==
+                 (limba_big_sign(&a) != limba_big_sign(&b))) &&
+            (limba_big_is_zero(&m) || limba_big_sign(&m) == limba_big_sign(&a));
+        if (!ok && wrong++ < 5) {
+            char sa[200], sb[200];
+            fprintf(stderr, "test_front: %s / %s divided wrong\n",
+                    limba_big_str(&a, sa, sizeof(sa)),
+                    limba_big_str(&b, sb, sizeof(sb)));
+        }
+    }
+    failures += wrong != 0;
+
+    /* 3 ** 40000 (63 398 bits) by 7 ** 9000 + 1 */
+    big(&a, "3");
+    CHECK(limba_big_pow_lim(&a, &a, 40000, huge), "3 ** 40000 with a limit");
+    CHECK(!limba_big_pow_lim(&t, &a, 3, 100000), "past a limit of 100000");
+    big(&b, "7");
+    limba_big_pow_lim(&b, &b, 9000, huge);
+    big(&t, "1");
+    limba_big_add_lim(&b, &b, &t, huge);
+    limba_big_divmod(&q, &m, &a, &b);
+    limba_big_mul_lim(&t, &q, &b, huge);
+    limba_big_add_lim(&t, &t, &m, huge);
+    limba_big_abs(&abs_m, &m);
+    CHECK(limba_big_cmp(&t, &a) == 0 && limba_big_cmp(&abs_m, &b) < 0,
+          "3 ** 40000 divided by 7 ** 9000 + 1");
+    /* 0, 1 and -1 to any power */
+    const char *base[] = {"0", "1", "-1", "-1"},
+               *want[] = {"0", "1", "-1", "1"};
+    uint64_t e[] = {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX - 1};
+    for (int i = 0; i < 4; i++) {
+        big(&a, base[i]);
+        CHECK(limba_big_pow_lim(&r_pow, &a, e[i], 64), "%s ** %llu", base[i],
+              (unsigned long long)e[i]);
+        EXPECT(&r_pow, want[i]);
+    }
+    big(&a, "0");
+    CHECK(limba_big_pow_lim(&r_pow, &a, 0, 64), "0 ** 0");
+    EXPECT(&r_pow, "1");
+    limba_big_free(&a);
+    limba_big_free(&b);
+    limba_big_free(&q);
+    limba_big_free(&m);
+    limba_big_free(&t);
+    limba_big_free(&abs_m);
+    limba_big_free(&abs_b);
+    limba_big_free(&r_pow);
+}
+
 /* r must be initialised */
 static void rat(limba_rat *r, const char *lit)
 {
@@ -480,13 +579,15 @@ static void test_fmt_f64(unsigned count)
 int main(void)
 {
     test_integers();
+    test_division(20000);
     test_rationals();
     test_rounding(20000);
     test_types();
     test_symtab();
     test_fmt_f64(20000);
     test_fmt_f32(20000);
-    printf("test_front: integers, rationals, 20000 random roundings to "
+    printf("test_front: integers, 20000 random divisions, rationals, 20000 "
+           "random roundings to "
            "double and float, types, scopes, 20000 shortest reals, %d "
            "failures\n",
            failures);

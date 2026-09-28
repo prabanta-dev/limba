@@ -44,6 +44,7 @@ bool lxl_scalar(const lxl *L, limba_ltype t)
     case LIMBA_LTK_CHAR:
     case LIMBA_LTK_ENUM:
     case LIMBA_LTK_STRING:
+    case LIMBA_LTK_BIGINT:
     case LIMBA_LTK_POINTER:
     case LIMBA_LTK_NIL:
         return true;
@@ -80,6 +81,9 @@ limba_id lxl_type(lxl *L, limba_ltype t)
         break;
     case LIMBA_LTK_STRING:
         r = LIMBA_T_STR;
+        break;
+    case LIMBA_LTK_BIGINT:
+        r = LIMBA_T_REF;
         break;
     case LIMBA_LTK_POINTER:
     case LIMBA_LTK_NIL:

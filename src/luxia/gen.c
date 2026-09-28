@@ -23,12 +23,15 @@
  * item printed before the next is computed, the target of an assignment
  * before its value, continue in repeat going to the test. The run-time
  * error codes are not in the specification yet: 6 overflow, 11 division
- * by zero, 100 index, 101 range, 103 conversion, 104 shift.
+ * by zero, 100 index, 101 range, 103 conversion, 104 shift. A BigInt is
+ * computed with bigint.c, the arithmetic of lir_run too: this net watches
+ * the front end and the back ends on it, test_front watches bigint.c.
  */
 #include "gen.h"
 
 #include "limba/fmt.h"
 #include "common/xalloc.h"
+#include "front/bigint.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -59,19 +62,22 @@ enum {
     T_F32,
     T_CHAR,
     T_STR,
+    T_BIG,
     NTYPES
 };
 
 static const char *const tname[NTYPES] = {
     "Int8",    "Int16",   "Int32",   "Int64",  "UInt8",  "UInt16",
     "UInt32",  "UInt64",  "Bits8",   "Bits16", "Bits32", "Bits64",
-    "Boolean", "Float64", "Float32", "Char",   "String",
+    "Boolean", "Float64", "Float32", "Char",   "String", "BigInt",
 };
 
-/* S signed, U unsigned, B bits, L Boolean, F real, C Char, T String */
+/* S signed, U unsigned, B bits, L Boolean, F real, C Char, T String, N
+   BigInt */
 static char fam(unsigned t)
 {
     return t == T_CHAR                ? 'C'
+           : t == T_BIG               ? 'N'
            : t == T_STR               ? 'T'
            : t == T_F64 || t == T_F32 ? 'F'
            : t == T_BOOL              ? 'L'
@@ -371,6 +377,10 @@ typedef struct {
         uint32_t n;
     } *str;
     uint32_t nstr, capstr;
+    /* the BigInt values, as the strings: a value is an index here, 0 is
+       the number 0 */
+    limba_big *big;
+    uint32_t nbig, capbig;
     /* the command line and the lines of the input, strings; the input
        ends with a newline when nl_end */
     uint32_t arg[3], narg;
@@ -386,6 +396,35 @@ static uint32_t new_str(G *g, const char *b, size_t n)
     g->str[g->nstr].b[n] = 0;
     g->str[g->nstr].n = (uint32_t)n;
     return g->nstr++;
+}
+
+/* a BigInt value: t taken */
+static uint32_t new_big(G *g, limba_big *t)
+{
+    if (limba_big_is_zero(t) && g->nbig) {
+        limba_big_free(t);
+        return 0;
+    }
+    LIMBA_GROW(g->big, g->nbig, g->capbig);
+    g->big[g->nbig] = *t;
+    limba_big_init(t);
+    return g->nbig++;
+}
+
+static uint32_t big_of_i128(G *g, v128 v)
+{
+    limba_big t, hi;
+    limba_big_init(&t);
+    limba_big_init(&hi);
+    u128 m = v < 0 ? -(u128)v : (u128)v;
+    limba_big_set_u64(&hi, (uint64_t)(m >> 64));
+    limba_big_shl_lim(&hi, &hi, 64, 256);
+    limba_big_set_u64(&t, (uint64_t)m);
+    limba_big_add_lim(&t, &t, &hi, 256);
+    if (v < 0)
+        limba_big_neg(&t, &t);
+    limba_big_free(&hi);
+    return new_big(g, &t);
 }
 
 /* the UTF-8 form of code point c into b; its length */
@@ -545,6 +584,33 @@ static v128 rand_value(G *g, unsigned t)
             d = copysign(1e-30, d);
         return fres(T_F32, d);
     }
+    if (t == T_BIG) {
+        /* small, at the edges of 64 bits, or large: 2^k + c, 10^k - c */
+        static const v128 edges[] = {0,
+                                     1,
+                                     -1,
+                                     2,
+                                     7,
+                                     1000000007,
+                                     (v128)INT64_MAX,
+                                     (v128)INT64_MIN,
+                                     (v128)UINT64_MAX,
+                                     (v128)UINT64_MAX + 1};
+        if (chance(g, 50))
+            return big_of_i128(g, chance(g, 50) ? edges[below(g, 10)]
+                                                : rand_in(g, -20, 20));
+        limba_big t, c;
+        limba_big_init(&t);
+        limba_big_init(&c);
+        limba_big_set_u64(&t, chance(g, 50) ? 2 : 10);
+        limba_big_pow_lim(&t, &t, 20 + below(g, 180), 4096);
+        limba_big_set_i64(&c, (int64_t)below(g, 7) - 3);
+        limba_big_add_lim(&t, &t, &c, 4096);
+        limba_big_free(&c);
+        if (chance(g, 25))
+            limba_big_neg(&t, &t);
+        return new_big(g, &t);
+    }
     return t == T_BOOL ? below(g, 2) : rand_in(g, tmin(t), tmax(t));
 }
 
@@ -606,7 +672,8 @@ static unsigned index_base(const G *g, uint32_t at)
 static v128 init_value(G *g, uint32_t t)
 {
     unsigned b = g->ty[t].base;
-    if (b == T_BOOL || fam(b) == 'F' || fam(b) == 'C' || fam(b) == 'T')
+    if (b == T_BOOL || fam(b) == 'F' || fam(b) == 'C' || fam(b) == 'T' ||
+        fam(b) == 'N')
         return rand_value(g, b);
     return rand_in(g, g->ty[t].lo, g->ty[t].hi);
 }
@@ -653,7 +720,14 @@ static uint32_t var_type(G *g)
    them) */
 static uint32_t var_type_s(G *g)
 {
-    return chance(g, 10) ? T_STR : var_type(g);
+    return chance(g, 10) ? T_STR : chance(g, 8) ? T_BIG : var_type(g);
+}
+
+/* the type of a field or an element: a counted one (String, BigInt)
+   pct times in 100 */
+static uint32_t counted_or_var(G *g, unsigned pct)
+{
+    return chance(g, pct) ? (chance(g, 60) ? T_STR : T_BIG) : var_type(g);
 }
 
 /* ---- the tree ---- */
@@ -1504,7 +1578,7 @@ static uint32_t leaf(G *g, unsigned t, bool need_var, int d)
         return binop(g, O_EQ + below(g, 6), T_BOOL, var_ref(g, (uint32_t)w),
                      lit(g, u, rand_value(g, u)));
     }
-    if (chance(g, 70)) {
+    if (t != T_BIG && chance(g, 70)) {
         int x = pick_var(g, within(g, t), false, false);
         if (x >= 0)
             w = x;
@@ -1587,7 +1661,7 @@ static uint32_t str_expr(G *g, int d, bool need_var)
         g->e[i].c = n;
         return i;
     }
-    unsigned u = any_type(g);
+    unsigned u = chance(g, 15) ? T_BIG : any_type(g);
     uint32_t a = is_enum(g, u) ? 0 : expr(g, u, d - 1, true);
     if (!a)
         a = var_ref(g, (uint32_t)pick_var(g, NTYPES, false, false));
@@ -1914,6 +1988,51 @@ static uint32_t math_call(G *g, unsigned t, uint32_t a, unsigned m)
     return i;
 }
 
+/* a BigInt: + - * div mod rem, a power, the minus and abs, BigInt of an
+   integer or a real, a call, a leaf */
+static uint32_t big_expr(G *g, int d, bool need_var)
+{
+    if (d <= 0 || chance(g, 25))
+        return leaf(g, T_BIG, need_var, d);
+    unsigned choice = below(g, 10);
+    if (choice == 9) {
+        int fn = pick_func(g, T_BIG);
+        if (fn >= 0)
+            return call_expr(g, (uint32_t)fn, d);
+        choice = 0;
+    }
+    if (choice < 5) {
+        unsigned op = below(g, 6);
+        bool divide = op >= O_DIV && op <= O_REM;
+        uint32_t a = expr(g, T_BIG, d - 1, divide);
+        uint32_t b;
+        if (divide && chance(g, 70)) {
+            /* a literal divisor, now and then 0 */
+            v128 k = chance(g, 5) ? 0 : (v128)below(g, 1000) + 1;
+            b = lit(g, T_BIG, big_of_i128(g, chance(g, 30) ? -k : k));
+        } else {
+            b = expr(g, T_BIG, d - 1, g->e[a].cst);
+        }
+        return binop(g, O_ADD + op, T_BIG, a, b);
+    }
+    if (choice == 5) {
+        /* the exponent small, or any integer, maybe negative */
+        uint32_t a = expr(g, T_BIG, d - 1, true);
+        uint32_t n = chance(g, 70) ? lit(g, T_I32, below(g, 40))
+                                   : expr(g, int_type(g), d - 1, true);
+        return binop(g, O_POW, T_BIG, a, n);
+    }
+    if (choice == 6) {
+        uint32_t a = expr(g, T_BIG, d - 1, true);
+        uint32_t i = new_e(g, E_UN, T_BIG);
+        g->e[i].op = chance(g, 50) ? O_NEG : O_ABS;
+        g->e[i].a = a;
+        return i;
+    }
+    unsigned from = choice == 7 ? int_type(g) : chance(g, 50) ? T_F64 : T_F32;
+    return conv(g, T_BIG, expr(g, from, d - 1, true));
+}
+
 static uint32_t expr(G *g, unsigned t, int d, bool need_var)
 {
     if (is_enum(g, t))
@@ -1922,9 +2041,14 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
         return str_expr(g, d, need_var);
     if (t == T_CHAR)
         return char_expr(g, d, need_var);
+    if (t == T_BIG)
+        return big_expr(g, d, need_var);
     if (d <= 0 || chance(g, 20))
         return leaf(g, t, need_var, d);
     unsigned f = fam(t);
+    int bv = f != 'L' && chance(g, 5) ? pick_var(g, T_BIG, false, false) : -1;
+    if (bv >= 0) /* a BigInt made into t: it must fit (§ 6.6) */
+        return conv(g, t, var_ref(g, (uint32_t)bv));
     unsigned choice = below(g, 10);
     if (choice == 9) {
         int fn = pick_func(g, t);
@@ -1971,7 +2095,9 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
             return binop(g, O_EQ + below(g, 6), T_BOOL, a, b);
         }
         if (choice < 4) {
-            unsigned u = chance(g, 15) ? T_STR : any_type(g);
+            unsigned u = chance(g, 15)  ? T_STR
+                         : chance(g, 8) ? T_BIG
+                                        : any_type(g);
             uint32_t a = expr(g, u, d - 1, false);
             uint32_t b = expr(g, u, d - 1, g->e[a].cst);
             return binop(g, O_EQ + below(g, 6), T_BOOL, a, b);
@@ -2270,7 +2396,7 @@ static uint32_t declare_dyn(G *g)
     uint32_t x = var_ref(g, (uint32_t)w);
     uint32_t n = lit(g, b, k < 0 ? 1 : k);
     uint32_t hi = binop(g, k < 0 ? O_SUB : O_ADD, b, x, n);
-    uint32_t el = chance(g, 20) ? T_STR : var_type(g);
+    uint32_t el = counted_or_var(g, 20);
     uint32_t t =
         new_type(g, (xt){K_DYN, (uint8_t)base(g, el), b, el, 0, 3, 0, 0});
     uint32_t v = new_v(g, t, V_LOCAL);
@@ -2690,7 +2816,11 @@ static uint32_t stmt(G *g, uint32_t *out)
             out[0] = s;
             return 1;
         }
-        int v = pick_var(g, chance(g, 10) ? T_STR : any_type(g), true, false);
+        int v = pick_var(g,
+                         chance(g, 10)  ? T_STR
+                         : chance(g, 8) ? T_BIG
+                                        : any_type(g),
+                         true, false);
         if (v < 0)
             v = pick_var(g, NTYPES, true, false);
         if (v >= 0) {
@@ -2969,7 +3099,9 @@ static uint32_t stmt(G *g, uint32_t *out)
     for (uint32_t i = 0; i < n; i++) {
         if (i)
             items[k++] = new_e(g, E_STR, 0);
-        unsigned u = chance(g, 12) ? T_STR : any_type(g);
+        unsigned u = chance(g, 12)   ? T_STR
+                     : chance(g, 20) ? T_BIG
+                                     : any_type(g);
         uint32_t a = expr(g, u, depth(g), true);
         items[k++] = format(g, a);
     }
@@ -3295,6 +3427,16 @@ static void put_value(text *o, unsigned t, v128 v)
     }
 }
 
+/* the decimal digits of BigInt value v, with a - if negative */
+static void put_big(text *o, const G *g, v128 v)
+{
+    const limba_big *b = &g->big[(uint32_t)v];
+    size_t size = limba_big_bits(b) / 3 + 5;
+    char *buf = limba_xmalloc(size);
+    put(o, limba_big_str(b, buf, size));
+    free(buf);
+}
+
 static void here(xe *x, const text *o)
 {
     x->line = o->line;
@@ -3320,6 +3462,11 @@ static void put_lit(text *o, const G *g, uint32_t t, v128 v)
             putn(o, b, utf8((uint32_t)v, b));
             put(o, "'");
         }
+    } else if (t == T_BIG) {
+        bool neg = g->big[(uint32_t)v].neg;
+        put(o, neg ? "(" : "");
+        put_big(o, g, v);
+        put(o, neg ? ")" : "");
     } else if (t == T_STR) {
         /* a quote inside is written twice (§ 3) */
         const struct xstr *x = &g->str[(uint32_t)v];
@@ -4130,6 +4277,87 @@ static v128 as_str(X *x, unsigned t, v128 v)
     return run_str(x, b, utf8((uint32_t)v, b));
 }
 
+/* the bits past which a BigInt of the run is too large: the program is
+   dropped, as one that runs too long */
+#define BIG_LIMIT 65536
+
+/* BigInt v as a v128, when it lies within 2^126 */
+static bool big_i128(const G *g, v128 v, v128 *out)
+{
+    const limba_big *b = &g->big[(uint32_t)v];
+    if (limba_big_bits(b) > 126)
+        return false;
+    u128 m = 0;
+    for (uint32_t k = b->n; k-- > 0;)
+        m = m << 32 | b->w[k];
+    *out = b->neg ? -(v128)m : (v128)m;
+    return true;
+}
+
+/* a new BigInt from t, or too long past the limit */
+static v128 big_result(X *x, bool ok, limba_big *t)
+{
+    if (!ok) {
+        limba_big_free(t);
+        x->toolong = x->trap = true;
+        return 0;
+    }
+    return new_big(x->g, t);
+}
+
+/* a BigInt operation of node i: the operands BigInt values, but the
+   exponent of ** an integer */
+static v128 big_binary(X *x, uint32_t i, unsigned op, v128 l, v128 r)
+{
+    G *g = x->g;
+    limba_big t;
+    limba_big_init(&t);
+    const limba_big *a = &g->big[(uint32_t)l];
+    if (op == O_POW) {
+        if (r < 0)
+            return fail(x, i, 101); /* a Natural (§ 4.3) */
+        return big_result(x, limba_big_pow_lim(&t, a, (uint64_t)r, BIG_LIMIT),
+                          &t);
+    }
+    const limba_big *b = &g->big[(uint32_t)r];
+    int c = limba_big_cmp(a, b);
+    switch (op) {
+    case O_EQ:
+        return c == 0;
+    case O_NE:
+        return c != 0;
+    case O_LT:
+        return c < 0;
+    case O_LE:
+        return c <= 0;
+    case O_GT:
+        return c > 0;
+    case O_GE:
+        return c >= 0;
+    case O_ADD:
+        return big_result(x, limba_big_add_lim(&t, a, b, BIG_LIMIT), &t);
+    case O_SUB:
+        return big_result(x, limba_big_sub_lim(&t, a, b, BIG_LIMIT), &t);
+    case O_MUL:
+        return big_result(x, limba_big_mul_lim(&t, a, b, BIG_LIMIT), &t);
+    default: { /* div, mod, rem */
+        if (limba_big_is_zero(b))
+            return fail(x, i, 11);
+        limba_big m;
+        limba_big_init(&m);
+        limba_big_divmod(&t, &m, a, b);
+        if (op == O_DIV) {
+            limba_big_free(&m);
+            return new_big(g, &t);
+        }
+        limba_big_free(&t);
+        if (op == O_MOD && !limba_big_is_zero(&m) && m.neg != b->neg)
+            limba_big_add_lim(&m, &m, b, BIG_LIMIT + 64);
+        return new_big(g, &m);
+    }
+    }
+}
+
 static v128 binary(X *x, uint32_t i)
 {
     const xe *e = &x->g->e[i];
@@ -4160,6 +4388,8 @@ static v128 binary(X *x, uint32_t i)
         free(c);
         return v;
     }
+    if (base(x->g, x->g->e[e->a].t) == T_BIG)
+        return big_binary(x, i, op, l, r);
     if (base(x->g, x->g->e[e->a].t) == T_STR) {
         /* byte by byte, then the shorter first (§ 6) */
         const struct xstr *a = &x->g->str[(uint32_t)l],
@@ -4267,10 +4497,75 @@ static v128 binary(X *x, uint32_t i)
 
 /* v of base from converted to type to at node i: a real rounded, an
    integer that must fit, the low bits for a Bits type */
+/* the BigInt of a finite integral double */
+static uint32_t big_of_double(G *g, double d)
+{
+    if (fabs(d) < 0x1p100)
+        return big_of_i128(g, (v128)d);
+    int ex;
+    double frac = frexp(fabs(d), &ex);
+    limba_big t;
+    limba_big_init(&t);
+    limba_big_set_u64(&t, (uint64_t)ldexp(frac, 53));
+    limba_big_shl_lim(&t, &t, (uint32_t)(ex - 53), 2048);
+    if (d < 0)
+        limba_big_neg(&t, &t);
+    return new_big(g, &t);
+}
+
+/* T(v) with a BigInt on either side (§ 6.6): exact from an integer, half
+   away from zero from a real (NaN and the infinities 103), rounded once
+   to a real, the low bits to a Bits type, into any other integer type
+   only if it fits */
+static v128 big_convert(X *x, uint32_t i, unsigned from, uint32_t to, v128 v)
+{
+    G *g = x->g;
+    unsigned t = base(g, to);
+    if (from == T_BIG && t == T_BIG)
+        return v;
+    if (t == T_BIG) {
+        if (fam(from) != 'F')
+            return big_of_i128(g, v);
+        double d = round(fval(v));
+        if (!isfinite(d))
+            return fail(x, i, 103);
+        return big_of_double(g, d);
+    }
+    const limba_big *b = &g->big[(uint32_t)v];
+    if (fam(t) == 'F') {
+        limba_rat q;
+        limba_rat_init(&q);
+        limba_rat_set_big(&q, b);
+        double d;
+        float f;
+        if (t == T_F32) {
+            if (!limba_rat_to_f32(&q, &f))
+                f = b->neg ? -INFINITY : INFINITY;
+            d = f;
+        } else if (!limba_rat_to_f64(&q, &d)) {
+            d = b->neg ? -INFINITY : INFINITY;
+        }
+        limba_rat_free(&q);
+        return fbits(d);
+    }
+    if (fam(t) == 'B') { /* the low 64 bits, in two's complement */
+        uint64_t low = b->n == 0   ? 0
+                       : b->n == 1 ? b->w[0]
+                                   : (uint64_t)b->w[1] << 32 | b->w[0];
+        return wrap(t, (v128)(b->neg ? 0 - low : low));
+    }
+    v128 w;
+    if (!big_i128(g, v, &w) || w < lo_of(g, to) || w > hi_of(g, to))
+        return fail(x, i, 103);
+    return w;
+}
+
 static v128 convert(X *x, uint32_t i, unsigned from, uint32_t to, v128 v)
 {
     const G *g = x->g;
     unsigned t = base(g, to);
+    if (from == T_BIG || t == T_BIG)
+        return big_convert(x, i, from, to, v);
     if (fam(t) == 'F') {
         if (fam(from) == 'F')
             return fres(t, fval(v));
@@ -4420,6 +4715,15 @@ static v128 ev(X *x, uint32_t i)
             return 0;
         if (fam(t) == 'F') /* the sign bit, as IEEE 754 negate and abs */
             return e->op == O_NEG ? fbits(-fval(v)) : fbits(fabs(fval(v)));
+        if (t == T_BIG) {
+            limba_big r;
+            limba_big_init(&r);
+            if (e->op == O_NEG)
+                limba_big_neg(&r, &x->g->big[(uint32_t)v]);
+            else
+                limba_big_abs(&r, &x->g->big[(uint32_t)v]);
+            return new_big(x->g, &r);
+        }
         if (e->op == O_NOT)
             return t == T_BOOL ? !v : wrap(t, ~v);
         if (e->op == O_NEG && fam(t) == 'B')
@@ -4662,7 +4966,9 @@ static v128 ev(X *x, uint32_t i)
 
 static void print_value(const G *g, text *o, unsigned t, v128 v)
 {
-    if (t == T_STR) {
+    if (t == T_BIG) {
+        put_big(o, g, v);
+    } else if (t == T_STR) {
         putn(o, g->str[(uint32_t)v].b, g->str[(uint32_t)v].n);
     } else if (t == T_CHAR) {
         char b[4];
@@ -5058,6 +5364,9 @@ static void g_free(G *g)
     for (uint32_t k = 0; k < g->nstr; k++)
         free(g->str[k].b);
     free(g->str);
+    for (uint32_t k = 0; k < g->nbig; k++)
+        limba_big_free(&g->big[k]);
+    free(g->big);
 }
 
 static bool attempt(uint64_t seed, limba_lxgen *p)
@@ -5068,6 +5377,9 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     g.cur = -1;
     new_e(&g, E_LIT, 0); /* node 0 stands for none */
     new_str(&g, "", 0);  /* string 0 is empty */
+    limba_big zero;
+    limba_big_init(&zero);
+    new_big(&g, &zero); /* BigInt 0 is zero */
     /* the command line and the input: pieces like those of the literals,
        and texts for val */
     g.narg = below(&g, 4);
@@ -5102,7 +5414,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         /* an index: a short range, or an enumeration */
         uint32_t ix = en && chance(&g, 30) ? en : new_range(&g, true);
         /* Strings too: counted in memory, copied with the array */
-        uint32_t el = chance(&g, 20) ? T_STR : var_type(&g);
+        uint32_t el = counted_or_var(&g, 20);
         arrays[narrays++] =
             new_type(&g, (xt){K_ARRAY, (uint8_t)base(&g, el), ix, el,
                               lo_of(&g, ix), hi_of(&g, ix), 0, 0});
@@ -5113,7 +5425,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         uint32_t first = g.nfld, nf = 1 + below(&g, 4);
         bool strings = false;
         for (uint32_t f = 0; f < nf; f++) {
-            uint32_t ft = chance(&g, 25) ? T_STR : var_type(&g);
+            uint32_t ft = counted_or_var(&g, 25);
             strings |= ft == T_STR;
             LIMBA_GROW(g.fld, g.nfld, g.capfld);
             g.fld[g.nfld++] = ft;
@@ -5136,7 +5448,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
        (§ 3.10, § 9.7) */
     for (uint32_t k = 0, n = below(&g, 3); k < n; k++) {
         unsigned ix = int_type(&g);
-        uint32_t el = chance(&g, 20) ? T_STR : var_type(&g);
+        uint32_t el = counted_or_var(&g, 20);
         uint32_t ot = new_type(
             &g, (xt){K_OPEN, (uint8_t)base(&g, el), ix, el, 0, 0, 0, 0});
         new_type(&g, (xt){K_HEAP, T_BOOL, 0, ot, 0, 0, 0, 0});

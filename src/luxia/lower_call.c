@@ -271,6 +271,8 @@ static limba_id to_string(lxl *L, limba_id v, limba_ltype t, limba_id dec)
         return lxl_rt(L, LIMBA_RT_STR_FROM_BOOL, LIMBA_T_STR, &v, 1);
     case LIMBA_LTK_CHAR:
         return lxl_rt(L, LIMBA_RT_STR_FROM_CHAR, LIMBA_T_STR, &v, 1);
+    case LIMBA_LTK_BIGINT:
+        return lxl_rt(L, LIMBA_RT_STR_FROM_BIG, LIMBA_T_STR, &v, 1);
     }
     return v; /* a String */
 }
@@ -292,6 +294,9 @@ static void lx_print(lxl *L, limba_id v, limba_ltype t)
         break;
     case LIMBA_LTK_CHAR:
         rt = LIMBA_RT_PRINT_CHAR;
+        break;
+    case LIMBA_LTK_BIGINT:
+        rt = LIMBA_RT_PRINT_BIG;
         break;
     }
     lxl_rt(L, rt, LIMBA_T_VOID, &v, 1);
@@ -477,6 +482,26 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         uint32_t xn = arg(L, node, 1);
         limba_ltype xt = S->type[xn];
         const limba_typeinfo *x = ti(L, xt);
+        if (x->kind == LIMBA_LTK_BIGINT) {
+            /* any integer: through a typed slot, counted */
+            limba_id tmpb = lxl_temp(L, xt, node);
+            uint32_t ab[2] = {lxl_value(L, a0), tmpb};
+            limba_id okb = lxl_rt(L, LIMBA_RT_STR_TO_BIG, LIMBA_T_I1, ab, 2);
+            limba_id yes = limba_ssa_block(L->ssa),
+                     done = limba_ssa_block(L->ssa);
+            limba_ssa_cbr(L->ssa, L->cur, okb, yes, done);
+            limba_ssa_seal(L->ssa, yes);
+            L->cur = yes;
+            uint32_t so[2] = {un(L, LIMBA_OP_LOAD, LIMBA_T_REF, tmpb),
+                              lxl_addr(L, xn)};
+            lxl_live(L, so[1]);
+            lxl_emit(L, LIMBA_OP_STORE, LIMBA_T_VOID, 0, 0, 0, so, 2);
+            limba_ssa_br(L->ssa, L->cur, done);
+            limba_ssa_seal(L->ssa, done);
+            L->cur = done;
+            *result = okb;
+            return;
+        }
         bool real = ti(L, lxs_base(S, xt))->kind == LIMBA_LTK_FLOAT;
         limba_id it = lxl_type(L, xt), tmp = temp(L);
         uint32_t a[4] = {lxl_value(L, a0), tmp,
@@ -680,7 +705,7 @@ void lxl_call(lxl *L, uint32_t node, limba_id *result)
         uint32_t a = arg(L, node, 0);
         limba_id v = lxl_value(L, a);
         lxl_at(L, node);
-        *result = lxl_conv(L, v, S->type[a], S->type[node]);
+        *result = lxl_conv_at(L, v, S->type[a], S->type[node], node);
         return;
     }
     case LIMBA_LSYM_ROUTINE:

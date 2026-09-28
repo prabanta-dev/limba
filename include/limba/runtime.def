@@ -104,3 +104,47 @@ LIMBA_RT(STR_FROM_F32, "str_from_f32", "(f32) -> str", LIMBA_RTA_ALLOC)
 /* is p a live block of mem_alloc (its start, not freed)? The dangling
    check: check ptr_live(p), 105 right before an access through p */
 LIMBA_RT(PTR_LIVE, "ptr_live", "(ptr) -> i1", LIMBA_RTA_READS_HEAP)
+/* BigInt (luxia_0.md § 3.12, progetto_ir.md § 11d): a ref counted as a
+   str, immutable, 0 for the handle 0; every operation gives a new value.
+   The checks come before, in the IR: a divisor is never 0, an exponent
+   never negative (read without a sign), a real finite and integral */
+LIMBA_RT(BIG_FROM_I64, "big_from_i64", "(i64) -> ref", LIMBA_RTA_ALLOC)
+LIMBA_RT(BIG_FROM_U64, "big_from_u64", "(i64) -> ref", LIMBA_RTA_ALLOC)
+/* a constant past 64 bits: its decimal digits, a '-' first if negative */
+LIMBA_RT(BIG_LIT, "big_lit", "(str) -> ref",
+         LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+/* false, and nothing written, if the value does not fit */
+LIMBA_RT(BIG_TO_I64, "big_to_i64", "(ref, ptr) -> i1", LIMBA_RTA_WRITES_MEM)
+LIMBA_RT(BIG_TO_U64, "big_to_u64", "(ref, ptr) -> i1", LIMBA_RTA_WRITES_MEM)
+/* the low 64 bits, in two's complement */
+LIMBA_RT(BIG_TO_BITS, "big_to_bits", "(ref) -> i64", LIMBA_RTA_PURE)
+LIMBA_RT(BIG_FROM_F64, "big_from_f64", "(f64) -> ref", LIMBA_RTA_ALLOC)
+/* rounded once, to nearest even, straight to the type; past its largest
+   finite value an infinity with the sign */
+LIMBA_RT(BIG_TO_F64, "big_to_f64", "(ref) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(BIG_TO_F32, "big_to_f32", "(ref) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(BIG_ADD, "big_add", "(ref, ref) -> ref",
+         LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+LIMBA_RT(BIG_SUB, "big_sub", "(ref, ref) -> ref",
+         LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+LIMBA_RT(BIG_MUL, "big_mul", "(ref, ref) -> ref",
+         LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+LIMBA_RT(BIG_NEG, "big_neg", "(ref) -> ref", LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+LIMBA_RT(BIG_ABS, "big_abs", "(ref) -> ref", LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+/* div truncates, rem has the sign of the dividend, mod of the divisor */
+LIMBA_RT(BIG_DIV, "big_div", "(ref, ref) -> ref",
+         LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+LIMBA_RT(BIG_REM, "big_rem", "(ref, ref) -> ref",
+         LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+LIMBA_RT(BIG_MOD, "big_mod", "(ref, ref) -> ref",
+         LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+/* exact for the bases 0, 1 and -1 with any exponent (0 ** 0 is 1) */
+LIMBA_RT(BIG_POW, "big_pow", "(ref, i64) -> ref",
+         LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+/* exactly -1, 0 or 1 */
+LIMBA_RT(BIG_CMP, "big_cmp", "(ref, ref) -> i32", LIMBA_RTA_PURE)
+LIMBA_RT(BIG_SIGN, "big_sign", "(ref) -> i32", LIMBA_RTA_PURE)
+LIMBA_RT(PRINT_BIG, "print_big", "(ref) -> void", LIMBA_RTA_IO)
+LIMBA_RT(STR_FROM_BIG, "str_from_big", "(ref) -> str", LIMBA_RTA_ALLOC)
+/* val: the text of an integer of Luxia (limba_val_big), any size */
+LIMBA_RT(STR_TO_BIG, "str_to_big", "(str, ptr) -> i1", LIMBA_RTA_WRITES_MEM)

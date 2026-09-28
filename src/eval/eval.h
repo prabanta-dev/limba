@@ -34,7 +34,9 @@ enum limba_eval_status {
     LIMBA_EVAL_UNREACHABLE, /* executed unreachable */
     LIMBA_EVAL_LIMIT,       /* too many steps */
     LIMBA_EVAL_UNSUPPORTED, /* call.ext: no C here */
-    LIMBA_EVAL_BAD,         /* no such entry, or it takes parameters */
+    LIMBA_EVAL_BAD,         /* no such entry, or it takes parameters, or the
+                               module skips a check a call of the runtime needs
+                               before it (a BigInt divided by 0) */
     LIMBA_EVAL_HALT,        /* halt(code): code is the exit status */
     /* check_mem: a rule of the strings in memory broken (progetto_ir.md
        § 11c): a str read or written as another type, or as a part, a

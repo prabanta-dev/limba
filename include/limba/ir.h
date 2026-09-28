@@ -367,8 +367,12 @@ bool limba_type_is_int(limba_id t); /* i1 .. i64 */
 bool limba_type_is_float(limba_id t);
 /* bits of an integer type, 0 for anything else */
 unsigned limba_type_bits(limba_id t);
-/* does a value of type t hold a str: itself, a field, an element, at any
-   depth? What retain, release and a typed slot count */
+/* does a value of type t hold a counted handle, a str or a ref: itself, a
+   field, an element, at any depth? What retain, release and a typed slot
+   count (progetto_ir.md § 11c) */
+bool limba_type_counted(const limba_module *m, limba_id t);
+/* the former name of limba_type_counted, the same answer: a ref counts
+   as a str does */
 bool limba_type_holds_str(const limba_module *m, limba_id t);
 
 limba_id limba_global_add(limba_module *m, limba_id name, limba_id type,

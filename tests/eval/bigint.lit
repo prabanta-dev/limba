@@ -1,0 +1,252 @@
+; output: 9007199254740992.0
+; output: 9007199254740996.0
+; output: -9007199254740996.0
+; output: 16777216.0
+; output: 16777220.0
+; output: 1.1529216e+18
+; output: 3.4028235e+38
+; output: inf
+; output: -inf
+; output: 1.7976931348623157e+308
+; output: inf
+; output: -inf
+; output: 9223372036854775808
+; output: 1000000000000000052504760255204420248704468581108159154915854115511802457988908195786371375080447864043704443832883878176942523235360430575644792184786706982848387200926575803737830233794788090059368953234970799945081119038967640880074652742780142494579258788820056842838115669472196386865459400540160
+; output: -2
+; output: 1
+; output: -1
+; output: 0
+; output: -1
+; output: 1
+; output: 1
+; output: 0
+; output: 1
+; output: 1267650600228229401496703205376
+; output: -3
+; output: -1
+; output: 1
+; output: -3
+; output: 1
+; output: -1
+; output: 0
+; output: 1
+; output: -9223372036854775808
+; output: 5
+; output: 18446744073709551615
+; output: -123456789012345678901234567890
+; output: 1
+; output: -255
+; output: 0
+; output: 1
+; output: 1000000000000000000000
+; result: 0
+; BigInt in the reference interpreter: rounding to reals once and straight
+; to the type (2^53 + 1, 2^53 + 3, 2^24 + 1, 2^24 + 3, a value that would
+; round twice through f64, the largest finite values and past them), from
+; reals, big_cmp exactly -1, 0, 1, powers of 0, 1 and -1 with any exponent,
+; div, rem and mod, conversions to integers, text; a BigInt in a typed slot
+; counted and released at the exit
+func @main : fn() -> i64 {
+  slot 8 align 8
+  slot 8 align 8 type ref
+b0:
+  v0 = sconst str "9007199254740993"
+  v1 = call.rt ref big_lit(v0)
+  v2 = call.rt f64 big_to_f64(v1)
+  call.rt void print_f64(v2)
+  call.rt void print_nl()
+  v3 = sconst str "9007199254740995"
+  v4 = call.rt ref big_lit(v3)
+  v5 = call.rt f64 big_to_f64(v4)
+  call.rt void print_f64(v5)
+  call.rt void print_nl()
+  v6 = sconst str "-9007199254740995"
+  v7 = call.rt ref big_lit(v6)
+  v8 = call.rt f64 big_to_f64(v7)
+  call.rt void print_f64(v8)
+  call.rt void print_nl()
+  v9 = sconst str "16777217"
+  v10 = call.rt ref big_lit(v9)
+  v11 = call.rt f32 big_to_f32(v10)
+  call.rt void print_f32(v11)
+  call.rt void print_nl()
+  v12 = sconst str "16777219"
+  v13 = call.rt ref big_lit(v12)
+  v14 = call.rt f32 big_to_f32(v13)
+  call.rt void print_f32(v14)
+  call.rt void print_nl()
+  v15 = sconst str "1152921573326323713"
+  v16 = call.rt ref big_lit(v15)
+  v17 = call.rt f32 big_to_f32(v16)
+  call.rt void print_f32(v17)
+  call.rt void print_nl()
+  v18 = sconst str "340282356779733661637539395458142568447"
+  v19 = call.rt ref big_lit(v18)
+  v20 = call.rt f32 big_to_f32(v19)
+  call.rt void print_f32(v20)
+  call.rt void print_nl()
+  v21 = sconst str "340282356779733661637539395458142568448"
+  v22 = call.rt ref big_lit(v21)
+  v23 = call.rt f32 big_to_f32(v22)
+  call.rt void print_f32(v23)
+  call.rt void print_nl()
+  v24 = sconst str "-340282356779733661637539395458142568448"
+  v25 = call.rt ref big_lit(v24)
+  v26 = call.rt f32 big_to_f32(v25)
+  call.rt void print_f32(v26)
+  call.rt void print_nl()
+  v27 = sconst str "179769313486231580793728971405303415079934132710037826936173778980444968292764750946649017977587207096330286416692887910946555547851940402630657488671505820681908902000708383676273854845817711531764475730270069855571366959622842914819860834936475292719074168444365510704342711559699508093042880177904174497791"
+  v28 = call.rt ref big_lit(v27)
+  v29 = call.rt f64 big_to_f64(v28)
+  call.rt void print_f64(v29)
+  call.rt void print_nl()
+  v30 = sconst str "179769313486231580793728971405303415079934132710037826936173778980444968292764750946649017977587207096330286416692887910946555547851940402630657488671505820681908902000708383676273854845817711531764475730270069855571366959622842914819860834936475292719074168444365510704342711559699508093042880177904174497792"
+  v31 = call.rt ref big_lit(v30)
+  v32 = call.rt f64 big_to_f64(v31)
+  call.rt void print_f64(v32)
+  call.rt void print_nl()
+  v33 = sconst str "-179769313486231580793728971405303415079934132710037826936173778980444968292764750946649017977587207096330286416692887910946555547851940402630657488671505820681908902000708383676273854845817711531764475730270069855571366959622842914819860834936475292719074168444365510704342711559699508093042880177904174497792"
+  v34 = call.rt ref big_lit(v33)
+  v35 = call.rt f64 big_to_f64(v34)
+  call.rt void print_f64(v35)
+  call.rt void print_nl()
+  v36 = fconst f64 0x1p+63
+  v37 = call.rt ref big_from_f64(v36)
+  call.rt void print_big(v37)
+  call.rt void print_nl()
+  v38 = fconst f64 0x1.7e43c8800759cp+996
+  v39 = call.rt ref big_from_f64(v38)
+  call.rt void print_big(v39)
+  call.rt void print_nl()
+  v40 = fconst f64 -0x1p+1
+  v41 = call.rt ref big_from_f64(v40)
+  call.rt void print_big(v41)
+  call.rt void print_nl()
+  v42 = sconst str "1000000000000000000000000000000"
+  v43 = call.rt ref big_lit(v42)
+  v44 = sconst str "-1000000000000000000000000000000"
+  v45 = call.rt ref big_lit(v44)
+  v46 = call.rt i32 big_cmp(v43, v45)
+  v47 = sext i64 v46
+  call.rt void print_i64(v47)
+  call.rt void print_nl()
+  v48 = call.rt i32 big_cmp(v45, v43)
+  v49 = sext i64 v48
+  call.rt void print_i64(v49)
+  call.rt void print_nl()
+  v50 = call.rt i32 big_cmp(v43, v43)
+  v51 = sext i64 v50
+  call.rt void print_i64(v51)
+  call.rt void print_nl()
+  v52 = iconst i64 -1
+  v53 = iconst i64 0
+  v54 = iconst i64 1
+  v55 = iconst i64 2
+  v56 = iconst i64 100
+  v57 = call.rt ref big_from_i64(v52)
+  v58 = call.rt ref big_pow(v57, v52)
+  call.rt void print_big(v58)
+  call.rt void print_nl()
+  v59 = call.rt ref big_from_i64(v52)
+  v60 = iconst i64 -2
+  v61 = call.rt ref big_pow(v59, v60)
+  call.rt void print_big(v61)
+  call.rt void print_nl()
+  v62 = call.rt ref big_from_i64(v53)
+  v63 = call.rt ref big_pow(v62, v53)
+  call.rt void print_big(v63)
+  call.rt void print_nl()
+  v64 = call.rt ref big_from_i64(v53)
+  v65 = call.rt ref big_pow(v64, v52)
+  call.rt void print_big(v65)
+  call.rt void print_nl()
+  v66 = call.rt ref big_from_i64(v54)
+  v67 = call.rt ref big_pow(v66, v52)
+  call.rt void print_big(v67)
+  call.rt void print_nl()
+  v68 = call.rt ref big_from_i64(v55)
+  v69 = call.rt ref big_pow(v68, v56)
+  call.rt void print_big(v69)
+  call.rt void print_nl()
+  v70 = iconst i64 -7
+  v71 = iconst i64 2
+  v72 = call.rt ref big_from_i64(v70)
+  v73 = call.rt ref big_from_i64(v71)
+  v74 = call.rt ref big_div(v72, v73)
+  call.rt void print_big(v74)
+  call.rt void print_nl()
+  v75 = call.rt ref big_rem(v72, v73)
+  call.rt void print_big(v75)
+  call.rt void print_nl()
+  v76 = call.rt ref big_mod(v72, v73)
+  call.rt void print_big(v76)
+  call.rt void print_nl()
+  v77 = iconst i64 7
+  v78 = iconst i64 -2
+  v79 = call.rt ref big_from_i64(v77)
+  v80 = call.rt ref big_from_i64(v78)
+  v81 = call.rt ref big_div(v79, v80)
+  call.rt void print_big(v81)
+  call.rt void print_nl()
+  v82 = call.rt ref big_rem(v79, v80)
+  call.rt void print_big(v82)
+  call.rt void print_nl()
+  v83 = call.rt ref big_mod(v79, v80)
+  call.rt void print_big(v83)
+  call.rt void print_nl()
+  v84 = slot ptr $0
+  v85 = sconst str "9223372036854775808"
+  v86 = call.rt ref big_lit(v85)
+  v87 = call.rt i1 big_to_i64(v86, v84)
+  v88 = zext i64 v87
+  call.rt void print_i64(v88)
+  call.rt void print_nl()
+  v89 = sconst str "-9223372036854775808"
+  v90 = call.rt ref big_lit(v89)
+  v91 = call.rt i1 big_to_i64(v90, v84)
+  v92 = zext i64 v91
+  call.rt void print_i64(v92)
+  call.rt void print_nl()
+  v93 = load i64 v84
+  call.rt void print_i64(v93)
+  call.rt void print_nl()
+  v94 = sconst str "18446744073709551621"
+  v95 = call.rt ref big_lit(v94)
+  v96 = call.rt i64 big_to_bits(v95)
+  call.rt void print_u64(v96)
+  call.rt void print_nl()
+  v97 = sconst str "-1"
+  v98 = call.rt ref big_lit(v97)
+  v99 = call.rt i64 big_to_bits(v98)
+  call.rt void print_u64(v99)
+  call.rt void print_nl()
+  v100 = sconst str "-123456789012345678901234567890"
+  v101 = call.rt ref big_lit(v100)
+  v102 = call.rt str str_from_big(v101)
+  call.rt void print_str(v102)
+  call.rt void print_nl()
+  v103 = slot ptr $1
+  v104 = sconst str " -0xff\t"
+  v105 = call.rt i1 str_to_big(v104, v103)
+  v106 = zext i64 v105
+  call.rt void print_i64(v106)
+  call.rt void print_nl()
+  v107 = load ref v103
+  call.rt void print_big(v107)
+  call.rt void print_nl()
+  v108 = sconst str "0x_ff"
+  v109 = call.rt i1 str_to_big(v108, v103)
+  v110 = zext i64 v109
+  call.rt void print_i64(v110)
+  call.rt void print_nl()
+  v111 = sconst str "1_000_000_000_000_000_000_000"
+  v112 = call.rt i1 str_to_big(v111, v103)
+  v113 = zext i64 v112
+  call.rt void print_i64(v113)
+  call.rt void print_nl()
+  v114 = load ref v103
+  call.rt void print_big(v114)
+  call.rt void print_nl()
+  v115 = iconst i64 0
+  ret v115
+}

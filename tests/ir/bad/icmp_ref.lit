@@ -1,0 +1,8 @@
+; expect: icmp: operand and result types
+; two BigInt compared by their handles: the sharing would show, a
+; BigInt is compared by value (big_cmp)
+func @same : fn(ref, ref) -> i1 {
+b0(v0: ref, v1: ref):
+  v2 = icmp.eq i1 v0, v1
+  ret v2
+}

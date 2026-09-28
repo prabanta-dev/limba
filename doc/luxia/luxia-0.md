@@ -191,6 +191,8 @@ Three families of integers, separated by **intent**:
   surrogate.
 - **`String`**: a sequence of UTF-8 bytes, **immutable** and
   reference-counted. See § 3.8.
+- **`BigInt`**: a signed integer of any size, **immutable** and
+  reference-counted. See § 3.12.
 
 ### 3.4 Subtypes with a range
 
@@ -366,7 +368,8 @@ This follows Ada's treatment of uninitialised objects in its strict form
   elements too) whose subtype is narrower than its base type receives an
   **invalid value**, outside the subtype: `lo - 1`, or `hi + 1` if `lo` is
   the minimum of the base type — even when 0 would be valid. All other
-  scalars are 0 (`false`, `nil`), and a `String` is `""`.
+  scalars are 0 (`false`, `nil`), a `String` is `""` and a `BigInt` is
+  0.
 - **Reading a component** of a narrow subtype (`r.f`, `a[i]`, `p.f`, `p^`,
   `p[i]`, also in a chain, also of a function result) checks its value;
   an invalid value is a range error, reported at the `.`, `^` or `[`.
@@ -376,6 +379,33 @@ This follows Ada's treatment of uninitialised objects in its strict form
   component) is not checked in Luxia 0: it keeps the invalid value.
 - A scalar variable needs none of this: reading it before assigning it is
   a compile-time error (definite assignment, § 5.5).
+
+### 3.12 Integers of any size
+
+`BigInt` is a signed integer of any size, as Ada 2022's `Big_Integer`.
+
+- Its arithmetic **never overflows**: `+`, `-`, `*`, `**`, `abs` and the
+  unary minus give the exact value. The only limit is memory: a value
+  that does not fit in it stops the program with "out of memory"
+  (§ 10.1), as a string does.
+- It is **immutable and reference-counted**, as a `String`: an
+  assignment shares a value, every operation makes a new one, and the
+  sharing is never visible. Two `BigInt` values are compared by value,
+  never by identity.
+- It goes wherever a `String` goes: variables, constants, parameters of
+  every mode, results, fields of records, elements of arrays (made by
+  `new` too), globals. Without an initial value it is 0 (§ 3.11).
+- It is **not a discrete type**: it is not an index, a bound of `for`, a
+  selector of `case`, nor an argument of `succ`, `pred`, `ord`, `low` or
+  `high`. It is **not a bit type**: no `and`, `or`, `xor`, `not`, `shl`,
+  `shr` (`x * 2 ** k` and `x div 2 ** k` are written instead). It is not
+  the exponent of `**`, the count of a shift, nor the argument of `chr`:
+  those take an integer type of a fixed size.
+- A distinct type may be made of it (`type Money = new BigInt`); a
+  subtype with a range may not, in Luxia 0.
+- Its operations are those of the integers (§ 6.3), its conversions
+  those of § 6.6; `write`, `str` and `val` take it as any integer
+  (§ 9.1, § 9.4).
 
 ## 4. Constants and constant expressions
 
@@ -388,6 +418,8 @@ it. `var b: UInt8 := 300` is a compile-time error.
   representable** in that type: `var f: Float32 := 1` is allowed,
   `var f: Float32 := 16_777_217` is an error (2^24 + 1 is not exact in
   `Float32`).
+- An integer constant of any size takes the type `BigInt`:
+  `var g: BigInt := 123_456_789_012_345_678_901_234_567_890` is allowed.
 - A real constant never takes an integer type implicitly:
   `var i: Int32 := 1.0` is an error; the conversion is written,
   `Int32(1.0)`.
@@ -408,6 +440,10 @@ const K = 2**40 div 2**20;   // 1_048_576, no intermediate overflow
 **Real constants are exact rationals**: `0.1 + 0.2 = 0.3` is true between
 constants, and rounding to `Float32` or `Float64` happens once, when the
 constant takes its type.
+
+A constant expression of type `BigInt` is computed by the compiler like
+any other. A compiler may bound the size of the constants it computes
+(Limba: 16 384 bits); a larger one is a compile-time error.
 
 The static operations are `+ - * /`, `**` with an integer exponent,
 comparisons, `abs`, conversions, and `low(T)`/`high(T)` of a discrete
@@ -555,6 +591,13 @@ Records and arrays are not compared as a whole.
   The result is the IEEE 754 `pow` computed in `Float64` and rounded once
   to the type of `x`; a negative exponent gives the reciprocal
   (`0.0 ** -1` is `inf`). There is no run-time error.
+- On **`BigInt`** (§ 3.12) nothing overflows; `div`, `mod` and `rem`
+  follow the rules above, and a division by zero is a run-time error.
+  `x ** n` takes `n` of any integer type, **non-negative** (a range error
+  otherwise, as above); `x ** 0` is 1, `0 ** 0` included. For the bases
+  0, 1 and −1 the result is exact for every `n`, however large (0, 1 or
+  ±1); for any other base a result too large for the memory is "out of
+  memory".
 - **Shifts**: `x shl n` and `x shr n` take `x` of a `BitsN` type only and
   `n` of any integer type. `shr` is a **logical** shift: zeros are shifted
   in. A count below zero, or equal to or above the width of `x`, is a
@@ -591,6 +634,21 @@ A conversion is written as a call of the target type: `Float64(i)`,
 - **Integer to `BitsN`** keeps the low bits of the value, in two's
   complement: `BitsN(x)` from a wider type truncates, and a negative value
   wraps. It is the only conversion that cuts bits, and it is written.
+- **Integer to `BigInt`**: `BigInt(i)` from any integer type is exact (a
+  `BitsN` value as an unsigned number). **`BigInt` to integer**:
+  `Int32(b)`, `UInt64(b)` and the like follow the rule of integer to
+  integer (the value must fit, its range included, or it is a conversion
+  error); `BitsN(b)` keeps the low bits, as above.
+- **Real to `BigInt`**: `BigInt(x)` rounds as `Int32(x)` does, **half away
+  from zero** (`BigInt(2.5)` is 3, `BigInt(-2.5)` is −3); a NaN or an
+  infinity is a conversion error. Every finite real that is an integer is
+  a `BigInt` exactly.
+- **`BigInt` to real**: `Float64(b)` and `Float32(b)` round **once,
+  directly to the target type**, to the nearest value, ties to even (IEEE
+  754 roundTiesToEven); `Float32(b)` does not pass through `Float64`. A
+  value whose rounding exceeds the largest finite value of the type (from
+  that value plus half a unit in the last place upwards) gives an
+  infinity with the sign of `b`.
 
 ### 6.7 Order of evaluation
 
@@ -757,8 +815,8 @@ in Luxia 0.
   number, a `Boolean`, a `Char` or a `String`. `writeln` ends the line.
   Enumerations and pointers cannot be written (an enumeration is written
   through `ord`).
-- Integers are written in decimal; a `BitsN` value is written as an
-  unsigned number. A `Boolean` is written `true` or `false`. A constant
+- Integers are written in decimal, a `BigInt` with all its digits; a
+  `BitsN` value is written as an unsigned number. A `Boolean` is written `true` or `false`. A constant
   without a type is written as an `Int64` or a `Float64`.
 - `x:width` and `x:width:decimals` format an argument as in Pascal. They
   are allowed only in the arguments of `write` and `writeln`, and the
@@ -821,7 +879,7 @@ At the end of the file `s` becomes `""`: `s` always has a value, like an
   - a sign `+` or `-` may precede the number, and spaces and `TAB` around
     it are ignored, as in Ada;
   - an integer is stored if it fits in the type of `x`, ranges included
-    (`"-0"` fits in an unsigned type);
+    (`"-0"` fits in an unsigned type; a `BigInt` holds any integer);
   - a real (or an integer, in a real variable) is rounded **once** to the
     type of `x`, as a literal is; a text beyond the range of the type is
     not valid (`"1e400"`);
@@ -928,12 +986,13 @@ and with **exit status 1**, the same for every error. Luxia 0 has no
 handlers: every run-time error stops the program.
 
 When the program cannot get the memory it asks for (`new`, a string, a
-computed array), it stops in the same way with the message "out of
+`BigInt`, a computed array), it stops in the same way with the message "out of
 memory" and exit status 1 (as Ada's `Storage_Error`). How much memory a
 program may use depends on the implementation, and so does how much of
 it the local variables of calls take (an optimiser may put a routine's
 body in its caller); going past it is always this error, never a
-crash. This is not a check: it cannot be
+crash. A computation whose result is not used may be left out, and with
+it the memory it would take; a check is never left out. This is not a check: it cannot be
 suppressed.
 
 The same holds for calls nested too deeply, recursion without end for
@@ -1139,5 +1198,7 @@ and tools can anticipate them.
 - Types for hardware: bit layout of records, byte order, alignment,
   variables at fixed addresses, volatile access, sizes imposed on
   subtypes.
+- Subtypes of `BigInt` with a range; functions of `BigInt` beyond its
+  operators (greatest common divisor, square root, exact division).
 - Ownership of pointers, making `dispose` safe at compile time, and
   lifting the rule of § 3.10 on arguments reached through a pointer.

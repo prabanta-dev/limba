@@ -37,24 +37,30 @@ limba_id limba_scalar_find(const char *s, size_t len)
     return LIMBA_NONE;
 }
 
-bool limba_type_holds_str(const limba_module *m, limba_id t)
+bool limba_type_counted(const limba_module *m, limba_id t)
 {
     if (t >= m->ntypes)
         return false;
     const limba_type *ty = &m->types[t];
     switch (ty->kind) {
     case LIMBA_TK_STR:
+    case LIMBA_TK_REF:
         return true;
     case LIMBA_TK_ARRAY:
-        return limba_type_holds_str(m, ty->elem);
+        return limba_type_counted(m, ty->elem);
     case LIMBA_TK_STRUCT:
         for (uint32_t i = 0; i < ty->count; i++)
-            if (limba_type_holds_str(m, m->members[ty->first + i].type))
+            if (limba_type_counted(m, m->members[ty->first + i].type))
                 return true;
         return false;
     default:
         return false;
     }
+}
+
+bool limba_type_holds_str(const limba_module *m, limba_id t)
+{
+    return limba_type_counted(m, t);
 }
 
 bool limba_type_is_int(limba_id t)

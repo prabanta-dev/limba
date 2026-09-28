@@ -37,6 +37,8 @@ enum {
     LIMBA_LTK_UINT,  /* an integer constant not typed yet */
     LIMBA_LTK_UREAL, /* a real constant not typed yet */
     LIMBA_LTK_NIL,
+    LIMBA_LTK_BIGINT, /* an integer of any size: a counted handle, not
+                         discrete */
 };
 
 #define LIMBA_TF_SIGNED 1u
@@ -80,7 +82,7 @@ typedef struct {
     uint32_t nfield, capfield;
     limba_param *param;
     uint32_t nparam, capparam;
-    limba_ltype void_, uint, ureal, nil, bool_, char_, string;
+    limba_ltype void_, uint, ureal, nil, bool_, char_, string, bigint;
 } limba_types;
 
 void limba_types_init(limba_types *ts);

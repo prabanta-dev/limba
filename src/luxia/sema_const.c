@@ -304,7 +304,16 @@ uint32_t lxs_fold_binary(limba_lxs *S, uint32_t node, unsigned op, uint32_t a,
             int_divmod(NULL, &r, &x->num, &y->num, op == LX_KW_MOD);
         break;
     case LX_POWER: {
-        __int128 e;
+        __int128 e, base;
+        /* 0, 1 and -1 to any power are exact however large it is (0 ** 0
+           is 1): the rule of BigInt, true of every integer type */
+        if (lxs_value_to_int(S, b, &e) && e >= 0 &&
+            lxs_value_to_int(S, a, &base) && base >= -1 && base <= 1) {
+            __int128 p = e == 0 ? 1 : base == -1 ? (e & 1 ? -1 : 1) : base;
+            limba_rat_free(&r);
+            out = lxs_value_int(S, p);
+            return type && !lxs_fit(S, node, &out, type) ? 0 : out;
+        }
         if (!lxs_value_to_int(S, b, &e) || e > INT64_MAX || e < -INT64_MAX) {
             ok = false;
             break;

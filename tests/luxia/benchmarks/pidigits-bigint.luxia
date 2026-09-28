@@ -1,0 +1,63 @@
+// The Computer Language Benchmarks Game
+// https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
+//
+// pidigits in Luxia 0 with BigInt: the spigot algorithm of the reference
+// programs (Gibbons, "Unbounded spigot algorithms for the digits of pi"),
+// its arithmetic that of the language, as the programs with GMP have it.
+// The divisions truncate, as mpz_tdiv_q.
+program PiDigitsBig;
+
+var
+  acc: BigInt := 0;
+  den: BigInt := 1;
+  num: BigInt := 1;
+
+function ExtractDigit(nth: Int64): Int64;
+begin
+  return Int64((num * BigInt(nth) + acc) div den);
+end ExtractDigit;
+
+procedure EliminateDigit(d: Int64);
+begin
+  acc := (acc - den * BigInt(d)) * 10;
+  num := num * 10;
+end EliminateDigit;
+
+procedure NextTerm(k: Int64);
+begin
+  var k2 := BigInt(2 * k + 1);
+  acc := (acc + num * 2) * k2;
+  den := den * k2;
+  num := num * BigInt(k);
+end NextTerm;
+
+begin
+  var n: Int32 := 27;
+  if argcount() > 0 then
+    if not val(arg(1), n) then
+      halt(2);
+    end;
+  end;
+
+  var i: Int32 := 0;
+  var k: Int64 := 0;
+  while i < n do
+    k := k + 1;
+    NextTerm(k);
+    continue when num > acc;
+    var d := ExtractDigit(3);
+    continue when d <> ExtractDigit(4);
+    write(d);
+    i := i + 1;
+    if i mod 10 = 0 then
+      writeln(TAB, ":", i);
+    end;
+    EliminateDigit(d);
+  end;
+  if i mod 10 <> 0 then
+    for var j := 1 to 10 - i mod 10 do
+      write(" ");
+    end;
+    writeln(TAB, ":", i);
+  end;
+end PiDigitsBig.

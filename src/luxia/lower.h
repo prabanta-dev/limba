@@ -184,6 +184,9 @@ void lxl_call(lxl *L, uint32_t node, limba_id *result);
 limba_id lxl_var_addr(lxl *L, limba_sym s);
 /* T(x) between numbers, and a range narrowing */
 limba_id lxl_conv(lxl *L, limba_id v, limba_ltype from, limba_ltype to);
+/* the same, a BigInt on either side too (a temporary made for node) */
+limba_id lxl_conv_at(lxl *L, limba_id v, limba_ltype from, limba_ltype to,
+                     uint32_t node);
 /* an array: its address, and its bounds when computed (i64 values for an
    open parameter); through a nil pointer, the error is reported at at */
 void lxl_array_parts(lxl *L, uint32_t base, uint32_t at, limba_id *p,

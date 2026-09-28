@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- `BigInt`, a signed integer of any size (specification § 3.12, § 6.3,
+  § 6.6): no overflow, memory its only limit; immutable and counted as a
+  String, it goes wherever a String goes; not discrete, not bits, no
+  subtypes. Its operations are those of the integers; conversions are
+  exact from integers, half away from zero from reals, rounded once and
+  straight to the type towards reals (`Float32(b)` never through
+  `Float64`), checked towards integers; `write`, `str` and `val` take it.
+  In the IR a BigInt is a `ref`, counted by every rule of the strings,
+  compared by value (`big_cmp`, exactly -1, 0 or 1), never by its handle;
+  its functions are in `runtime.def`, `val.h` reads its text. The
+  reference interpreter runs it on `bigint.c`, whose division is now
+  Knuth's algorithm D and whose limit is an argument; the random Luxia
+  programs use it. pidigits has a second version with BigInt. The
+  specification (§ 10.1) says a computation whose result is not used may
+  be left out with the memory it would take; a check never is.
+- An exponent or a shift count of the wrong type is reported with its
+  operator (`'**' takes an exponent ...`), not the text of the operand.
 - Short functions go in line (`inline`, the first pass of `-O1`;
   `LIMBA_OPTSKIP=inline` turns it off). A direct call goes in line when
   its callee was optimised before the caller and, optimised, has at most

@@ -2,8 +2,10 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * bigint.c - integers and rationals of any size (see bigint.h). Plain
- * algorithms: schoolbook product, bit-by-bit division. The numbers of a
- * program's constants are small, and the size limit bounds the rest.
+ * algorithms: schoolbook product, Knuth's division (TAOCP vol. 2, 4.3.1,
+ * algorithm D, as Warren's Hacker's Delight writes it). The numbers of a
+ * program's constants are small, and the size limit bounds the rest; the
+ * reference interpreter gives its own limit (the _lim functions).
  */
 #include "bigint.h"
 
@@ -13,8 +15,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define MAXWORDS (LIMBA_BIG_MAXBITS / 32 + 2)
 
 void limba_big_init(limba_big *a)
 {
@@ -158,13 +158,13 @@ static void mag_sub(limba_big *t, const limba_big *a, const limba_big *b)
     trim(t);
 }
 
-static bool fits(const limba_big *a)
+static bool fits(const limba_big *a, uint64_t maxbits)
 {
-    return limba_big_bits(a) <= LIMBA_BIG_MAXBITS;
+    return limba_big_bits(a) <= maxbits;
 }
 
 static bool addsub(limba_big *r, const limba_big *a, const limba_big *b,
-                   bool bneg)
+                   bool bneg, uint64_t maxbits)
 {
     limba_big t;
     limba_big_init(&t);
@@ -179,19 +179,31 @@ static bool addsub(limba_big *r, const limba_big *a, const limba_big *b,
         t.neg = bneg;
     }
     trim(&t);
-    bool ok = fits(&t);
+    bool ok = fits(&t, maxbits);
     move(r, &t);
     return ok;
 }
 
+bool limba_big_add_lim(limba_big *r, const limba_big *a, const limba_big *b,
+                       uint64_t maxbits)
+{
+    return addsub(r, a, b, b->neg, maxbits);
+}
+
+bool limba_big_sub_lim(limba_big *r, const limba_big *a, const limba_big *b,
+                       uint64_t maxbits)
+{
+    return addsub(r, a, b, b->n ? !b->neg : false, maxbits);
+}
+
 bool limba_big_add(limba_big *r, const limba_big *a, const limba_big *b)
 {
-    return addsub(r, a, b, b->neg);
+    return limba_big_add_lim(r, a, b, LIMBA_BIG_MAXBITS);
 }
 
 bool limba_big_sub(limba_big *r, const limba_big *a, const limba_big *b)
 {
-    return addsub(r, a, b, b->n ? !b->neg : false);
+    return limba_big_sub_lim(r, a, b, LIMBA_BIG_MAXBITS);
 }
 
 void limba_big_neg(limba_big *r, const limba_big *a)
@@ -208,7 +220,13 @@ void limba_big_abs(limba_big *r, const limba_big *a)
 
 bool limba_big_mul(limba_big *r, const limba_big *a, const limba_big *b)
 {
-    if (limba_big_bits(a) + limba_big_bits(b) > LIMBA_BIG_MAXBITS + 1)
+    return limba_big_mul_lim(r, a, b, LIMBA_BIG_MAXBITS);
+}
+
+bool limba_big_mul_lim(limba_big *r, const limba_big *a, const limba_big *b,
+                       uint64_t maxbits)
+{
+    if ((uint64_t)limba_big_bits(a) + limba_big_bits(b) > maxbits + 1)
         return false;
     limba_big t;
     limba_big_init(&t);
@@ -227,7 +245,7 @@ bool limba_big_mul(limba_big *r, const limba_big *a, const limba_big *b)
     t.n = n;
     t.neg = a->neg != b->neg;
     trim(&t);
-    bool ok = fits(&t);
+    bool ok = fits(&t, maxbits);
     move(r, &t);
     return ok;
 }
@@ -258,15 +276,80 @@ static void shl_raw(limba_big *r, const limba_big *a, uint32_t bits)
 
 bool limba_big_shl(limba_big *r, const limba_big *a, uint32_t bits)
 {
-    if (limba_big_bits(a) + (uint64_t)bits > LIMBA_BIG_MAXBITS)
+    return limba_big_shl_lim(r, a, bits, LIMBA_BIG_MAXBITS);
+}
+
+bool limba_big_shl_lim(limba_big *r, const limba_big *a, uint32_t bits,
+                       uint64_t maxbits)
+{
+    if (a->n && limba_big_bits(a) + (uint64_t)bits > maxbits)
         return false;
     shl_raw(r, a, bits);
     return true;
 }
 
-static bool bit(const limba_big *a, uint32_t i)
+/* |u| = q |v| + r, 0 <= r < |v|, |u| >= |v| of two words or more:
+   algorithm D. The divisor is shifted until its top bit is set, so that
+   each estimate of a word of the quotient is at most two too large */
+static void mag_divmod(limba_big *q, limba_big *r, const limba_big *u,
+                       const limba_big *v)
 {
-    return i / 32 < a->n && (a->w[i / 32] >> (i % 32) & 1);
+    uint32_t m = u->n, n = v->n;
+    const uint64_t b = (uint64_t)1 << 32;
+    unsigned s = (unsigned)__builtin_clz(v->w[n - 1]);
+    uint32_t *vn = limba_xmalloc(n * sizeof(*vn));
+    uint32_t *un = limba_xmalloc((m + 1) * sizeof(*un));
+    for (uint32_t i = n - 1; i > 0; i--)
+        vn[i] = (uint32_t)(v->w[i] << s | (uint64_t)v->w[i - 1] >> (32 - s));
+    vn[0] = v->w[0] << s;
+    un[m] = (uint32_t)((uint64_t)u->w[m - 1] >> (32 - s));
+    for (uint32_t i = m - 1; i > 0; i--)
+        un[i] = (uint32_t)(u->w[i] << s | (uint64_t)u->w[i - 1] >> (32 - s));
+    un[0] = u->w[0] << s;
+    reserve(q, m - n + 1);
+    for (uint32_t j = m - n + 1; j-- > 0;) {
+        uint64_t num = (uint64_t)un[j + n] << 32 | un[j + n - 1];
+        uint64_t qhat = num / vn[n - 1], rhat = num % vn[n - 1];
+        while (qhat >= b || qhat * vn[n - 2] > (rhat << 32 | un[j + n - 2])) {
+            qhat--;
+            rhat += vn[n - 1];
+            if (rhat >= b)
+                break;
+        }
+        /* un[j .. j + n] -= qhat * vn */
+        int64_t k = 0, t;
+        for (uint32_t i = 0; i < n; i++) {
+            uint64_t p = qhat * vn[i];
+            t = (int64_t)un[i + j] - k - (int64_t)(p & 0xffffffffu);
+            un[i + j] = (uint32_t)t;
+            k = (int64_t)(p >> 32) - (t >> 32);
+        }
+        t = (int64_t)un[j + n] - k;
+        un[j + n] = (uint32_t)t;
+        if (t < 0) { /* one too large: add vn back */
+            qhat--;
+            uint64_t c = 0;
+            for (uint32_t i = 0; i < n; i++) {
+                c += (uint64_t)un[i + j] + vn[i];
+                un[i + j] = (uint32_t)c;
+                c >>= 32;
+            }
+            un[j + n] += (uint32_t)c;
+        }
+        q->w[j] = (uint32_t)qhat;
+    }
+    q->n = m - n + 1;
+    q->neg = false;
+    trim(q);
+    reserve(r, n);
+    for (uint32_t i = 0; i + 1 < n; i++)
+        r->w[i] = (uint32_t)(un[i] >> s | (uint64_t)un[i + 1] << (32 - s));
+    r->w[n - 1] = un[n - 1] >> s;
+    r->n = n;
+    r->neg = false;
+    trim(r);
+    free(vn);
+    free(un);
 }
 
 void limba_big_divmod(limba_big *q, limba_big *m, const limba_big *a,
@@ -287,34 +370,10 @@ void limba_big_divmod(limba_big *q, limba_big *m, const limba_big *a,
         tq.n = a->n;
         trim(&tq);
         limba_big_set_u64(&tr, rem);
+    } else if (mag_cmp(a, b) < 0) {
+        limba_big_abs(&tr, a); /* the quotient is 0 */
     } else {
-        limba_big mb;
-        limba_big_init(&mb);
-        limba_big_abs(&mb, b);
-        uint32_t nb = limba_big_bits(a);
-        reserve(&tq, a->n ? a->n : 1);
-        memset(tq.w, 0, (a->n ? a->n : 1) * sizeof(*tq.w));
-        tq.n = a->n;
-        for (uint32_t i = nb; i-- > 0;) {
-            limba_big_shl(&tr, &tr, 1);
-            if (bit(a, i)) {
-                if (tr.n == 0) {
-                    reserve(&tr, 1);
-                    tr.w[0] = 0;
-                    tr.n = 1;
-                }
-                tr.w[0] |= 1;
-            }
-            if (mag_cmp(&tr, &mb) >= 0) {
-                limba_big t;
-                limba_big_init(&t);
-                mag_sub(&t, &tr, &mb);
-                move(&tr, &t);
-                tq.w[i / 32] |= 1u << (i % 32);
-            }
-        }
-        trim(&tq);
-        limba_big_free(&mb);
+        mag_divmod(&tq, &tr, a, b);
     }
     tq.neg = tq.n && a->neg != b->neg;
     tr.neg = tr.n && a->neg;
@@ -328,9 +387,17 @@ void limba_big_divmod(limba_big *q, limba_big *m, const limba_big *a,
 
 bool limba_big_pow(limba_big *r, const limba_big *a, uint64_t e)
 {
+    return limba_big_pow_lim(r, a, e, LIMBA_BIG_MAXBITS);
+}
+
+bool limba_big_pow_lim(limba_big *r, const limba_big *a, uint64_t e,
+                       uint64_t maxbits)
+{
+    /* 0, 1 and -1 stay small for every e; |a| >= 2 has at least
+       (bits - 1) e + 1 bits */
     uint32_t bits = limba_big_bits(a);
     if (bits > 1 && e > 0 &&
-        (e > LIMBA_BIG_MAXBITS || (uint64_t)(bits - 1) * e > LIMBA_BIG_MAXBITS))
+        (e > maxbits || (uint64_t)(bits - 1) * e > maxbits))
         return false;
     limba_big result, base;
     limba_big_init(&result);
@@ -340,10 +407,10 @@ bool limba_big_pow(limba_big *r, const limba_big *a, uint64_t e)
     bool ok = true;
     while (e && ok) {
         if (e & 1)
-            ok = limba_big_mul(&result, &result, &base);
+            ok = limba_big_mul_lim(&result, &result, &base, maxbits);
         e >>= 1;
         if (e && ok)
-            ok = limba_big_mul(&base, &base, &base);
+            ok = limba_big_mul_lim(&base, &base, &base, maxbits);
     }
     move(r, &result);
     limba_big_free(&base);
@@ -399,6 +466,12 @@ bool limba_big_to_i64(const limba_big *a, int64_t *v)
 
 bool limba_big_parse(limba_big *r, const char *s, size_t n, unsigned base)
 {
+    return limba_big_parse_lim(r, s, n, base, LIMBA_BIG_MAXBITS);
+}
+
+bool limba_big_parse_lim(limba_big *r, const char *s, size_t n, unsigned base,
+                         uint64_t maxbits)
+{
     limba_big t;
     limba_big_init(&t);
     for (size_t i = 0; i < n; i++) {
@@ -416,7 +489,7 @@ bool limba_big_parse(limba_big *r, const char *s, size_t n, unsigned base)
             carry >>= 32;
         }
         if (carry) {
-            if (t.n >= MAXWORDS) {
+            if (t.n >= maxbits / 32 + 2) {
                 limba_big_free(&t);
                 return false;
             }
@@ -424,7 +497,7 @@ bool limba_big_parse(limba_big *r, const char *s, size_t n, unsigned base)
             t.w[t.n++] = (uint32_t)carry;
         }
     }
-    bool ok = fits(&t);
+    bool ok = fits(&t, maxbits);
     move(r, &t);
     return ok;
 }
@@ -874,7 +947,7 @@ static bool rat_round(const limba_rat *a, int mant, int emin, int emax,
         else
             shl_raw(&num, &num, (uint32_t)-s);
         limba_big_divmod(&q, &rem, &num, &den);
-        limba_big_shl(&rem, &rem, 1);
+        shl_raw(&rem, &rem, 1);
         int c = mag_cmp(&rem, &den);
         uint64_t m = 0;
         limba_big_to_u64(&q, &m);

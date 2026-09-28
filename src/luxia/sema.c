@@ -182,6 +182,7 @@ static void universe(limba_lxs *S)
     universe_type(S, "Boolean", S->ts.bool_);
     universe_type(S, "Char", S->ts.char_);
     universe_type(S, "String", S->ts.string);
+    universe_type(S, "BigInt", S->ts.bigint);
     static const struct {
         const char *name;
         int code;

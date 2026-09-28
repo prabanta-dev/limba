@@ -595,7 +595,28 @@ static const sema_case sema_cases[] = {
     {"program p; var y: Int32 range <>; begin end.", "L0049@1:19"},
     {"program p; type V = array[Int8 range <>] of Int8; function F(): V; "
      "begin end F; begin end.",
-     "L0049@1:65"},
+     "L0049@1:65"}, /* BigInt: not discrete, not bits, no range, no mixing, no
+    real constant, the limit of the constants */
+    {"program p; type R = BigInt range 1..10; begin end.", "L0050@1:21"},
+    {"program p; var a: array[BigInt] of Int32; begin end.", "L0027@1:25"},
+    {"program p; var b: BigInt := 2; i: Int32 := 2; begin i := i ** b; end.",
+     "L0028@1:63"},
+    {"program p; var b: BigInt := 2; begin b := b shl 1; end.", "L0028@1:45"},
+    {"program p; var b: BigInt := 65; begin writeln(chr(b)); end.",
+     "L0027@1:51"},
+    {"program p; var b: BigInt := 2; i: Int64 := 2; begin b := b + i; end.",
+     "L0027@1:60"},
+    {"program p; var b: BigInt := 1.5; begin end.", "L0027@1:29"},
+    {"program p; const C: BigInt = 2 ** 20000; begin end.", "L0031@1:32"},
+    {"program p; var b: BigInt := 2; begin case b of when 1: writeln(1); else writeln(2); end; end.",
+     "L0027@1:43"},
+    {"program p; var b: BigInt := 2; begin b := succ(b); end.", "L0027@1:48"},
+    {"program p; var b: BigInt := 2; begin for var i: BigInt := 1 to b do end; end.",
+     "L0027@1:59"},
+    {"program p; var b: BigInt := 2; begin b := b and b; end.", "L0028@1:45"},
+    {"program p; var b: BigInt := 2; begin writeln(b / b); end.", "L0028@1:48"},
+    {"program p; var b: BigInt := 2; begin writeln(low(BigInt)); end.",
+     "L0027@1:50"},
 };
 
 static void check_string(const char *src, char **errors)
@@ -644,606 +665,631 @@ typedef struct {
     const char *end;
 } run_case;
 
-static const run_case run_cases[] = {
-    {"program p; begin writeln(\"ciao, \", 42, ' ', true); end.",
-     "ciao, 42 true\n", "ok"},
-    /* integers: div truncates, mod has the sign of the divisor, rem of
-       the dividend */
-    {"program p;\nvar a, b, c: Int32;\nbegin\n  a := -7; b := 2; c := -2;\n"
-     "  writeln(a div b, \" \", a mod b, \" \", a rem b);\n  a := 7;\n"
-     "  writeln(a div c, \" \", a mod c, \" \", a rem c);\nend.",
-     "-3 1 -1\n-3 -1 1\n", "ok"},
-    {"program p; var a: Int8 := 100; begin a := a + a; writeln(a); end.", "",
-     "trap 6"},
-    {"program p; var u: UInt32 := 0; begin u := u - 1; end.", "", "trap 6"},
-    {"program p; var u: UInt8 := 16; begin u := u * u; end.", "", "trap 6"},
-    {"program p; var b: Bits8 := 250;\nbegin\n  b := b + 10; writeln(b);\n"
-     "  b := not b; writeln(b);\n  b := b shl 1; writeln(b);\nend.",
-     "4\n251\n246\n", "ok"},
-    {"program p; var b: Bits8 := 1; n: Int32 := 8; begin b := b shl n; "
-     "end.",
-     "", "trap 104"},
-    {"program p; type Vec = array[Int32 range 1..3] of Int32; var v: Vec; i: "
-     "Int32 := 4; begin v[i] := 1; end.",
-     "", "trap 100 at 1:91"},
-    {"program p; type P = Int32 range 0..100; var x: P; y: Int32 := 101; "
-     "begin x := y; end.",
-     "", "trap 101"},
-    {"program p; type N = record a: Int32; end; var p: ^N; begin p.a := 1; "
-     "end.",
-     "", "trap 102"},
-    {"program p; var a: Int32 := 1; z: Int32 := 0; begin writeln(a div z); "
-     "end.",
-     "", "trap 11 at 1:62"},
-    {"program p; function f(x: Int32): Int32; begin return 10 div x; end; "
-     "begin writeln(f(0)); end.",
-     "", "trap 11 at 1:57"},
-    {"program p; var a: Int64 := -9223372036854775807 - 1; m: Int64 := -1; "
-     "begin writeln(a div m); end.",
-     "", "trap 6"},
-    {"program p; var f: Float64 := 2.5;\nbegin\n  writeln(Int32(f), \" \", "
-     "Int32(-f), \" \", Int32(2.5));\n  f := 3.0e10; writeln(Int32(f));\n"
-     "end.",
-     "3 -3 3\n", "trap 103"},
-    /* loops */
-    {"program p;\nvar s: Int64 := 0;\nbegin\n"
-     "  for var i: Int8 := 120 to 127 do s := s + Int64(i); end;\n"
-     "  writeln(s);\n"
-     "  for var i: Int32 := 5 downto 1 do write(i); end;\n  writeln();\n"
-     "  for var i: Int32 := 3 to 1 do writeln(\"never\"); end;\nend.",
-     "988\n54321\n", "ok"},
-    {"program p;\nvar i: Int32 := 0; n: Int32 := 0;\nbegin\n"
-     "  while i < 10 do\n    i := i + 1;\n    continue when i mod 2 = 0;\n"
-     "    n := n + i;\n  end;\n  writeln(n);\n"
-     "  repeat i := i - 3; until i < 0;\n  writeln(i);\n"
-     "  loop i := i + 1; exit when i = 5; end;\n  writeln(i);\nend.",
-     "25\n-2\n5\n", "ok"},
-    {"program p;\ntype Col = (A, B, D);\nvar c: Col := B; k: Int32 := 7;\nbegin\n"
-     "  case c of when A: writeln(\"a\"); when B, D: writeln(\"bd\"); end;\n"
-     "  case k of when 1..5: writeln(\"low\"); when 6..9: writeln(\"mid\"); "
-     "else writeln(\"high\"); end;\n"
-     "  k := 42;\n"
-     "  case k of when 1..5: writeln(\"low\"); else writeln(\"high\"); end;\n"
-     "end.",
-     "bd\nmid\nhigh\n", "ok"},
-    /* strings and output */
-    {"program p;\nvar s: String := \"ciao\";\nbegin\n"
-     "  s := s & ' ' & \"mondo\";\n"
-     "  writeln(s, \" \", length(s), \" \", s[1], \" \", copy(s, 6, 5));\n"
-     "  writeln(s = \"ciao mondo\", \" \", \"a\" < \"b\");\n"
-     "  writeln(chr(65), ord('a'), str(12) & \"!\");\nend.",
-     "ciao mondo 10 99 mondo\ntrue true\nA9712!\n", "ok"},
-    {"program p; begin writeln(3.14159:0:2, \"|\", 42:5, \"|\", \"ab\":4, "
-     "\"|\", 1.5:8:3); end.",
-     "3.14|   42|  ab|   1.500\n", "ok"},
-    {"program p; var f: Float32 := 0.1; begin writeln(Float64(f):0:10); "
-     "end.",
-     "0.1000000015\n", "ok"},
-    /* and then: no nil reached */
-    {"program p; type N = record a: Int32; end; var p: ^N := nil; begin if "
-     "p <> nil and p.a = 1 then writeln(\"no\"); else writeln(\"safe\"); "
-     "end; end.",
-     "safe\n", "ok"},
-    /* records, arrays, parameters */
-    {"program p;\ntype\n  Pt = record x, y: Int32; end;\n"
-     "  Vec = array[Int32 range 0..4] of Int32;\nvar v: Vec; q: Pt;\n"
-     "procedure Fill(var a: array[Int32 range <>] of Int32);\nbegin\n"
-     "  for var i := low(a) to high(a) do a[i] := Int32(i) * 10; end;\n"
-     "end;\n"
-     "function Sum(a: array[Int32 range <>] of Int32): Int64;\nvar s: Int64 := "
-     "0;\nbegin\n"
-     "  for var i := 0 to high(a) do s := s + Int64(a[i]); end;\n"
-     "  return s;\nend;\n"
-     "procedure Shift(var p: Pt; dx: Int32);\nbegin p.x := p.x + dx; end;\n"
-     "begin\n  Fill(v);\n  writeln(Sum(v), \" \", v[4]);\n"
-     "  q.x := 1; q.y := 2;\n  Shift(q, 5);\n  var r: Pt := q;\n  r.y := 9;\n"
-     "  writeln(q.x, \" \", q.y, \" \", r.x, \" \", r.y);\nend.",
-     "100 40\n6 2 6 9\n", "ok"},
-    {"program p;\ntype PN = ^Node; Node = record v: Int32; next: PN; end;\n"
-     "var head: PN := nil; n: Int32 := 0;\nbegin\n"
-     "  for var i: Int32 := 1 to 5 do\n    var c := new(Node);\n"
-     "    c.v := i; c.next := head; head := c;\n  end;\n"
-     "  var p := head;\n  while p <> nil do\n    n := n + p.v;\n"
-     "    var q := p.next;\n    dispose(p);\n    p := q;\n  end;\n"
-     "  writeln(n);\nend.",
-     "15\n", "ok"},
-    {"program p;\nbegin\n  var n: Int32 := 4;\n"
-     "  var a: array[Int32 range 1..n] of Int64;\n"
-     "  for var i := 1 to n do a[i] := Int64(i) * Int64(i); end;\n"
-     "  writeln(a[4], \" \", length(a), \" \", low(a), \" \", high(a));\n"
-     "end.",
-     "16 4 1 4\n", "ok"},
-    {"program p;\nvar n: Int32 := 5;\nprocedure Get(out r: Int32);\nbegin r := "
-     "7; end;\nbegin\n  if not val(\"123\", n) then writeln(\"bad\"); end;\n"
-     "  writeln(n);\n  if val(\"x1\", n) then writeln(\"?\"); end;\n"
-     "  writeln(n);\n  var z: Int32;\n  Get(z);\n  writeln(z);\nend.",
-     "123\n123\n7\n", "ok"},
-    {"program p;\nfunction Fib(n: Int32): Int32;\nbegin\n  if n < 2 then "
-     "return n; end;\n  return Fib(n - 1) + Fib(n - 2);\nend;\nbegin "
-     "writeln(Fib(20)); end.",
-     "6765\n", "ok"},
-    {"program p; var b: Int64 := 3; begin writeln(b ** 4, \" \", 2.0 ** 10); "
-     "end.",
-     "81 1024.0\n", "ok"},
-    {"program p; begin writeln(\"a\"); halt(3); writeln(\"b\"); end.", "a\n",
-     "halt 3"},
-    /* a range is checked at the assignment, the argument, the return,
-       whatever the value computed last */
-    {"program p;\ntype R = Int16 range 0..10;\nvar x: R := 3; y: Int16 := "
-     "10;\nbegin\n  x := (y + 1);\nend p.",
-     "", "trap 101 at 5:3"},
-    {"program p;\ntype R = Int16 range 0..10;\nvar y: Int16 := 10;\nprocedure "
-     "Q(a: R);\nbegin\nend Q;\nbegin\n  Q((y + 1));\nend p.",
-     "", "trap 101 at 8:3"},
-    {"program p;\ntype R = Int16 range 0..10;\nvar x: R := 10;\nfunction "
-     "F(a: R): R;\nbegin\n  return (a + 1);\nend F;\nbegin\n  "
-     "writeln(F(x));\nend p.",
-     "", "trap 101 at 6:3"},
-    /* inside an operation a constant takes the base type of a range */
-    {"program p; type R = Int16 range -5..20; var x: R := 3; y: Int16 := 0; "
-     "begin y := x + 100; writeln(y, \" \", x < 100); end p.",
-     "103 true\n", "ok"},
-    /* in on constants is a constant (it made an iconst without a type) */
-    {"program p; type R = Int8 range 1..5; var b: Boolean := false; begin b "
-     ":= 0 in 0..10; writeln(b, \" \", 5 in 1..3, \" \", 3 in R, \" \", 9 in "
-     "R); end p.",
-     "true false true false\n", "ok"},
-    /* a value without a sign never fits a range below zero */
-    {"program p; type R = Int32 range -1..-1; var b: Bits16 := 5; begin "
-     "writeln(R(b)); end p.",
-     "", "trap 103"},
-    /* empty ranges, as in Ada: no element, every index outside */
-    {"program p; type E = Int32 range 1..0; A = array[E] of Int32; var f: A; "
-     "begin writeln(length(f), \" \", low(f), \" \", high(f)); end p.",
-     "0 1 0\n", "ok"},
-    {"program p; var n: Int32 := 0; begin var d: array[Int32 range 1..n] of "
-     "Int32; writeln(length(d)); for var i := low(d) to high(d) do "
-     "writeln(i); end; writeln(d[1]); end p.",
-     "0\n", "trap 100"},
-    {"program p; type Z = Int8 range 5..1; var y: Int8 := 3; begin var z: Z "
-     ":= y; end p.",
-     "", "trap 101"},
-    /* halt with a computed 1 is an error at run time, status 1 */
-    {"program p; var n: Int32 := 1; begin halt(n); end p.", "", "trap 101"},
-    {"program p; var n: Int32 := 0; begin halt(n); end p.", "", "halt 0"},
-    /* val reads a literal of Luxia of the type of its variable, spaces
-       around; the variable changes only when it is true */
-    {"program p; var i: Int8 := 0; u: UInt64 := 0; b: Bits8 := 0; f: "
-     "Float32 := 0.0; d: Float64 := 0.0; begin\n"
-     "writeln(val(\" -128 \", i), \" \", i, \" \", val(\"-129\", i), \" \", i, "
-     "\" \", val(\"0x7f\", i), \" \", i);\n"
-     "writeln(val(\"18446744073709551615\", u), \" \", u, \" \", val(\"-0\", "
-     "u), \" \", u, \" \", val(\"-1\", u), \" \", u);\n"
-     "writeln(val(\"255\", b), \" \", b, \" \", val(\"256\", b), \" \", b, \" "
-     "\", val(\"1_0\", b), \" \", b, \" \", val(\"1__0\", b), \" \", "
-     "val(\"_1\", b), \" \", val(\"1.\", d), \" \", val(\".5\", d));\n"
-     "writeln(val(\"1.0000000596046447753906250001\", f), \" \", f, \" \", "
-     "val(\"3.5e38\", f), \" \", val(\"1e3\", i), \" \", val(\"1e3\", d), "
-     "\" \", d);\n"
-     "writeln(val(\"inf\", d), \" \", d, \" \", val(\"-inf\", d), \" \", d, "
-     "\" \", val(\"nan\", d), \" \", d, \" \", val(\"-nan\", d), \" \", "
-     "val(\"1e400\", d), \" \", val(\"0b101\", d), \" \", d);\nend p.",
-     "true -128 false -128 true 127\n"
-     "true 18446744073709551615 true 0 false 0\n"
-     "true 255 false 255 true 10 false false false false\n"
-     "true 1.0000001 false false true 1000.0\n"
-     "true inf true -inf true nan false false true 5.0\n",
-     "ok"},
-    /* low(T), high(T): the first and last value of a discrete type, a
-       constant of it */
-    {"program p; type C = (r, g, b); S = Int8 range -3..5; var m: Int64 := "
-     "low(Int64); begin writeln(low(Int8), \" \", high(UInt64), \" \", "
-     "low(S), \" \", high(S), \" \", ord(high(C)), \" \", high(Boolean), "
-     "\" \", ord(high(Char)));\nwriteln(m div (-1)); end p.",
-     "-128 18446744073709551615 -3 5 2 true 1114111\n", "trap 6 at 2:11"},
-    /* arg from 1 to argcount(); a width from 0, decimals from 0 to 100,
-       checked where they are written */
-    {"program p; begin writeln(argcount());\nwriteln(arg(1)); end p.", "0\n",
-     "trap 101 at 2:9"},
-    {"program p; var n: Int32 := -1; r: Float64 := 1.5; begin "
-     "writeln(r:4:1, r:0);\nwriteln(r:n); end p.",
-     " 1.51.5\n", "trap 101 at 2:11"},
-    {"program p; var k: Int32 := 101; r: Float64 := 1.5; begin "
-     "writeln(r:1:0);\nwriteln(r:3:k); end p.",
-     "2\n", "trap 101 at 2:13"},
-    /* an open array takes the bounds of its argument (Ada) */
-    {"program p; type V = array[Int32 range <>] of Int64; var a: "
-     "array[Int32 range 5..9] of Int64; n: Int32 := 3; procedure F(var v: "
-     "V); begin writeln(low(v), \" \", high(v), \" \", length(v)); for var "
-     "i := low(v) to high(v) do v[i] := Int64(i); end; end F; function "
-     "S(v: V): Int64; var s: Int64 := 0; begin for var i := low(v) to "
-     "high(v) do s := s + v[i]; end; return s; end S; begin F(a); "
-     "writeln(S(a)); var d: array[Int32 range -2..n] of Int64; F(d); "
-     "writeln(S(d)); var e: array[Int32 range 4..n] of Int64; F(e); "
-     "writeln(S(e), \" \", a[5]); end p.",
-     "5 9 5\n35\n-2 3 6\n3\n4 3 0\n0 5\n", "ok"},
-    {"program p; type Small = Int32 range 1..10; var n: Int32 := 3; "
-     "procedure Only(v: array[Small range <>] of Int8); begin "
-     "writeln(low(v)); end Only; begin var e: array[Int32 range 4..n] of "
-     "Int8; Only(e); var d: array[Int32 range 0..n] of Int8; Only(d); end "
-     "p.",
-     "4\n", "trap 101"},
-    {"program p; var a: array[Int32 range 0..20] of Int8; procedure Q(v: "
-     "array[Int32 range <>] of Int8); begin writeln(v[25]); end Q; begin "
-     "Q(a); end p.",
-     "", "trap 100"},
-    /* no value with a sign fits a range above INT64_MAX */
-    {"program p; type R = UInt64 range "
-     "18446744073709551610..18446744073709551611; var x: Int8 := 1; begin "
-     "writeln(R(x)); end p.",
-     "", "trap 103"},
-    /* constants are computed exactly, past 64 bits, and checked when they
-       take a type */
-    {"program p; const k1 = 2 ** 70 div 2 ** 60; k2 = (-7) mod 3; k3 = "
-     "(-7) rem 3; k4 = abs (-(2 ** 90)) div (2 ** 89); k5: Int16 = k1 * 3; "
-     "k6 = 18446744073709551616 * 4; var x: Int8 := 1; begin const k7 = k6 "
-     "mod 97; writeln(k1, \" \", k2, \" \", k3, \" \", k4, \" \", k5, \" \", x "
-     "+ k7, \" \", (k6 * k6) mod 100 + x); end p.",
-     "1024 2 -1 2 3072 51 97\n", "ok"},
-    /* nil is reported where it is gone through: the . or the ^ */
-    {"program t; type R = record a: Int32; end; Ptr = ^R; var q: Ptr := "
-     "nil; begin\n  writeln(q.a);\nend t.",
-     "", "trap 102 at 2:12"},
-    {"program t; type R = record a: Int32; end; Ptr = ^R; var q: Ptr := "
-     "nil; begin\n  writeln(q^.a);\nend t.",
-     "", "trap 102 at 2:12"},
-    /* a dangling pointer is checked at the access itself, after all the
-       statement evaluates; a second dispose is an error (§ 3.10, § 9.7) */
-    {"program t; type R = record a: Int32; end; var q: ^R; begin q := "
-     "new(R); dispose(q);\n  writeln(q.a);\nend t.",
-     "", "trap 105 at 2:12"},
-    {"program t; type R = record a: Int32; end; var q: ^R; function g(): "
-     "Int32; begin dispose(q); return 7; end g; begin q := new(R);\n  q.a "
-     ":= g();\nend t.",
-     "", "trap 105 at 2:3"},
-    {"program t; type R = record a: Int32; end; var q: ^R; w: R; function "
-     "h(): R; begin dispose(q); return w; end h; begin q := new(R);\n  q^ "
-     ":= h();\nend t.",
-     "", "trap 105 at 2:3"},
-    {"program t; type S = record s: String; end; var q: ^S; begin q := "
-     "new(S); q.s := \"x\"; dispose(q);\n  q.s := \"y\";\nend t.",
-     "", "trap 105 at 2:3"},
-    {"program t; type R = record a: Int32; end; var q: ^R; begin q := "
-     "new(R); dispose(q);\n  dispose(q);\nend t.",
-     "", "trap 106 at 2:3"},
-    {"program t; type R = record a: Int32; end; var q, w: ^R; begin q := "
-     "nil; dispose(q); q := new(R); w := q; dispose(q); q := new(R); "
-     "writeln(w = q, \" \", w = nil); dispose(q); end t.",
-     "false false\n", "ok"},
-    /* a record reached through a pointer is no argument (§ 3.10): pass
-       a copy made in a variable */
-    {"program t; type R = record a: Int32; end; var q: ^R; procedure "
-     "show(x: R); begin dispose(q); writeln(x.a); end show; begin q := "
-     "new(R); q.a := 5; var c := q^; show(c); end t.",
-     "5\n", "ok"},
-    {"program t; type R = record a: Int32; end; var q: ^R; procedure k(out "
-     "x: Int32); begin x := 2; end k; begin q := new(R); k(q.a); "
-     "writeln(q.a); dispose(q); end t.",
-     "2\n", "ok"},
-    {"program t; type R = record a: Int32; end; var q: ^R; procedure k(out "
-     "x: Int32); begin dispose(q); x := 2; end k; begin q := new(R);\n  "
-     "k(q.a);\nend t.",
-     "", "trap 105 at 2:3"},
-    {"program t; pragma suppress(dangling_check); type R = record a: Int32; "
-     "end; var q: ^R; begin q := new(R); q.a := 3; dispose(q); writeln(q.a); "
-     "end t.",
-     "3\n", "ok"},
-    /* arrays made by new: a vector that grows with move, Strings,
-       overlapping moves, bounds, an empty one (§ 3.10, § 9.5, § 9.7) */
-    {"program t;\ntype Items = array[Int64 range <>] of Int64; ItemsRef = "
-     "^Items; Words = array[Int32 range <>] of String;\nprocedure Push(var "
-     "v: ItemsRef; var n: Int64; x: Int64);\nbegin\n  if n = length(v^) "
-     "then\n    var bigger := new(Items range 0..2 * length(v^) - 1);\n "
-     "   move(v^, 0, bigger^, 0, n);\n    dispose(v);\n    v := "
-     "bigger;\n  end;\n  v[n] := x;\n  n := n + 1;\nend Push;\nbegin\n  "
-     "var v := new(Items range 0..1);\n  var n: Int64 := 0;\n  for var "
-     "i: Int64 := 1 to 20 do Push(v, n, i * i); end;\n  writeln(n, \" \", "
-     "low(v^), \" \", high(v^), \" \", length(v^), \" \", v[19]);\n  "
-     "move(v^, 0, v^, 1, 5);\n  writeln(v[0], \" \", v[1], \" \", v[2], "
-     "\" \", v[5]);\n  move(v^, 3, v^, 0, 4);\n  writeln(v[0], \" \", "
-     "v[3]);\n  dispose(v);\n  var w := new(Words range 5..7);\n  w[5] := "
-     "\"a\" & str(1);\n  w[6] := w[5] & \"b\";\n  var u := new(Words "
-     "range 1..3);\n  move(w^, 5, u^, 1, 3);\n  writeln(u[1], \" \", "
-     "u[2], \" [\", u[3], \"]\");\n  dispose(w);\n  writeln(u[2]);\n  "
-     "dispose(u);\n  var e := new(Items range 1..0);\n  "
-     "writeln(length(e^));\n  dispose(e);\nend t.",
-     "20 0 31 32 400\n1 1 4 25\n9 49\na1 a1b []\na1b\n0\n", "ok"},
-    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
-     "new(A range 1..3);\n  p[4] := 1;\nend t.",
-     "", "trap 100 at 2:4"},
-    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
-     "new(A range 1..3); dispose(p);\n  writeln(p[1]);\nend t.",
-     "", "trap 105 at 2:12"},
-    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
-     "new(A range 1..3); dispose(p);\n  dispose(p);\nend t.",
-     "", "trap 106 at 2:3"},
-    {"program t; type A = array[Int32 range <>] of Int32; S = Int32 range "
-     "1..10; B = array[S range <>] of Int32; begin var n: Int32 := 11;\n  "
-     "var p := new(B range 1..n);\nend t.",
-     "", "trap 101 at 2:12"},
-    {"program t; type A = array[Int32 range <>] of Int32; begin var n: "
-     "Int32 := 2147483647;\n  var p := new(A range -n..n);\nend t.",
-     "", "trap 101 at 2:12"},
-    {"program t; type A = array[Int64 range <>] of Int64; begin var n: "
-     "Int64 := 4611686018427387904;\n  var p := new(A range 0..n);\nend "
-     "t.",
-     "", "trap 7 at 2:12"},
-    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
-     "new(A range 1..3); var c: Int32 := -1;\n  move(p^, 1, p^, 1, "
-     "c);\nend t.",
-     "", "trap 101 at 2:3"},
-    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
-     "new(A range 1..3);\n  move(p^, 2, p^, 1, 3);\nend t.",
-     "", "trap 100 at 2:3"},
-    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
-     "new(A range 1..3); var q := p; dispose(p);\n  move(q^, 1, q^, 2, "
-     "0);\nend t.",
-     "", "trap 105 at 2:3"},
-    /* the destination out of its bounds; a dispose between the bounds
-       and the copy; the bounds of a freed array are not read */
-    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
-     "new(A range 1..3);\n  move(p^, 1, p^, 2, 3);\nend t.",
-     "", "trap 100 at 2:3"},
-    {"program t; type A = array[Int32 range <>] of Int32; var q: ^A; "
-     "function f(): Int32; begin dispose(q); return 1; end f; begin q := "
-     "new(A range 1..3);\n  move(q^, 1, q^, 1, f());\nend t.",
-     "", "trap 105 at 2:3"},
-    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
-     "new(A range 1..3); dispose(p);\n  writeln(p[99]);\nend t.",
-     "", "trap 105 at 2:12"},
-    /* licm keeps what the program sees: a dispose in the loop is seen at
-       the next access; a write before a dangling access comes first */
-    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
-     "new(A range 1..3); var q := new(A range 1..3); p[1] := 7;\n  for var "
-     "i: Int32 := 1 to 3 do if i = 2 then dispose(q); dispose(p); end; "
-     "writeln(p[1]); end;\nend t.",
-     "7\n", "trap 105 at 2:85"},
-    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
-     "new(A range 1..3); dispose(p); var i: Int32 := 0;\n  while i < 2 do "
-     "writeln(i); i := p[1]; end;\nend t.",
-     "0\n", "trap 105 at 2:36"},
-    {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
-     "new(A range 1..3); dispose(p); var s: Int32 := 0; var n: Int32 := 0; "
-     "for var i: Int32 := 1 to n do s := s + p[i]; end; writeln(s);\nend "
-     "t.",
-     "0\n", "ok"},
-    /* calls without end: stack overflow, never a crash (§ 10.1) */
-    {"program t; function f(n: Int64): Int64; begin return f(n + 1) + 1; "
-     "end f; begin\n  writeln(f(0));\nend t.",
-     "", "trap 28 at 1:54"},
-    /* Strings in records, arrays and new: copied, returned, passed,
-       disposed, in a loop and in a computed array, counted right */
-    {"program t; type S = record n: Int32; s: String; end; var a: "
-     "array[Int32 range 1..3] of S; g: S; q: ^S; function mk(k: Int32): S; "
-     "var r: S; begin r.n := k; r.s := \"k\" & str(k); return r; end mk; "
-     "procedure show(x: S); begin writeln(x.n, \" \", x.s); end show; begin "
-     "for var i: Int32 := 1 to 3 do a[i] := mk(i); var l: S; l.s := l.s & "
-     "\"+\"; write(l.s); end; writeln(); g := a[2]; a[2] := a[2]; show(g); "
-     "q := new(S); q^ := a[3]; var c := q^; show(c); dispose(q); var n: Int32 := 2; var "
-     "d: array[Int32 range 1..n] of S; d[1] := a[1]; show(d[1]); end t.",
-     "+++\n2 k2\n3 k3\n1 k1\n", "ok"},
-    /* a record assigned is copied, from the right to the left */
-    {"program t; type Pair = record a, b: Int32; end; var u, w: Pair; begin "
-     "u.a := 1; u.b := 2; w := u; w.a := 5; writeln(u.a, \" \", w.a, \" \", "
-     "w.b); end t.",
-     "1 5 2\n", "ok"},
-    /* new gives values outside a narrow range, caught when read through
-       a pointer; a copy carries them, and its reads are checked too
-       (§ 4.5) */
-    {"program n; type Small = Int32 range 4..9; Tiny = UInt8 range 0..3; "
-     "Rec = record a: Small; b: Int32; c: Tiny; v: array[Int32 range 1..5] "
-     "of Small; end; Ptr = ^Rec; var p: Ptr := nil; r: Rec; begin p := "
-     "new(Rec); writeln(p.b); p.a := 5; writeln(p.a); r := p^; "
-     "writeln(r.c, \" \", r.v[3]);\n  writeln(p.c); end n.",
-     "0\n5\n", "trap 101 at 1:268"},
-    {"program n; type Small = Int32 range 4..9; Rec = record v: "
-     "array[Int32 range 1..5] of Small; end; Ptr = ^Rec; var p: Ptr := nil; "
-     "begin p := new(Rec); p.v[2] := 7; writeln(p.v[2]);\n  "
-     "writeln(p.v[5]); end n.",
-     "7\n", "trap 101 at 2:14"},
-    {"program n; type Small = Int32 range 4..9; SP = ^Small; var q: SP := "
-     "nil; begin q := new(Small);\n  writeln(q^); end n.",
-     "", "trap 101 at 2:12"},
-    /* ** at run time: checked on numbers, modular on Bits, any unsigned
-       exponent */
-    {"program w; var a: UInt8 := 3; b: Bits8 := 3; c: Int64 := 1; d: Bits8 "
-     ":= 2; n: UInt64 := 18446744073709551615; begin writeln(a ** 4, \" \", b "
-     "** 7, \" \", c ** n, \" \", d ** n); end w.",
-     "81 139 1 0\n", "ok"},
-    {"program w; var a: Int8 := 3; n: Int32 := 5; begin writeln(a ** 4); "
-     "writeln(a ** n); end w.",
-     "81\n", "trap 6"},
-    {"program w; var a: UInt32 := 2; n: Int32 := 32; begin writeln(a ** n); "
-     "end w.",
-     "", "trap 6"},
-    /* reals: abs clears the sign (IEEE 754), a constant -0.0 is the
-       rational 0, a conversion fits by the exact bounds */
-    {"program f; var z: Float64 := 0.0; begin writeln(abs (-(z)), \" \", "
-     "-(z), \" \", -0.0); end f.",
-     "0.0 -0.0 0.0\n", "ok"},
-    {"program f; type R = Int64 range 0..9007199254740993; var a: Float64 := "
-     "9007199254740992.0; b: Float64 := 9007199254740994.0; begin "
-     "writeln(R(a)); writeln(R(b)); end f.",
-     "9007199254740992\n", "trap 103"},
-    /* a negative exponent is a range error, the exponent a Natural */
-    {"program w; var a: Int64 := 1; e: Int32 := -1; begin writeln(a ** 0); "
-     "writeln(a ** e); end w.",
-     "1\n", "trap 101"},
-    /* succ and pred are checked, before the step (pred of the first gave
-       255) */
-    {"program e; type Color = (Red, Green, Blue); var c: Color := Red; "
-     "begin writeln(ord(succ(c))); writeln(ord(pred(c))); end e.",
-     "1\n", "trap 101"},
-    {"program e; var a: UInt64 := 18446744073709551615; b: Int8 := -128; "
-     "begin writeln(pred(a), \" \", succ(b)); writeln(succ(a)); end e.",
-     "18446744073709551614 -127\n", "trap 101"},
-    /* out: copied back at the return, given a value on every path */
-    {"program o; var g: Int32 := 0; procedure Set(var x: Int32); begin x "
-     ":= 7; end Set; procedure P(out r: Int32); begin r := 1; writeln(g); "
-     "Set(r); writeln(g, \" \", r); end P; begin P(g); writeln(g); end o.",
-     "0\n0 7\n7\n", "ok"},
-    {"program o; procedure Get(out r: Int32; x: Int32); begin if x > 0 then "
-     "r := x; end; end Get; var v: Int32 := 0; begin Get(v, 1); end o.",
-     "", "errors L0056@1:22"},
-    {"program o; procedure Get(out r: Int32); begin writeln(r); r := 1; end "
-     "Get; var v: Int32 := 0; begin Get(v); end o.",
-     "", "errors L0053@1:55"},
-    /* the target of an assignment before its value */
-    {"program p;\nvar a: array[Int32 range 1..3] of Int32; z: Int32 := "
-     "0;\nbegin\n  a[1 div z] := 7 div z;\nend p.",
-     "", "trap 11 at 4:7"},
-    {"program p; var a: array[Int32 range 1..3] of Int32; function F(): "
-     "Int32; begin writeln(\"value\"); return 1; end F; function G(): "
-     "Int32; begin writeln(\"index\"); return 1; end G; begin a[G()] := "
-     "F(); end p.",
-     "index\nvalue\n", "ok"},
-    /* abs of a number without a sign is the number (found by the random
-       programs: it was taken as signed) */
-    {"program p; var u: UInt16 := 65534; b: UInt8 := 200; begin "
-     "writeln(abs (u), \" \", abs (b)); end.",
-     "65534 200\n", "ok"},
-    /* checked on the SSA form */
-    {"program p; var x: Int32; begin var y: Int32; writeln(y); end.", "",
-     "errors L0053@1:54"},
-    {"program p; var b: Boolean := true; begin var y: Int32; if b then y := "
-     "1; end; writeln(y); end.",
-     "", "errors L0053@1:87"},
-    {"program p; var b: Boolean := true; begin var y: Int32; if b then y := "
-     "1; else y := 2; end; writeln(y); end.",
-     "1\n", "ok"},
-    {"program p; function f(x: Int32): Int32; begin if x > 0 then return 1; "
-     "end; end; begin writeln(f(1)); end.",
-     "", "errors L0052@1:21"},
-    /* records and arrays as results: into a slot of the caller */
-    {"program p;\ntype V = record x, y: Int32; end;\n"
-     "type A = array[Int32 range 1..4] of Int64;\n"
-     "function mk(a, b: Int32): V; var r: V; begin r.x := a; r.y := b; "
-     "return r; end mk;\n"
-     "function sq(n: Int64): A; var r: A;\nbegin\n"
-     "  for var i: Int32 := 1 to 4 do r[i] := n * Int64(i); end;\n"
-     "  if n > 100 then return sq(n div 2); end;\n  return r;\nend sq;\n"
-     "function sw(v: V): V; begin return mk(v.y, v.x); end sw;\n"
-     "var g: V; h: A;\nbegin\n  g := sw(mk(3, 4));\n"
-     "  writeln(g.x, \" \", g.y, \" \", mk(7, 8).y, \" \", sq(5)[3], \" \", "
-     "sq(300)[4]);\n"
-     "  h := sq(2); var w := sw(sw(mk(9, 10)));\n"
-     "  writeln(h[1] + h[4], \" \", w.x);\nend.",
-     "4 3 8 15 300\n10 9\n", "ok"},
-    {"program p; type V = record x: Int32; end; function f(b: Boolean): V; "
-     "var r: V; begin if b then return r; end; end; begin end.",
-     "", "errors L0052@1:52"},
-    /* computed arrays: freed at the end of their list, and on exit,
-       continue and return */
-    {"program p;\nfunction f(k: Int32): Int64;\n"
-     "var a: array[Int32 range 1..k] of Int64;\nbegin\n  a[k] := 7;\n"
-     "  for var i := 1 to k do\n"
-     "    var b: array[Int32 range 0..i] of Int64;\n"
-     "    if i = 2 then continue; end;\n"
-     "    var c: array[Int32 range 0..i] of Int64;\n"
-     "    exit when i = 4;\n"
-     "    loop var d: array[Int32 range 0..i] of Int8; exit; end;\n"
-     "    continue when i = 1;\n"
-     "    if i = 5 then return a[k]; end;\n  end;\n"
-     "  return a[k] + 1;\nend f;\n"
-     "begin\n  writeln(f(3), \" \", f(6));\n"
-     "  for var j: Int32 := 1 to 3 do var e: array[Int32 range 1..j] of "
-     "Int32; e[j] := j; write(e[j]); end;\n  writeln();\nend.",
-     "8 8\n123\n", "ok"},
-    {"program p; type R = record a: Int32; end; var q: ^R; begin q := "
-     "new(R); q.a := 1; end.",
-     "", "ok, 1 live"},
-    /* an integer to Float32 rounded once: through a double, 2^60 + 2^36
-       + 1 would lose its last bit and tie down to 2^60 */
-    {"program p; var i: Int64 := 1152921573326323713; u: UInt64 := "
-     "9223372586610589697; begin writeln(Float32(i), \" \", Float32(u)); "
-     "end.",
-     "1.1529216e+18 9.223373e+18\n", "ok"},
-    /* chr is checked at its name, s[i] at the [ */
-    {"program p; var n: Int32 := 1114112; begin writeln(chr(n)); end.", "",
-     "trap 103 at 1:51"},
-    {"program p; var s: String := \"ab\"; i: Int64 := 3; begin "
-     "writeln(s[i]); end.",
-     "", "trap 100 at 1:65"},
-    /* copy: from 1 on, a count from 0, cut short past the end; its
-       arguments from left to right */
-    {"program p; var s: String := \"abc\"; begin writeln(copy(s, 3, 5), "
-     "\"|\", copy(s, 5, 1), \"|\", copy(s, 1, 0), \"|\", copy(s, 2, 2)); "
-     "end.",
-     "c|||bc\n", "ok"},
-    {"program p; var s: String := \"abc\"; k: Int64 := 0; begin "
-     "writeln(copy(s, k, 1)); end.",
-     "", "trap 101 at 1:65"},
-    {"program p; var s: String := \"abc\"; k: Int64 := -1; begin "
-     "writeln(copy(s, 1, k)); end.",
-     "", "trap 101 at 1:66"},
-    {"program p; var z: Int64 := 0; m: Int64 := 9223372036854775807; begin "
-     "writeln(copy(\"ab\", 1 div z, m + 1)); end.",
-     "", "trap 11"},
-    /* a record or an array variable without a value (§ 4.5): its narrow
-       scalars are not valid, even where 0 would be, and a read of one is
-       caught at the . or the [ */
-    {"program p; type S = Int32 range -5..5; R = record a: Int32; b: S; "
-     "end; var g: R; begin writeln(g.a); writeln(g.b); end.",
-     "0\n", "trap 101 at 1:111"},
-    {"program p; type S = Int32 range -5..5; procedure q(); var a: "
-     "array[Int32 range 1..3] of S; begin a[2] := 0; writeln(a[2]); "
-     "writeln(a[3]); end q; begin q(); end.",
-     "0\n", "trap 101 at 1:133"},
-    {"program p; type S = Int32 range -5..5; procedure q(n: Int32); var a: "
-     "array[Int32 range 1..n] of S; begin a[1] := 1; writeln(a[1]); "
-     "writeln(a[n]); end q; begin q(1); q(9); end.",
-     "1\n1\n1\n", "trap 101 at 1:141"},
-    /* a for over the bounds of x leaves out the checks of x[i] only when
-       x keeps its bounds: a string assigned in the loop, a global one a
-       routine may assign, one passed as var, another array, i - 1 as the
-       low bound keep them */
-    {"program p; procedure q(); var s: String := \"abc\"; begin for var i: Int64 := 1 to length(s) do s := copy(s, 1, 1); writeln(s[i]); end; end q; begin q(); end.",
-     "97\n", "trap 100 at 1:124"},
-    {"program p; var g: String := \"abc\"; procedure cut(); begin g := \"a\"; end cut; begin for var i: Int64 := 1 to length(g) do cut(); writeln(g[i]); end; end.",
-     "97\n", "trap 100 at 1:138"},
-    {"program p; procedure cut(var t: String); begin t := \"a\"; end cut; procedure q(); var s: String := \"abc\"; begin for var i: Int64 := 1 to length(s) do cut(s); writeln(s[i]); end; end q; begin q(); end.",
-     "97\n", "trap 100 at 1:167"},
-    {"program p; var a: array[Int32 range 1..3] of Int32; b: array[Int32 range 1..2] of Int32; begin for var i := low(a) to high(a) do writeln(b[i]); end; end.",
-     "0\n0\n", "trap 100 at 1:139"},
-    {"program p; var a: array[Int32 range 1..3] of Int32; begin for var i := low(a) to high(a) do for var j := i - 1 to high(a) do writeln(a[j]); end; end; end.",
-     "", "trap 100 at 1:135"},
-    /* checks turned off (§ 9): in the whole file, in a routine, to the end
-       of a list of statements; unsuppress turns them back on. Where one
-       would fail the behaviour is undefined: here the value goes on */
-    {"program p; pragma suppress(range_check); type P = Int32 range 0..100; var x: P; y: Int32 := 200; begin x := y; writeln(x); end.",
-     "200\n", "ok"},
-    {"program p; type P = Int32 range 0..100; var x: P; y: Int32 := 200; procedure q(); pragma suppress(range_check); var z: P; begin z := y; writeln(z); end q; begin q(); x := y; end.",
-     "200\n", "trap 101 at 1:167"},
-    {"program p; type P = Int32 range 0..100; var x: P; y: Int32 := 200; begin for var i: Int32 := 1 to 2 do pragma suppress(range_check); x := y; writeln(x); end; x := y; end.",
-     "200\n200\n", "trap 101 at 1:159"},
-    {"program p; pragma suppress(all_checks); type P = Int32 range 0..100; var x: P; y: Int32 := 200; a: Int8 := 100; begin a := a + a; writeln(a); if y > 0 then pragma unsuppress(range_check); x := y; end; end.",
-     "-56\n", "trap 101 at 1:189"},
-    /* a NaN is nan with decimals too, whatever its sign bit (0 / 0 sets
-       it on x86) */
-    {"program p; var z: Float64 := 0.0; begin writeln((z / z):0:2, \" \", "
-     "(-(z / z)):5:1, \"|\"); end.",
-     "nan   nan|\n", "ok"},
-    /* a width counts characters, not bytes */
-    {"program p; var s: String := \"\xc3\xa8\xe2\x82\xac\"; begin writeln(s:5, "
-     "\"|\", 'x':3, \"|\"); end.",
-     "   \xc3\xa8\xe2\x82\xac|  x|\n", "ok"},
-    /* short routines put in line at -O1 (OPTDIFF): a local array
-       starts from zero at each call, a trap is where it is in the
-       routine, halt stops there, strings go in and out */
-    {"program p; function f(k: Int32): Int32; var a: array[Int32 range "
-     "1..2] of Int32; begin a[1] := a[1] + k; return a[1]; end; begin for "
-     "var i: Int32 := 1 to 3 do write(f(i)); end; writeln(); end.",
-     "123\n", "ok"},
-    {"program p; function g(x: Int32): Int32; begin return 12 div x; end; "
-     "begin for var i: Int32 := 2 downto 0 do write(g(i)); end; end.",
-     "612", "trap 11 at 1:57"},
-    {"program p; procedure h(x: Int32); begin if x = 2 then halt(3); end; "
-     "write(x); end; begin for var i: Int32 := 0 to 5 do h(i); end; end.",
-     "01", "halt 3"},
-    {"program p; var t: String := \"\"; function tag(s: String; n: Int32): "
-     "String; begin return s & str(n); end; begin for var i: Int32 := 1 to "
-     "3 do t := t & tag(\"a\", i); end; writeln(t); end.",
-     "a1a2a3\n", "ok"},
+static const run_case run_cases[] =
+    {
+        {"program p; begin writeln(\"ciao, \", 42, ' ', true); end.",
+         "ciao, 42 true\n", "ok"},
+        /* integers: div truncates, mod has the sign of the divisor, rem of
+           the dividend */
+        {"program p;\nvar a, b, c: Int32;\nbegin\n  a := -7; b := 2; c := -2;\n"
+         "  writeln(a div b, \" \", a mod b, \" \", a rem b);\n  a := 7;\n"
+         "  writeln(a div c, \" \", a mod c, \" \", a rem c);\nend.",
+         "-3 1 -1\n-3 -1 1\n", "ok"},
+        {"program p; var a: Int8 := 100; begin a := a + a; writeln(a); end.",
+         "", "trap 6"},
+        {"program p; var u: UInt32 := 0; begin u := u - 1; end.", "", "trap 6"},
+        {"program p; var u: UInt8 := 16; begin u := u * u; end.", "", "trap 6"},
+        {"program p; var b: Bits8 := 250;\nbegin\n  b := b + 10; writeln(b);\n"
+         "  b := not b; writeln(b);\n  b := b shl 1; writeln(b);\nend.",
+         "4\n251\n246\n", "ok"},
+        {"program p; var b: Bits8 := 1; n: Int32 := 8; begin b := b shl n; "
+         "end.",
+         "", "trap 104"},
+        {"program p; type Vec = array[Int32 range 1..3] of Int32; var v: Vec; i: "
+         "Int32 := 4; begin v[i] := 1; end.",
+         "", "trap 100 at 1:91"},
+        {"program p; type P = Int32 range 0..100; var x: P; y: Int32 := 101; "
+         "begin x := y; end.",
+         "", "trap 101"},
+        {"program p; type N = record a: Int32; end; var p: ^N; begin p.a := 1; "
+         "end.",
+         "", "trap 102"},
+        {"program p; var a: Int32 := 1; z: Int32 := 0; begin writeln(a div z); "
+         "end.",
+         "", "trap 11 at 1:62"},
+        {"program p; function f(x: Int32): Int32; begin return 10 div x; end; "
+         "begin writeln(f(0)); end.",
+         "", "trap 11 at 1:57"},
+        {"program p; var a: Int64 := -9223372036854775807 - 1; m: Int64 := -1; "
+         "begin writeln(a div m); end.",
+         "", "trap 6"},
+        {"program p; var f: Float64 := 2.5;\nbegin\n  writeln(Int32(f), \" \", "
+         "Int32(-f), \" \", Int32(2.5));\n  f := 3.0e10; writeln(Int32(f));\n"
+         "end.",
+         "3 -3 3\n", "trap 103"},
+        /* loops */
+        {"program p;\nvar s: Int64 := 0;\nbegin\n"
+         "  for var i: Int8 := 120 to 127 do s := s + Int64(i); end;\n"
+         "  writeln(s);\n"
+         "  for var i: Int32 := 5 downto 1 do write(i); end;\n  writeln();\n"
+         "  for var i: Int32 := 3 to 1 do writeln(\"never\"); end;\nend.",
+         "988\n54321\n", "ok"},
+        {"program p;\nvar i: Int32 := 0; n: Int32 := 0;\nbegin\n"
+         "  while i < 10 do\n    i := i + 1;\n    continue when i mod 2 = 0;\n"
+         "    n := n + i;\n  end;\n  writeln(n);\n"
+         "  repeat i := i - 3; until i < 0;\n  writeln(i);\n"
+         "  loop i := i + 1; exit when i = 5; end;\n  writeln(i);\nend.",
+         "25\n-2\n5\n", "ok"},
+        {"program p;\ntype Col = (A, B, D);\nvar c: Col := B; k: Int32 := 7;\nbegin\n"
+         "  case c of when A: writeln(\"a\"); when B, D: writeln(\"bd\"); end;\n"
+         "  case k of when 1..5: writeln(\"low\"); when 6..9: writeln(\"mid\"); "
+         "else writeln(\"high\"); end;\n"
+         "  k := 42;\n"
+         "  case k of when 1..5: writeln(\"low\"); else writeln(\"high\"); end;\n"
+         "end.",
+         "bd\nmid\nhigh\n", "ok"},
+        /* strings and output */
+        {"program p;\nvar s: String := \"ciao\";\nbegin\n"
+         "  s := s & ' ' & \"mondo\";\n"
+         "  writeln(s, \" \", length(s), \" \", s[1], \" \", copy(s, 6, 5));\n"
+         "  writeln(s = \"ciao mondo\", \" \", \"a\" < \"b\");\n"
+         "  writeln(chr(65), ord('a'), str(12) & \"!\");\nend.",
+         "ciao mondo 10 99 mondo\ntrue true\nA9712!\n", "ok"},
+        {"program p; begin writeln(3.14159:0:2, \"|\", 42:5, \"|\", \"ab\":4, "
+         "\"|\", 1.5:8:3); end.",
+         "3.14|   42|  ab|   1.500\n", "ok"},
+        {"program p; var f: Float32 := 0.1; begin writeln(Float64(f):0:10); "
+         "end.",
+         "0.1000000015\n", "ok"},
+        /* and then: no nil reached */
+        {"program p; type N = record a: Int32; end; var p: ^N := nil; begin if "
+         "p <> nil and p.a = 1 then writeln(\"no\"); else writeln(\"safe\"); "
+         "end; end.",
+         "safe\n", "ok"},
+        /* records, arrays, parameters */
+        {"program p;\ntype\n  Pt = record x, y: Int32; end;\n"
+         "  Vec = array[Int32 range 0..4] of Int32;\nvar v: Vec; q: Pt;\n"
+         "procedure Fill(var a: array[Int32 range <>] of Int32);\nbegin\n"
+         "  for var i := low(a) to high(a) do a[i] := Int32(i) * 10; end;\n"
+         "end;\n"
+         "function Sum(a: array[Int32 range <>] of Int32): Int64;\nvar s: Int64 := "
+         "0;\nbegin\n"
+         "  for var i := 0 to high(a) do s := s + Int64(a[i]); end;\n"
+         "  return s;\nend;\n"
+         "procedure Shift(var p: Pt; dx: Int32);\nbegin p.x := p.x + dx; end;\n"
+         "begin\n  Fill(v);\n  writeln(Sum(v), \" \", v[4]);\n"
+         "  q.x := 1; q.y := 2;\n  Shift(q, 5);\n  var r: Pt := q;\n  r.y := 9;\n"
+         "  writeln(q.x, \" \", q.y, \" \", r.x, \" \", r.y);\nend.",
+         "100 40\n6 2 6 9\n", "ok"},
+        {"program p;\ntype PN = ^Node; Node = record v: Int32; next: PN; end;\n"
+         "var head: PN := nil; n: Int32 := 0;\nbegin\n"
+         "  for var i: Int32 := 1 to 5 do\n    var c := new(Node);\n"
+         "    c.v := i; c.next := head; head := c;\n  end;\n"
+         "  var p := head;\n  while p <> nil do\n    n := n + p.v;\n"
+         "    var q := p.next;\n    dispose(p);\n    p := q;\n  end;\n"
+         "  writeln(n);\nend.",
+         "15\n", "ok"},
+        {"program p;\nbegin\n  var n: Int32 := 4;\n"
+         "  var a: array[Int32 range 1..n] of Int64;\n"
+         "  for var i := 1 to n do a[i] := Int64(i) * Int64(i); end;\n"
+         "  writeln(a[4], \" \", length(a), \" \", low(a), \" \", high(a));\n"
+         "end.",
+         "16 4 1 4\n", "ok"},
+        {"program p;\nvar n: Int32 := 5;\nprocedure Get(out r: Int32);\nbegin r := "
+         "7; end;\nbegin\n  if not val(\"123\", n) then writeln(\"bad\"); end;\n"
+         "  writeln(n);\n  if val(\"x1\", n) then writeln(\"?\"); end;\n"
+         "  writeln(n);\n  var z: Int32;\n  Get(z);\n  writeln(z);\nend.",
+         "123\n123\n7\n", "ok"},
+        {"program p;\nfunction Fib(n: Int32): Int32;\nbegin\n  if n < 2 then "
+         "return n; end;\n  return Fib(n - 1) + Fib(n - 2);\nend;\nbegin "
+         "writeln(Fib(20)); end.",
+         "6765\n", "ok"},
+        {"program p; var b: Int64 := 3; begin writeln(b ** 4, \" \", 2.0 ** 10); "
+         "end.",
+         "81 1024.0\n", "ok"},
+        {"program p; begin writeln(\"a\"); halt(3); writeln(\"b\"); end.",
+         "a\n", "halt 3"},
+        /* a range is checked at the assignment, the argument, the return,
+           whatever the value computed last */
+        {"program p;\ntype R = Int16 range 0..10;\nvar x: R := 3; y: Int16 := "
+         "10;\nbegin\n  x := (y + 1);\nend p.",
+         "", "trap 101 at 5:3"},
+        {"program p;\ntype R = Int16 range 0..10;\nvar y: Int16 := 10;\nprocedure "
+         "Q(a: R);\nbegin\nend Q;\nbegin\n  Q((y + 1));\nend p.",
+         "", "trap 101 at 8:3"},
+        {"program p;\ntype R = Int16 range 0..10;\nvar x: R := 10;\nfunction "
+         "F(a: R): R;\nbegin\n  return (a + 1);\nend F;\nbegin\n  "
+         "writeln(F(x));\nend p.",
+         "", "trap 101 at 6:3"},
+        /* inside an operation a constant takes the base type of a range */
+        {"program p; type R = Int16 range -5..20; var x: R := 3; y: Int16 := 0; "
+         "begin y := x + 100; writeln(y, \" \", x < 100); end p.",
+         "103 true\n", "ok"},
+        /* in on constants is a constant (it made an iconst without a type)
+         */
+        {"program p; type R = Int8 range 1..5; var b: Boolean := false; begin b "
+         ":= 0 in 0..10; writeln(b, \" \", 5 in 1..3, \" \", 3 in R, \" \", 9 in "
+         "R); end p.",
+         "true false true false\n", "ok"},
+        /* a value without a sign never fits a range below zero */
+        {"program p; type R = Int32 range -1..-1; var b: Bits16 := 5; begin "
+         "writeln(R(b)); end p.",
+         "", "trap 103"},
+        /* empty ranges, as in Ada: no element, every index outside */
+        {"program p; type E = Int32 range 1..0; A = array[E] of Int32; var f: A; "
+         "begin writeln(length(f), \" \", low(f), \" \", high(f)); end p.",
+         "0 1 0\n", "ok"},
+        {"program p; var n: Int32 := 0; begin var d: array[Int32 range 1..n] of "
+         "Int32; writeln(length(d)); for var i := low(d) to high(d) do "
+         "writeln(i); end; writeln(d[1]); end p.",
+         "0\n", "trap 100"},
+        {"program p; type Z = Int8 range 5..1; var y: Int8 := 3; begin var z: Z "
+         ":= y; end p.",
+         "", "trap 101"},
+        /* halt with a computed 1 is an error at run time, status 1 */
+        {"program p; var n: Int32 := 1; begin halt(n); end p.", "", "trap 101"},
+        {"program p; var n: Int32 := 0; begin halt(n); end p.", "", "halt 0"},
+        /* val reads a literal of Luxia of the type of its variable, spaces
+           around; the variable changes only when it is true */
+        {"program p; var i: Int8 := 0; u: UInt64 := 0; b: Bits8 := 0; f: "
+         "Float32 := 0.0; d: Float64 := 0.0; begin\n"
+         "writeln(val(\" -128 \", i), \" \", i, \" \", val(\"-129\", i), \" \", i, "
+         "\" \", val(\"0x7f\", i), \" \", i);\n"
+         "writeln(val(\"18446744073709551615\", u), \" \", u, \" \", val(\"-0\", "
+         "u), \" \", u, \" \", val(\"-1\", u), \" \", u);\n"
+         "writeln(val(\"255\", b), \" \", b, \" \", val(\"256\", b), \" \", b, \" "
+         "\", val(\"1_0\", b), \" \", b, \" \", val(\"1__0\", b), \" \", "
+         "val(\"_1\", b), \" \", val(\"1.\", d), \" \", val(\".5\", d));\n"
+         "writeln(val(\"1.0000000596046447753906250001\", f), \" \", f, \" \", "
+         "val(\"3.5e38\", f), \" \", val(\"1e3\", i), \" \", val(\"1e3\", d), "
+         "\" \", d);\n"
+         "writeln(val(\"inf\", d), \" \", d, \" \", val(\"-inf\", d), \" \", d, "
+         "\" \", val(\"nan\", d), \" \", d, \" \", val(\"-nan\", d), \" \", "
+         "val(\"1e400\", d), \" \", val(\"0b101\", d), \" \", d);\nend p.",
+         "true -128 false -128 true 127\n"
+         "true 18446744073709551615 true 0 false 0\n"
+         "true 255 false 255 true 10 false false false false\n"
+         "true 1.0000001 false false true 1000.0\n"
+         "true inf true -inf true nan false false true 5.0\n",
+         "ok"},
+        /* low(T), high(T): the first and last value of a discrete type, a
+           constant of it */
+        {"program p; type C = (r, g, b); S = Int8 range -3..5; var m: Int64 := "
+         "low(Int64); begin writeln(low(Int8), \" \", high(UInt64), \" \", "
+         "low(S), \" \", high(S), \" \", ord(high(C)), \" \", high(Boolean), "
+         "\" \", ord(high(Char)));\nwriteln(m div (-1)); end p.",
+         "-128 18446744073709551615 -3 5 2 true 1114111\n", "trap 6 at 2:11"},
+        /* arg from 1 to argcount(); a width from 0, decimals from 0 to 100,
+           checked where they are written */
+        {"program p; begin writeln(argcount());\nwriteln(arg(1)); end p.",
+         "0\n", "trap 101 at 2:9"},
+        {"program p; var n: Int32 := -1; r: Float64 := 1.5; begin "
+         "writeln(r:4:1, r:0);\nwriteln(r:n); end p.",
+         " 1.51.5\n", "trap 101 at 2:11"},
+        {"program p; var k: Int32 := 101; r: Float64 := 1.5; begin "
+         "writeln(r:1:0);\nwriteln(r:3:k); end p.",
+         "2\n", "trap 101 at 2:13"},
+        /* an open array takes the bounds of its argument (Ada) */
+        {"program p; type V = array[Int32 range <>] of Int64; var a: "
+         "array[Int32 range 5..9] of Int64; n: Int32 := 3; procedure F(var v: "
+         "V); begin writeln(low(v), \" \", high(v), \" \", length(v)); for var "
+         "i := low(v) to high(v) do v[i] := Int64(i); end; end F; function "
+         "S(v: V): Int64; var s: Int64 := 0; begin for var i := low(v) to "
+         "high(v) do s := s + v[i]; end; return s; end S; begin F(a); "
+         "writeln(S(a)); var d: array[Int32 range -2..n] of Int64; F(d); "
+         "writeln(S(d)); var e: array[Int32 range 4..n] of Int64; F(e); "
+         "writeln(S(e), \" \", a[5]); end p.",
+         "5 9 5\n35\n-2 3 6\n3\n4 3 0\n0 5\n", "ok"},
+        {"program p; type Small = Int32 range 1..10; var n: Int32 := 3; "
+         "procedure Only(v: array[Small range <>] of Int8); begin "
+         "writeln(low(v)); end Only; begin var e: array[Int32 range 4..n] of "
+         "Int8; Only(e); var d: array[Int32 range 0..n] of Int8; Only(d); end "
+         "p.",
+         "4\n", "trap 101"},
+        {"program p; var a: array[Int32 range 0..20] of Int8; procedure Q(v: "
+         "array[Int32 range <>] of Int8); begin writeln(v[25]); end Q; begin "
+         "Q(a); end p.",
+         "", "trap 100"},
+        /* no value with a sign fits a range above INT64_MAX */
+        {"program p; type R = UInt64 range "
+         "18446744073709551610..18446744073709551611; var x: Int8 := 1; begin "
+         "writeln(R(x)); end p.",
+         "", "trap 103"},
+        /* constants are computed exactly, past 64 bits, and checked when
+           they take a type */
+        {"program p; const k1 = 2 ** 70 div 2 ** 60; k2 = (-7) mod 3; k3 = "
+         "(-7) rem 3; k4 = abs (-(2 ** 90)) div (2 ** 89); k5: Int16 = k1 * 3; "
+         "k6 = 18446744073709551616 * 4; var x: Int8 := 1; begin const k7 = k6 "
+         "mod 97; writeln(k1, \" \", k2, \" \", k3, \" \", k4, \" \", k5, \" \", x "
+         "+ k7, \" \", (k6 * k6) mod 100 + x); end p.",
+         "1024 2 -1 2 3072 51 97\n", "ok"},
+        /* nil is reported where it is gone through: the . or the ^ */
+        {"program t; type R = record a: Int32; end; Ptr = ^R; var q: Ptr := "
+         "nil; begin\n  writeln(q.a);\nend t.",
+         "", "trap 102 at 2:12"},
+        {"program t; type R = record a: Int32; end; Ptr = ^R; var q: Ptr := "
+         "nil; begin\n  writeln(q^.a);\nend t.",
+         "", "trap 102 at 2:12"},
+        /* a dangling pointer is checked at the access itself, after all the
+           statement evaluates; a second dispose is an error (§ 3.10, § 9.7)
+         */
+        {"program t; type R = record a: Int32; end; var q: ^R; begin q := "
+         "new(R); dispose(q);\n  writeln(q.a);\nend t.",
+         "", "trap 105 at 2:12"},
+        {"program t; type R = record a: Int32; end; var q: ^R; function g(): "
+         "Int32; begin dispose(q); return 7; end g; begin q := new(R);\n  q.a "
+         ":= g();\nend t.",
+         "", "trap 105 at 2:3"},
+        {"program t; type R = record a: Int32; end; var q: ^R; w: R; function "
+         "h(): R; begin dispose(q); return w; end h; begin q := new(R);\n  q^ "
+         ":= h();\nend t.",
+         "", "trap 105 at 2:3"},
+        {"program t; type S = record s: String; end; var q: ^S; begin q := "
+         "new(S); q.s := \"x\"; dispose(q);\n  q.s := \"y\";\nend t.",
+         "", "trap 105 at 2:3"},
+        {"program t; type R = record a: Int32; end; var q: ^R; begin q := "
+         "new(R); dispose(q);\n  dispose(q);\nend t.",
+         "", "trap 106 at 2:3"},
+        {"program t; type R = record a: Int32; end; var q, w: ^R; begin q := "
+         "nil; dispose(q); q := new(R); w := q; dispose(q); q := new(R); "
+         "writeln(w = q, \" \", w = nil); dispose(q); end t.",
+         "false false\n", "ok"},
+        /* a record reached through a pointer is no argument (§ 3.10): pass
+           a copy made in a variable */
+        {"program t; type R = record a: Int32; end; var q: ^R; procedure "
+         "show(x: R); begin dispose(q); writeln(x.a); end show; begin q := "
+         "new(R); q.a := 5; var c := q^; show(c); end t.",
+         "5\n", "ok"},
+        {"program t; type R = record a: Int32; end; var q: ^R; procedure k(out "
+         "x: Int32); begin x := 2; end k; begin q := new(R); k(q.a); "
+         "writeln(q.a); dispose(q); end t.",
+         "2\n", "ok"},
+        {"program t; type R = record a: Int32; end; var q: ^R; procedure k(out "
+         "x: Int32); begin dispose(q); x := 2; end k; begin q := new(R);\n  "
+         "k(q.a);\nend t.",
+         "", "trap 105 at 2:3"},
+        {"program t; pragma suppress(dangling_check); type R = record a: Int32; "
+         "end; var q: ^R; begin q := new(R); q.a := 3; dispose(q); writeln(q.a); "
+         "end t.",
+         "3\n", "ok"},
+        /* arrays made by new: a vector that grows with move, Strings,
+           overlapping moves, bounds, an empty one (§ 3.10, § 9.5, § 9.7) */
+        {"program t;\ntype Items = array[Int64 range <>] of Int64; ItemsRef = "
+         "^Items; Words = array[Int32 range <>] of String;\nprocedure Push(var "
+         "v: ItemsRef; var n: Int64; x: Int64);\nbegin\n  if n = length(v^) "
+         "then\n    var bigger := new(Items range 0..2 * length(v^) - 1);\n "
+         "   move(v^, 0, bigger^, 0, n);\n    dispose(v);\n    v := "
+         "bigger;\n  end;\n  v[n] := x;\n  n := n + 1;\nend Push;\nbegin\n  "
+         "var v := new(Items range 0..1);\n  var n: Int64 := 0;\n  for var "
+         "i: Int64 := 1 to 20 do Push(v, n, i * i); end;\n  writeln(n, \" \", "
+         "low(v^), \" \", high(v^), \" \", length(v^), \" \", v[19]);\n  "
+         "move(v^, 0, v^, 1, 5);\n  writeln(v[0], \" \", v[1], \" \", v[2], "
+         "\" \", v[5]);\n  move(v^, 3, v^, 0, 4);\n  writeln(v[0], \" \", "
+         "v[3]);\n  dispose(v);\n  var w := new(Words range 5..7);\n  w[5] := "
+         "\"a\" & str(1);\n  w[6] := w[5] & \"b\";\n  var u := new(Words "
+         "range 1..3);\n  move(w^, 5, u^, 1, 3);\n  writeln(u[1], \" \", "
+         "u[2], \" [\", u[3], \"]\");\n  dispose(w);\n  writeln(u[2]);\n  "
+         "dispose(u);\n  var e := new(Items range 1..0);\n  "
+         "writeln(length(e^));\n  dispose(e);\nend t.",
+         "20 0 31 32 400\n1 1 4 25\n9 49\na1 a1b []\na1b\n0\n", "ok"},
+        {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+         "new(A range 1..3);\n  p[4] := 1;\nend t.",
+         "", "trap 100 at 2:4"},
+        {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+         "new(A range 1..3); dispose(p);\n  writeln(p[1]);\nend t.",
+         "", "trap 105 at 2:12"},
+        {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+         "new(A range 1..3); dispose(p);\n  dispose(p);\nend t.",
+         "", "trap 106 at 2:3"},
+        {"program t; type A = array[Int32 range <>] of Int32; S = Int32 range "
+         "1..10; B = array[S range <>] of Int32; begin var n: Int32 := 11;\n  "
+         "var p := new(B range 1..n);\nend t.",
+         "", "trap 101 at 2:12"},
+        {"program t; type A = array[Int32 range <>] of Int32; begin var n: "
+         "Int32 := 2147483647;\n  var p := new(A range -n..n);\nend t.",
+         "", "trap 101 at 2:12"},
+        {"program t; type A = array[Int64 range <>] of Int64; begin var n: "
+         "Int64 := 4611686018427387904;\n  var p := new(A range 0..n);\nend "
+         "t.",
+         "", "trap 7 at 2:12"},
+        {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+         "new(A range 1..3); var c: Int32 := -1;\n  move(p^, 1, p^, 1, "
+         "c);\nend t.",
+         "", "trap 101 at 2:3"},
+        {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+         "new(A range 1..3);\n  move(p^, 2, p^, 1, 3);\nend t.",
+         "", "trap 100 at 2:3"},
+        {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+         "new(A range 1..3); var q := p; dispose(p);\n  move(q^, 1, q^, 2, "
+         "0);\nend t.",
+         "", "trap 105 at 2:3"},
+        /* the destination out of its bounds; a dispose between the bounds
+           and the copy; the bounds of a freed array are not read */
+        {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+         "new(A range 1..3);\n  move(p^, 1, p^, 2, 3);\nend t.",
+         "", "trap 100 at 2:3"},
+        {"program t; type A = array[Int32 range <>] of Int32; var q: ^A; "
+         "function f(): Int32; begin dispose(q); return 1; end f; begin q := "
+         "new(A range 1..3);\n  move(q^, 1, q^, 1, f());\nend t.",
+         "", "trap 105 at 2:3"},
+        {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+         "new(A range 1..3); dispose(p);\n  writeln(p[99]);\nend t.",
+         "", "trap 105 at 2:12"},
+        /* licm keeps what the program sees: a dispose in the loop is seen
+           at the next access; a write before a dangling access comes first
+         */
+        {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+         "new(A range 1..3); var q := new(A range 1..3); p[1] := 7;\n  for var "
+         "i: Int32 := 1 to 3 do if i = 2 then dispose(q); dispose(p); end; "
+         "writeln(p[1]); end;\nend t.",
+         "7\n", "trap 105 at 2:85"},
+        {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+         "new(A range 1..3); dispose(p); var i: Int32 := 0;\n  while i < 2 do "
+         "writeln(i); i := p[1]; end;\nend t.",
+         "0\n", "trap 105 at 2:36"},
+        {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
+         "new(A range 1..3); dispose(p); var s: Int32 := 0; var n: Int32 := 0; "
+         "for var i: Int32 := 1 to n do s := s + p[i]; end; writeln(s);\nend "
+         "t.",
+         "0\n", "ok"},
+        /* calls without end: stack overflow, never a crash (§ 10.1) */
+        {"program t; function f(n: Int64): Int64; begin return f(n + 1) + 1; "
+         "end f; begin\n  writeln(f(0));\nend t.",
+         "", "trap 28 at 1:54"},
+        /* Strings in records, arrays and new: copied, returned, passed,
+           disposed, in a loop and in a computed array, counted right */
+        {"program t; type S = record n: Int32; s: String; end; var a: "
+         "array[Int32 range 1..3] of S; g: S; q: ^S; function mk(k: Int32): S; "
+         "var r: S; begin r.n := k; r.s := \"k\" & str(k); return r; end mk; "
+         "procedure show(x: S); begin writeln(x.n, \" \", x.s); end show; begin "
+         "for var i: Int32 := 1 to 3 do a[i] := mk(i); var l: S; l.s := l.s & "
+         "\"+\"; write(l.s); end; writeln(); g := a[2]; a[2] := a[2]; show(g); "
+         "q := new(S); q^ := a[3]; var c := q^; show(c); dispose(q); var n: Int32 := 2; var "
+         "d: array[Int32 range 1..n] of S; d[1] := a[1]; show(d[1]); end t.",
+         "+++\n2 k2\n3 k3\n1 k1\n", "ok"},
+        /* a record assigned is copied, from the right to the left */
+        {"program t; type Pair = record a, b: Int32; end; var u, w: Pair; begin "
+         "u.a := 1; u.b := 2; w := u; w.a := 5; writeln(u.a, \" \", w.a, \" \", "
+         "w.b); end t.",
+         "1 5 2\n", "ok"},
+        /* new gives values outside a narrow range, caught when read through
+           a pointer; a copy carries them, and its reads are checked too
+           (§ 4.5) */
+        {"program n; type Small = Int32 range 4..9; Tiny = UInt8 range 0..3; "
+         "Rec = record a: Small; b: Int32; c: Tiny; v: array[Int32 range 1..5] "
+         "of Small; end; Ptr = ^Rec; var p: Ptr := nil; r: Rec; begin p := "
+         "new(Rec); writeln(p.b); p.a := 5; writeln(p.a); r := p^; "
+         "writeln(r.c, \" \", r.v[3]);\n  writeln(p.c); end n.",
+         "0\n5\n", "trap 101 at 1:268"},
+        {"program n; type Small = Int32 range 4..9; Rec = record v: "
+         "array[Int32 range 1..5] of Small; end; Ptr = ^Rec; var p: Ptr := nil; "
+         "begin p := new(Rec); p.v[2] := 7; writeln(p.v[2]);\n  "
+         "writeln(p.v[5]); end n.",
+         "7\n", "trap 101 at 2:14"},
+        {"program n; type Small = Int32 range 4..9; SP = ^Small; var q: SP := "
+         "nil; begin q := new(Small);\n  writeln(q^); end n.",
+         "", "trap 101 at 2:12"},
+        /* ** at run time: checked on numbers, modular on Bits, any unsigned
+           exponent */
+        {"program w; var a: UInt8 := 3; b: Bits8 := 3; c: Int64 := 1; d: Bits8 "
+         ":= 2; n: UInt64 := 18446744073709551615; begin writeln(a ** 4, \" \", b "
+         "** 7, \" \", c ** n, \" \", d ** n); end w.",
+         "81 139 1 0\n", "ok"},
+        {"program w; var a: Int8 := 3; n: Int32 := 5; begin writeln(a ** 4); "
+         "writeln(a ** n); end w.",
+         "81\n", "trap 6"},
+        {"program w; var a: UInt32 := 2; n: Int32 := 32; begin writeln(a ** n); "
+         "end w.",
+         "", "trap 6"},
+        /* reals: abs clears the sign (IEEE 754), a constant -0.0 is the
+           rational 0, a conversion fits by the exact bounds */
+        {"program f; var z: Float64 := 0.0; begin writeln(abs (-(z)), \" \", "
+         "-(z), \" \", -0.0); end f.",
+         "0.0 -0.0 0.0\n", "ok"},
+        {"program f; type R = Int64 range 0..9007199254740993; var a: Float64 := "
+         "9007199254740992.0; b: Float64 := 9007199254740994.0; begin "
+         "writeln(R(a)); writeln(R(b)); end f.",
+         "9007199254740992\n", "trap 103"},
+        /* a negative exponent is a range error, the exponent a Natural */
+        {"program w; var a: Int64 := 1; e: Int32 := -1; begin writeln(a ** 0); "
+         "writeln(a ** e); end w.",
+         "1\n", "trap 101"},
+        /* succ and pred are checked, before the step (pred of the first
+           gave 255) */
+        {"program e; type Color = (Red, Green, Blue); var c: Color := Red; "
+         "begin writeln(ord(succ(c))); writeln(ord(pred(c))); end e.",
+         "1\n", "trap 101"},
+        {"program e; var a: UInt64 := 18446744073709551615; b: Int8 := -128; "
+         "begin writeln(pred(a), \" \", succ(b)); writeln(succ(a)); end e.",
+         "18446744073709551614 -127\n", "trap 101"},
+        /* out: copied back at the return, given a value on every path */
+        {"program o; var g: Int32 := 0; procedure Set(var x: Int32); begin x "
+         ":= 7; end Set; procedure P(out r: Int32); begin r := 1; writeln(g); "
+         "Set(r); writeln(g, \" \", r); end P; begin P(g); writeln(g); end o.",
+         "0\n0 7\n7\n", "ok"},
+        {"program o; procedure Get(out r: Int32; x: Int32); begin if x > 0 then "
+         "r := x; end; end Get; var v: Int32 := 0; begin Get(v, 1); end o.",
+         "", "errors L0056@1:22"},
+        {"program o; procedure Get(out r: Int32); begin writeln(r); r := 1; end "
+         "Get; var v: Int32 := 0; begin Get(v); end o.",
+         "", "errors L0053@1:55"},
+        /* the target of an assignment before its value */
+        {"program p;\nvar a: array[Int32 range 1..3] of Int32; z: Int32 := "
+         "0;\nbegin\n  a[1 div z] := 7 div z;\nend p.",
+         "", "trap 11 at 4:7"},
+        {"program p; var a: array[Int32 range 1..3] of Int32; function F(): "
+         "Int32; begin writeln(\"value\"); return 1; end F; function G(): "
+         "Int32; begin writeln(\"index\"); return 1; end G; begin a[G()] := "
+         "F(); end p.",
+         "index\nvalue\n", "ok"},
+        /* abs of a number without a sign is the number (found by the random
+           programs: it was taken as signed) */
+        {"program p; var u: UInt16 := 65534; b: UInt8 := 200; begin "
+         "writeln(abs (u), \" \", abs (b)); end.",
+         "65534 200\n", "ok"},
+        /* checked on the SSA form */
+        {"program p; var x: Int32; begin var y: Int32; writeln(y); end.", "",
+         "errors L0053@1:54"},
+        {"program p; var b: Boolean := true; begin var y: Int32; if b then y := "
+         "1; end; writeln(y); end.",
+         "", "errors L0053@1:87"},
+        {"program p; var b: Boolean := true; begin var y: Int32; if b then y := "
+         "1; else y := 2; end; writeln(y); end.",
+         "1\n", "ok"},
+        {"program p; function f(x: Int32): Int32; begin if x > 0 then return 1; "
+         "end; end; begin writeln(f(1)); end.",
+         "", "errors L0052@1:21"},
+        /* records and arrays as results: into a slot of the caller */
+        {"program p;\ntype V = record x, y: Int32; end;\n"
+         "type A = array[Int32 range 1..4] of Int64;\n"
+         "function mk(a, b: Int32): V; var r: V; begin r.x := a; r.y := b; "
+         "return r; end mk;\n"
+         "function sq(n: Int64): A; var r: A;\nbegin\n"
+         "  for var i: Int32 := 1 to 4 do r[i] := n * Int64(i); end;\n"
+         "  if n > 100 then return sq(n div 2); end;\n  return r;\nend sq;\n"
+         "function sw(v: V): V; begin return mk(v.y, v.x); end sw;\n"
+         "var g: V; h: A;\nbegin\n  g := sw(mk(3, 4));\n"
+         "  writeln(g.x, \" \", g.y, \" \", mk(7, 8).y, \" \", sq(5)[3], \" \", "
+         "sq(300)[4]);\n"
+         "  h := sq(2); var w := sw(sw(mk(9, 10)));\n"
+         "  writeln(h[1] + h[4], \" \", w.x);\nend.",
+         "4 3 8 15 300\n10 9\n", "ok"},
+        {"program p; type V = record x: Int32; end; function f(b: Boolean): V; "
+         "var r: V; begin if b then return r; end; end; begin end.",
+         "", "errors L0052@1:52"},
+        /* computed arrays: freed at the end of their list, and on exit,
+           continue and return */
+        {"program p;\nfunction f(k: Int32): Int64;\n"
+         "var a: array[Int32 range 1..k] of Int64;\nbegin\n  a[k] := 7;\n"
+         "  for var i := 1 to k do\n"
+         "    var b: array[Int32 range 0..i] of Int64;\n"
+         "    if i = 2 then continue; end;\n"
+         "    var c: array[Int32 range 0..i] of Int64;\n"
+         "    exit when i = 4;\n"
+         "    loop var d: array[Int32 range 0..i] of Int8; exit; end;\n"
+         "    continue when i = 1;\n"
+         "    if i = 5 then return a[k]; end;\n  end;\n"
+         "  return a[k] + 1;\nend f;\n"
+         "begin\n  writeln(f(3), \" \", f(6));\n"
+         "  for var j: Int32 := 1 to 3 do var e: array[Int32 range 1..j] of "
+         "Int32; e[j] := j; write(e[j]); end;\n  writeln();\nend.",
+         "8 8\n123\n", "ok"},
+        {"program p; type R = record a: Int32; end; var q: ^R; begin q := "
+         "new(R); q.a := 1; end.",
+         "", "ok, 1 live"},
+        /* an integer to Float32 rounded once: through a double, 2^60 + 2^36
+           + 1 would lose its last bit and tie down to 2^60 */
+        {"program p; var i: Int64 := 1152921573326323713; u: UInt64 := "
+         "9223372586610589697; begin writeln(Float32(i), \" \", Float32(u)); "
+         "end.",
+         "1.1529216e+18 9.223373e+18\n", "ok"},
+        /* chr is checked at its name, s[i] at the [ */
+        {"program p; var n: Int32 := 1114112; begin writeln(chr(n)); end.", "",
+         "trap 103 at 1:51"},
+        {"program p; var s: String := \"ab\"; i: Int64 := 3; begin "
+         "writeln(s[i]); end.",
+         "", "trap 100 at 1:65"},
+        /* copy: from 1 on, a count from 0, cut short past the end; its
+           arguments from left to right */
+        {"program p; var s: String := \"abc\"; begin writeln(copy(s, 3, 5), "
+         "\"|\", copy(s, 5, 1), \"|\", copy(s, 1, 0), \"|\", copy(s, 2, 2)); "
+         "end.",
+         "c|||bc\n", "ok"},
+        {"program p; var s: String := \"abc\"; k: Int64 := 0; begin "
+         "writeln(copy(s, k, 1)); end.",
+         "", "trap 101 at 1:65"},
+        {"program p; var s: String := \"abc\"; k: Int64 := -1; begin "
+         "writeln(copy(s, 1, k)); end.",
+         "", "trap 101 at 1:66"},
+        {"program p; var z: Int64 := 0; m: Int64 := 9223372036854775807; begin "
+         "writeln(copy(\"ab\", 1 div z, m + 1)); end.",
+         "", "trap 11"},
+        /* a record or an array variable without a value (§ 4.5): its narrow
+           scalars are not valid, even where 0 would be, and a read of one
+           is caught at the . or the [ */
+        {"program p; type S = Int32 range -5..5; R = record a: Int32; b: S; "
+         "end; var g: R; begin writeln(g.a); writeln(g.b); end.",
+         "0\n", "trap 101 at 1:111"},
+        {"program p; type S = Int32 range -5..5; procedure q(); var a: "
+         "array[Int32 range 1..3] of S; begin a[2] := 0; writeln(a[2]); "
+         "writeln(a[3]); end q; begin q(); end.",
+         "0\n", "trap 101 at 1:133"},
+        {"program p; type S = Int32 range -5..5; procedure q(n: Int32); var a: "
+         "array[Int32 range 1..n] of S; begin a[1] := 1; writeln(a[1]); "
+         "writeln(a[n]); end q; begin q(1); q(9); end.",
+         "1\n1\n1\n", "trap 101 at 1:141"},
+        /* a for over the bounds of x leaves out the checks of x[i] only
+           when x keeps its bounds: a string assigned in the loop, a global
+           one a routine may assign, one passed as var, another array, i - 1
+           as the low bound keep them */
+        {"program p; procedure q(); var s: String := \"abc\"; begin for var i: Int64 := 1 to length(s) do s := copy(s, 1, 1); writeln(s[i]); end; end q; begin q(); end.",
+         "97\n", "trap 100 at 1:124"},
+        {"program p; var g: String := \"abc\"; procedure cut(); begin g := \"a\"; end cut; begin for var i: Int64 := 1 to length(g) do cut(); writeln(g[i]); end; end.",
+         "97\n", "trap 100 at 1:138"},
+        {"program p; procedure cut(var t: String); begin t := \"a\"; end cut; procedure q(); var s: String := \"abc\"; begin for var i: Int64 := 1 to length(s) do cut(s); writeln(s[i]); end; end q; begin q(); end.",
+         "97\n", "trap 100 at 1:167"},
+        {"program p; var a: array[Int32 range 1..3] of Int32; b: array[Int32 range 1..2] of Int32; begin for var i := low(a) to high(a) do writeln(b[i]); end; end.",
+         "0\n0\n", "trap 100 at 1:139"},
+        {"program p; var a: array[Int32 range 1..3] of Int32; begin for var i := low(a) to high(a) do for var j := i - 1 to high(a) do writeln(a[j]); end; end; end.",
+         "", "trap 100 at 1:135"},
+        /* checks turned off (§ 9): in the whole file, in a routine, to the
+           end of a list of statements; unsuppress turns them back on. Where
+           one would fail the behaviour is undefined: here the value goes on
+         */
+        {"program p; pragma suppress(range_check); type P = Int32 range 0..100; var x: P; y: Int32 := 200; begin x := y; writeln(x); end.",
+         "200\n", "ok"},
+        {"program p; type P = Int32 range 0..100; var x: P; y: Int32 := 200; procedure q(); pragma suppress(range_check); var z: P; begin z := y; writeln(z); end q; begin q(); x := y; end.",
+         "200\n", "trap 101 at 1:167"},
+        {"program p; type P = Int32 range 0..100; var x: P; y: Int32 := 200; begin for var i: Int32 := 1 to 2 do pragma suppress(range_check); x := y; writeln(x); end; x := y; end.",
+         "200\n200\n", "trap 101 at 1:159"},
+        {"program p; pragma suppress(all_checks); type P = Int32 range 0..100; var x: P; y: Int32 := 200; a: Int8 := 100; begin a := a + a; writeln(a); if y > 0 then pragma unsuppress(range_check); x := y; end; end.",
+         "-56\n", "trap 101 at 1:189"},
+        /* a NaN is nan with decimals too, whatever its sign bit (0 / 0 sets
+           it on x86) */
+        {"program p; var z: Float64 := 0.0; begin writeln((z / z):0:2, \" \", "
+         "(-(z / z)):5:1, \"|\"); end.",
+         "nan   nan|\n", "ok"},
+        /* BigInt: rounding to reals once and straight to the type, from
+           reals half away from zero, conversions to integers at their
+           bounds, comparison by value; in records, arrays, new, parameters;
+           val and str; powers of 0, 1, -1; the signs of div, rem, mod; the
+           traps */
+
+        {"program p;\nvar b: BigInt := 9007199254740993; c: BigInt := 1152921573326323713;\n  d: BigInt := 340282356779733661637539395458142568448; z: Float64 := 0.0;\n  two: BigInt := 2;\nbegin\n  writeln(Float64(b), \" \", Float64(b + 2), \" \", Float32(BigInt(16777219) + b - b));\n  writeln(Float32(c), \" \", Float32(d), \" \", Float32(d - 1), \" \", Float64(-d * d * d * d * d * d * d * d * d));\n  writeln(BigInt(z + 0.5), \" \", BigInt(z - 1.5), \" \", BigInt(z + 2.5), \" \", BigInt(z + 1e20));\n  writeln(Int64(-two ** 63), \" \", UInt64(two ** 64 - 1), \" \", Bits8(-b), \" \", Bits64(-b), \" \", Int8(-two ** 7), \" \", Int16(-b div 1000000000000));\n  writeln(two ** 64 = BigInt(18446744073709551615) + 1, \" \", b <> b + 0, \" \", -b < b, \" \", -b < -two, \" \", two < -b);\nend.",
+         "9007199254740992.0 9007199254740996.0 16777220.0\n1.1529216e+18 inf 3.4028235e+38 -inf\n1 -2 3 100000000000000000000\n-9223372036854775808 18446744073709551615 255 18437736874454810623 -128 -9007\ntrue false true true false\n",
+         "ok"},
+        {"program p;\ntype Rec = record n: BigInt; s: String; end;\n  Arr = array[Int32 range 1..2] of BigInt;\n  Open = array[Int32 range <>] of BigInt;\nvar r: Rec; a: Arr; p: ^Rec; q: ^Open;\nprocedure Twice(var x: BigInt; y: BigInt; out z: BigInt);\nbegin\n  x := x * 2; z := y + x;\nend Twice;\nbegin\n  r.n := 10 ** 25; a[2] := r.n; r.n := r.n + 1;\n  p := new(Rec); p.n := a[2] * a[2]; p.s := str(p.n);\n  writeln(r.n, \" \", a[1], \" \", a[2], \" \", p.s);\n  dispose(p);\n  q := new(Open range 1..3);\n  q[3] := -a[2]; writeln(q[1], \" \", q[3]);\n  dispose(q);\n  var x: BigInt := 3; var z: BigInt;\n  Twice(x, BigInt(4), z);\n  writeln(x, \" \", z, \"|\", x:5, \"|\", str(z * (-1)));\n  var v: BigInt := 7;\n  writeln(val(\"  +1_000_000_000_000_000_000_000 \", v), \" \", v, \" \", val(\"12.0\", v), \" \", v);\nend.",
+         "10000000000000000000000001 0 10000000000000000000000000 100000000000000000000000000000000000000000000000000\n0 -10000000000000000000000000\n6 10|    6|-10\ntrue 1000000000000000000000 false 1000000000000000000000\n",
+         "ok"},
+        {"program p;\nvar n: Int32 := -1; e: UInt64 := 18446744073709551615; b: BigInt := 5;\nbegin\n  writeln(BigInt(-1) ** e, \" \", BigInt(0) ** e, \" \", BigInt(1) ** e, \" \", BigInt(0) ** 0, \" \", b ** 3);\n  writeln(b ** n);\nend.",
+         "-1 0 1 1 125\n", "trap 101 at 5:13"},
+        {"program p;\nvar b: BigInt := 7; z: BigInt := 0;\nbegin\n  writeln(b div 2, \" \", b rem (-2), \" \", b mod (-2), \" \", (-b) mod 2);\n  writeln(b div z);\nend.",
+         "3 1 -1 1\n", "trap 11 at 5:13"},
+        {"program p; var z: Float64 := 0.0; begin writeln(BigInt(z / z)); end.",
+         "", "trap 103 at 1:49"},
+        {"program p; var b: BigInt := 2; begin writeln(Int64(b ** 63 - 1)); writeln(Int64(b ** 63)); end.",
+         "9223372036854775807\n", "trap 103 at 1:75"},
+        /* a width counts characters, not bytes */
+        {"program p; var s: String := \"\xc3\xa8\xe2\x82\xac\"; begin writeln(s:5, "
+         "\"|\", 'x':3, \"|\"); end.",
+         "   \xc3\xa8\xe2\x82\xac|  x|\n", "ok"},
+        /* short routines put in line at -O1 (OPTDIFF): a local array
+           starts from zero at each call, a trap is where it is in the
+           routine, halt stops there, strings go in and out */
+        {"program p; function f(k: Int32): Int32; var a: array[Int32 range "
+         "1..2] of Int32; begin a[1] := a[1] + k; return a[1]; end; begin for "
+         "var i: Int32 := 1 to 3 do write(f(i)); end; writeln(); end.",
+         "123\n", "ok"},
+        {"program p; function g(x: Int32): Int32; begin return 12 div x; end; "
+         "begin for var i: Int32 := 2 downto 0 do write(g(i)); end; end.",
+         "612", "trap 11 at 1:57"},
+        {"program p; procedure h(x: Int32); begin if x = 2 then halt(3); end; "
+         "write(x); end; begin for var i: Int32 := 0 to 5 do h(i); end; end.",
+         "01", "halt 3"},
+        {"program p; var t: String := \"\"; function tag(s: String; n: Int32): "
+         "String; begin return s & str(n); end; begin for var i: Int32 := 1 to "
+         "3 do t := t & tag(\"a\", i); end; writeln(t); end.",
+         "a1a2a3\n", "ok"},
 };
 
 /* run main on the input in (NULL: none); what it printed (malloc'd, *len
