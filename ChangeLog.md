@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Limba builds with `-ffp-contract=off`: `a * b + c` keeps the two
+  roundings the IR gives it on every CPU, never fused into one FMA, as
+  the reference interpreter must.
 - A pass that moves out of loops what does not change in them (`licm`,
   after `gvn`): pure values and `ptr_live` of a pointer from outside
   when nothing in the loop may free a block; the checks and the bounds
