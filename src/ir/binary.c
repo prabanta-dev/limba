@@ -4,7 +4,8 @@
  * binary.c - the binary form (.lir): what Limba writes and Meri reads.
  *
  *   "LIR\0"  version  runtime-fingerprint  ops-fingerprint  memory  name
- *   strings  types  globals  externs  functions
+ *   strings  language  messages  target  types  globals  externs
+ *   functions
  *
  * Integers are LEB128 (signed where they may be negative), fingerprints 8
  * bytes little endian. Instructions are written block by block, parameters
@@ -181,6 +182,7 @@ int limba_writer_end(limba_writer *wr, const limba_module *m, uint8_t **buf,
         limba_w_sleb(&w, m->messages[i].code);
         limba_w_uleb(&w, m->messages[i].text);
     }
+    limba_w_uleb(&w, m->target == LIMBA_NONE ? 0 : (uint64_t)m->target + 1);
 
     limba_w_uleb(&w, m->ntypes - LIMBA_T_FIRST_USER);
     for (limba_id t = LIMBA_T_FIRST_USER; t < m->ntypes; t++) {
@@ -397,6 +399,7 @@ limba_module *limba_read(const uint8_t *buf, size_t len, limba_diag *d)
         int64_t code = limba_r_sleb(&r);
         limba_message_add(m, code, r_id(&r));
     }
+    m->target = r_opt(&r);
 
     uint32_t ntypes = limba_r_count(&r, 3);
     limba_member *mem = NULL;

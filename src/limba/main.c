@@ -45,6 +45,11 @@ static void usage(FILE *out)
           "                  shift_check, nil_check, dangling_check,\n"
           "                  all_checks); where\n"
           "                  one would fail, the behaviour is undefined\n"
+          "  --target=P      the platform whose C the C types by name\n"
+          "                  follow: x86_64-linux, aarch64-linux,\n"
+          "                  x86_64-windows (by default this one)\n"
+          "  --restrict=no_external  no boundary with C: an external\n"
+          "                  routine or a C type is an error\n"
           "  -h, --help      this text\n",
           out);
 }
@@ -100,6 +105,7 @@ int main(int argc, char **argv)
     mallopt(M_TRIM_THRESHOLD, 1 << 30);
 #endif
     const char *in = NULL, *outpath = NULL, *emit = NULL, *suppress = NULL;
+    const char *target = NULL, *restrict_ = NULL;
     bool check = false;
     int level = 0;
     limba_opt_options opt = {false, NULL, NULL, NULL};
@@ -120,6 +126,10 @@ int main(int argc, char **argv)
             opt.skip = a + 7;
         } else if (!strncmp(a, "--suppress=", 11)) {
             suppress = a + 11;
+        } else if (!strncmp(a, "--target=", 9)) {
+            target = a + 9;
+        } else if (!strncmp(a, "--restrict=", 11)) {
+            restrict_ = a + 11;
         } else if (!strncmp(a, "--emit=", 7)) {
             emit = a + 7;
             if (strcmp(emit, "lir") && strcmp(emit, "lit") &&
@@ -145,8 +155,8 @@ int main(int argc, char **argv)
         return 2;
     }
     if (ends_with(in, ".luxia"))
-        return limba_luxia_main(in, emit, outpath, check, level, &opt,
-                                suppress);
+        return limba_luxia_main(in, emit, outpath, check, level, &opt, suppress,
+                                target, restrict_);
     bool binary_in = ends_with(in, ".lir");
     if (!binary_in && !ends_with(in, ".lit")) {
         fprintf(stderr, "limba: %s: a .lit, .lir or .luxia file is expected\n",

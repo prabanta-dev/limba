@@ -347,6 +347,13 @@ void limba_print(const limba_module *m, FILE *out)
         print_bytes(out, s, n);
         fputc('\n', out);
     }
+    if (m->target != LIMBA_NONE) {
+        size_t n;
+        const char *s = limba_str(m, m->target, &n);
+        fputs("target ", out);
+        print_bytes(out, s, n);
+        fputc('\n', out);
+    }
     for (uint32_t i = 0; i < m->nmessages; i++) {
         size_t n;
         const char *s = limba_str(m, m->messages[i].text, &n);

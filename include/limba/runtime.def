@@ -148,3 +148,13 @@ LIMBA_RT(PRINT_BIG, "print_big", "(ref) -> void", LIMBA_RTA_IO)
 LIMBA_RT(STR_FROM_BIG, "str_from_big", "(ref) -> str", LIMBA_RTA_ALLOC)
 /* val: the text of an integer of Luxia (limba_val_big), any size */
 LIMBA_RT(STR_TO_BIG, "str_to_big", "(str, ptr) -> i1", LIMBA_RTA_WRITES_MEM)
+/* C strings (luxia_0.md § 9.9): memory of C, not of the program. new
+   copies with a 0 after (a 0 inside is the trap RANGE, a failed malloc
+   NOMEM); value copies up to the first 0, value_n n bytes (the pointer
+   not null, n >= 0: checked before, in the IR); free frees what new or C
+   made, null does nothing */
+LIMBA_RT(CSTR_NEW, "cstr_new", "(str) -> ptr",
+         LIMBA_RTA_ALLOC | LIMBA_RTA_MAY_TRAP)
+LIMBA_RT(CSTR_VALUE, "cstr_value", "(ptr) -> str", LIMBA_RTA_ALLOC)
+LIMBA_RT(CSTR_VALUE_N, "cstr_value_n", "(ptr, i64) -> str", LIMBA_RTA_ALLOC)
+LIMBA_RT(CSTR_FREE, "cstr_free", "(ptr) -> void", LIMBA_RTA_WRITES_MEM)

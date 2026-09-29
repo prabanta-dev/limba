@@ -160,7 +160,8 @@ bool lxs_assign_to(limba_lxs *S, uint32_t node, limba_ltype target,
         return convert_const(S, node, target);
     char ta[128], tb[128];
     if (t == S->ts.nil) {
-        if (kind(S, target) == LIMBA_LTK_POINTER) {
+        if (kind(S, target) == LIMBA_LTK_POINTER ||
+            kind(S, target) == LIMBA_LTK_OPAQUE) {
             set(S, node, target);
             return true;
         }
@@ -207,12 +208,14 @@ static bool unify(limba_lxs *S, uint32_t node, uint32_t l, uint32_t r,
         *rt = lxs_base(S, *lt);
         return true;
     }
-    if (*lt == S->ts.nil && kind(S, *rt) == LIMBA_LTK_POINTER) {
+    if (*lt == S->ts.nil && (kind(S, *rt) == LIMBA_LTK_POINTER ||
+                             kind(S, *rt) == LIMBA_LTK_OPAQUE)) {
         set(S, l, *rt);
         *lt = *rt;
         return true;
     }
-    if (*rt == S->ts.nil && kind(S, *lt) == LIMBA_LTK_POINTER) {
+    if (*rt == S->ts.nil && (kind(S, *lt) == LIMBA_LTK_POINTER ||
+                             kind(S, *lt) == LIMBA_LTK_OPAQUE)) {
         set(S, r, *lt);
         *rt = *lt;
         return true;
@@ -329,8 +332,8 @@ static limba_ltype binary(limba_lxs *S, uint32_t node, uint32_t scope)
             bool ordered = is_numeric(S, lt) || k == LIMBA_LTK_CHAR ||
                            k == LIMBA_LTK_ENUM || k == LIMBA_LTK_BOOL ||
                            k == LIMBA_LTK_STRING;
-            bool equal =
-                ordered || k == LIMBA_LTK_POINTER || k == LIMBA_LTK_NIL;
+            bool equal = ordered || k == LIMBA_LTK_POINTER ||
+                         k == LIMBA_LTK_OPAQUE || k == LIMBA_LTK_NIL;
             if (!(op == LX_EQ || op == LX_NE ? equal : ordered))
                 return op_error(S, node, lt, "compares scalars and strings");
             res = S->ts.bool_;
@@ -553,7 +556,9 @@ static limba_ltype conversion(limba_lxs *S, uint32_t node, uint32_t scope,
         return target;
     bool numeric =
         is_numeric(S, t) && is_numeric(S, target) && !untyped(S, target);
-    if (!numeric && !lxs_compatible(S, t, target)) {
+    /* Boolean and CBool, or a Boolean type of the program (§ 3.13) */
+    bool booleans = is_bool(S, t) && is_bool(S, target);
+    if (!numeric && !booleans && !lxs_compatible(S, t, target)) {
         lxs_error(S, LXE_BAD_CONVERSION, node, "%s does not convert to %s",
                   lxs_tname(S, t, ta), lxs_tname(S, target, tb));
         return target;
@@ -976,6 +981,57 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
             limba_ltype t = lxs_expr(S, a, scope, 0);
             if (t && kind(S, t) != LIMBA_LTK_POINTER)
                 lxs_error(S, LXE_NOT_POINTER, a, "dispose frees a pointer");
+        }
+        return set(S, node, S->ts.void_);
+    case LXB_NEWCSTRING:
+        if (arity(S, node, 1, nm, scope))
+            arg_of(S, arg_at(S, node, 0), scope, S->ts.string);
+        return set(S, node, S->ty_cstring);
+    case LXB_CVALUE: {
+        /* cvalue(p), cvalue(p, n) of a CString; cvalue(a, n) of a buffer
+           of CChar, CUChar or Byte (§ 9.9) */
+        uint32_t args = lxs_node(S, node)->b, n = lxs_node(S, args)->b;
+        if (n != 1 && n != 2) {
+            lxs_error(S, LXE_ARG_COUNT, node,
+                      "cvalue takes a CString, and a count, or a buffer and "
+                      "a count");
+            return set(S, node, S->ts.string);
+        }
+        uint32_t a = arg_at(S, node, 0);
+        limba_ltype t = lxs_expr(S, a, scope, 0);
+        const limba_typeinfo *x = t ? lxs_ty(S, t) : NULL;
+        bool buffer =
+            x && (x->kind == LIMBA_LTK_ARRAY || x->kind == LIMBA_LTK_OPEN);
+        if (buffer) {
+            limba_ltype e = x->elem;
+            if (e != S->ty_bits[0] && e != S->st.sym[S->csym[0]].type &&
+                e != S->st.sym[S->csym[2]].type)
+                lxs_error(S, LXE_TYPE_MISMATCH, a,
+                          "cvalue reads a buffer of CChar, CUChar or Byte");
+            if (n != 2)
+                lxs_error(S, LXE_ARG_COUNT, node,
+                          "cvalue of a buffer takes the count too");
+            else
+                pointer_arg(S, a, LXS_IN);
+        } else if (t && !lxs_compatible(S, t, S->ty_cstring)) {
+            char tb[128];
+            lxs_error(S, LXE_TYPE_MISMATCH, a,
+                      "cvalue reads a CString or a buffer, not %s",
+                      lxs_tname(S, t, tb));
+        }
+        if (n == 2)
+            arg_of(S, arg_at(S, node, 1), scope, S->ty_int[3]);
+        return set(S, node, S->ts.string);
+    }
+    case LXB_FREECSTRING:
+        if (arity(S, node, 1, nm, scope)) {
+            uint32_t a = arg_at(S, node, 0);
+            limba_ltype t = lxs_expr(S, a, scope, 0);
+            if (t && !lxs_compatible(S, t, S->ty_cstring))
+                lxs_error(S, LXE_TYPE_MISMATCH, a,
+                          "freecstring frees a CString variable");
+            else if (lxs_writable(S, a, true))
+                pointer_arg(S, a, LXS_VAR);
         }
         return set(S, node, S->ts.void_);
     case LXB_ARGCOUNT:

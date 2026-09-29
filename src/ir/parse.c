@@ -150,6 +150,10 @@ static bool module(P *p)
             /* language "luxia": the prefix of the messages of traps */
             if (!lp_string(p, &p->m->language))
                 return false;
+        } else if (lp_accept_word(p, "target")) {
+            /* target "x86_64-linux": the C its externs follow */
+            if (!lp_string(p, &p->m->target))
+                return false;
         } else if (lp_accept_word(p, "message")) {
             /* message 105 "dangling pointer": the text of a trap */
             int64_t code;

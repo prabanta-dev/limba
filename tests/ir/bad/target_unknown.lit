@@ -1,0 +1,2 @@
+; expect: target: no such platform
+target "pdp11-unix"

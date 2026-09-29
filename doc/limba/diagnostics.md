@@ -1157,7 +1157,8 @@ prog.luxia:5:10: error[L0054]: a range of more than 4096 values in a case is not
 
 ### L0057 — UNKNOWN PRAGMA
 
-The pragmas of Luxia 0 are `suppress` and `unsuppress` (§ 10.3).
+The pragmas of Luxia 0 are `suppress` and `unsuppress` (§ 10.3),
+`convention` (§ 3.13) and `restrictions` (§ 10.4).
 
 ```pascal
 program p;
@@ -1167,7 +1168,7 @@ end.
 ```
 
 ```
-prog.luxia:2:8: error[L0057]: the pragmas are suppress and unsuppress, not 'supress'
+prog.luxia:2:8: error[L0057]: the pragmas are suppress, unsuppress, convention and restrictions, not 'supress'
 ```
 
 ### L0058 — UNKNOWN CHECK
@@ -1221,6 +1222,67 @@ With `procedure fill(out r: R)`, `fill(q^)` gives (as `show(q^)` for a
 
 ```
 prog.luxia:10:9: error[L0059]: a record or an array reached through a pointer cannot be an argument: pass the pointer, or copy it into a variable first
+```
+
+## The boundary with C
+
+### L0060 — DOES NOT CROSS TO C
+
+An external routine (§ 8.5) takes and returns only what has a fixed
+meaning in C: integers of fixed size, reals, the C types by name, the
+opaque pointers, records with the C convention; arrays as parameters,
+`var` and `out` as addresses. A record with the C convention holds only
+such fields (§ 3.13). The message says what to use instead.
+
+```pascal
+program p;
+procedure Puts(s: String);
+  external "c" name "puts";
+begin
+end.
+```
+
+```
+prog.luxia:2:19: error[L0060]: String does not cross to C: convert it with newcstring and pass a CString
+```
+
+### L0061 — BOUNDARY FORBIDDEN
+
+With `pragma restrictions(no_external)` among the declarations of the
+program, or `limba --restrict=no_external`, the program may not cross to
+C: no external routine, no C type by name, `CPointer`, `CString`, nor
+`pragma convention` (§ 10.4).
+
+```pascal
+program p;
+pragma restrictions(no_external);
+procedure Beep();
+  external "c" name "beep";
+begin
+end.
+```
+
+```
+prog.luxia:3:11: error[L0061]: 'Beep' is an external routine, which pragma restrictions(no_external) forbids
+```
+
+### L0062 — C PRAGMA WRITTEN WRONG
+
+`pragma convention(c, R)` names the C convention and a record type `R`
+declared in the same declarations; `pragma restrictions(no_external)`
+names the one restriction, among the declarations of the program. Neither
+is a statement.
+
+```pascal
+program p;
+type Pair = record a, b: CInt; end;
+pragma convention(cpp, Pair);
+begin
+end.
+```
+
+```
+prog.luxia:3:1: error[L0062]: the convention is C: 'pragma convention(c, R)', R a record type declared here
 ```
 
 ## All the codes
@@ -1283,6 +1345,9 @@ prog.luxia:10:9: error[L0059]: a record or an array reached through a pointer ca
 | L0054 | UNSUPPORTED | valid, not yet translated |
 | L0055 | HALT_CODE | `halt` with 1 or outside 0..255 |
 | L0056 | OUT_UNASSIGNED | an `out` parameter left without a value |
-| L0057 | PRAGMA_NAME | a pragma that is not `suppress` or `unsuppress` |
+| L0057 | PRAGMA_NAME | a pragma that is not `suppress`, `unsuppress`, `convention` or `restrictions` |
 | L0058 | CHECK_NAME | a check that has no such name |
 | L0059 | THROUGH_POINTER | a record or an array reached through a pointer as an argument, or a scalar as a `var` one |
+| L0060 | C_BOUNDARY | a type that does not cross to C |
+| L0061 | RESTRICTED | the boundary with C where `pragma restrictions(no_external)` forbids it |
+| L0062 | C_PRAGMA | `pragma convention` or `restrictions` written wrong |

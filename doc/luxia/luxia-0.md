@@ -73,16 +73,17 @@ library, § 9) cannot be declared again.
 Keywords are reserved, English, and **lowercase only**. By the case rule
 above, `BEGIN` is an error, not an identifier.
 
-The 49 keywords are:
+The 50 keywords are:
 
 ```
 abs       and       array     begin     case      const     continue
 div       do        downto    else      elsif     end       exit
-export    false     for       function  if        import    in
-loop      mod       module    new       nil       not       of
-or        out       pragma    procedure program   range     record
-rem       repeat    return    shl       shr       then      to
-true      type      until     var       when      while     xor
+export    external  false     for       function  if        import
+in        loop      mod       module    new       nil       not
+of        or        out       pragma    procedure program   range
+record    rem       repeat    return    shl       shr       then
+to        true      type      until     var       when      while
+xor
 ```
 
 `true`, `false` and `nil` are keywords (literals), not predefined names.
@@ -406,6 +407,52 @@ This follows Ada's treatment of uninitialised objects in its strict form
 - Its operations are those of the integers (§ 6.3), its conversions
   those of § 6.6; `write`, `str` and `val` take it as any integer
   (§ 9.1, § 9.4).
+
+### 3.13 Types for the C language
+
+These types exist to call libraries written in C (§ 8.5). They cross the
+boundary with a fixed meaning in C; nothing else in a program needs
+them.
+
+**C types by name.** Distinct types (§ 3.5), predefined, each with the
+representation of a C type on the target platform:
+
+| Luxia | C | x86-64 and aarch64 Linux | x86-64 Windows |
+|---|---|---|---|
+| `CChar` | `char` | `Int8` (x86-64), `UInt8` (aarch64) | `Int8` |
+| `CSChar`, `CUChar` | `signed char`, `unsigned char` | `Int8`, `UInt8` | the same |
+| `CShort`, `CUShort` | `short`, `unsigned short` | `Int16`, `UInt16` | the same |
+| `CInt`, `CUInt` | `int`, `unsigned int` | `Int32`, `UInt32` | the same |
+| `CLong`, `CULong` | `long`, `unsigned long` | `Int64`, `UInt64` | `Int32`, `UInt32` |
+| `CLongLong`, `CULongLong` | `long long`, `unsigned long long` | `Int64`, `UInt64` | the same |
+| `CSizeT`, `CSSizeT` | `size_t`, `ptrdiff_t` | `UInt64`, `Int64` | the same |
+| `CBool` | `_Bool` | one byte, `false` or `true` | the same |
+| `CFloat`, `CDouble` | `float`, `double` | `Float32`, `Float64` | the same |
+
+Being distinct, they convert only when written: `CInt(n)`, `Int64(c)`,
+checked as any conversion. `CBool` is a Boolean type of its own
+(`CBool(b)`, `Boolean(c)`). A program that uses one of them, or a record
+with the C convention, is bound to the platform it is compiled for
+(`limba --target`, by default the one that compiles).
+
+**The opaque pointer.** `CPointer` is C's `void *`: an address of memory
+Luxia does not know. `type Mpz = new CPointer;` makes an opaque pointer
+type of its own, incompatible with the others. An opaque pointer can be
+assigned, passed and compared with `=` and `<>`, with another of its type
+or with `nil` (C's `NULL`), and nothing else: it is never dereferenced,
+has no arithmetic, and converts neither to an integer nor to a `^T`. It
+has no dangling check: its memory belongs to C.
+
+**Records with the C convention.** `pragma convention(c, R)`, among the
+declarations where record type `R` is declared, gives `R` the layout of
+C on the target platform: its fields in order, each at a multiple of its
+alignment, the size rounded to the largest alignment. Every field must
+be a type that crosses the boundary (§ 8.5), or an array of fixed bounds
+of one. Without the pragma a record does not cross the boundary: the
+layout of Luxia is not promised to be that of C.
+
+**C strings.** `CString` is a predefined `new CPointer`, a `char *`
+ended by a byte 0, in the memory of C (§ 9.9).
 
 ## 4. Constants and constant expressions
 
@@ -804,6 +851,62 @@ A routine can be used before its definition in the same file, with no
 No overloading, no nested routines, no default parameters, no named
 association of arguments.
 
+### 8.5 External routines
+
+A routine may be a function of a library written in C (or C++ through
+`extern "C"`), as Pascal's `external` and Ada's `pragma Import`:
+
+```pascal
+type Mpz = new CPointer;
+
+procedure MulUi(r: Mpz; a: Mpz; b: CULong);
+  external "gmp" name "__gmpz_mul_ui";
+
+function StrLen(s: CString): CSizeT;
+  external "c" name "strlen";
+
+function sqrtf(x: CFloat): CFloat;
+  external "m";              // the symbol is the name as written: sqrtf
+```
+
+- In place of its body, `external "library" [name "symbol"];`. Without
+  `name`, the symbol is the name of the routine **as written** (C tells
+  the case apart). `name` here is not a keyword.
+- The library is a **logical name**: `"gmp"`, `"m"`; `"c"` is the C
+  library of the process. The engine turns it into the file of the
+  platform (`libgmp.so`, `gmp.dll`, `libgmp.dylib`) and looks for it
+  where it is told to, by its command line or its configuration: never
+  a path in the program. It opens every library and finds **every**
+  symbol the program declares **before** the program starts; if one is
+  missing it stops at once with a message, never halfway through.
+- An external routine is called as any other; its address cannot be
+  taken in Luxia 0.
+- **What crosses the boundary**, as parameters and as the result:
+  - the integers of fixed size (`Int8`..`Int64`, `UInt8`..`UInt64`,
+    `Bits8`..`Bits64`, C's `int8_t`..`uint64_t`), `Float32` (`float`),
+    `Float64` (`double`);
+  - the C types by name, the opaque pointers and the records with the C
+    convention (§ 3.13); a record passes by value as C passes it, or by
+    address as a `var` or `out` parameter;
+  - as a parameter only: an array, of fixed bounds or open, of such
+    elements, passed as a pointer to its first element (`const T *` in
+    mode `in`, `T *` in modes `var` and `out`); its length the program
+    passes apart;
+  - a `var` or `out` parameter of such a type, passed as its address
+    (`T *`).
+- **What does not**, a compile-time error: `String` and `BigInt`
+  (counted: C knows no references; § 9.9 converts strings), `Boolean`
+  (C's `_Bool` is `CBool`), `Char`, enumerations, the pointers `^T` of
+  Luxia, subtypes with a range (C would not respect the range of what
+  it returns: a result converts afterwards), records without the C
+  convention. C's `long double` has no type in Luxia: a function that
+  takes or returns one cannot be declared (on x86-64 it passes through
+  the x87 stack, on Win64 it is a `double`: a wrong translation would be
+  silent).
+- The arguments are computed and checked **before** the call, from the
+  left, as for any routine; the result is converted and checked after
+  it. What happens inside the call is the subject of § 10.4.
+
 ## 9. The predefined library
 
 The names of the library are visible everywhere and cannot be redeclared
@@ -969,6 +1072,25 @@ return a real of the type of their argument (§ 6.6).
   compile-time error; a computed value outside those limits is a
   range error at run time.
 
+### 9.9 C strings
+
+As Ada's `Interfaces.C.Strings`, with explicit conversions:
+
+- `newcstring(s: String): CString`: a copy of `s` with a byte 0 after it,
+  allocated with the `malloc` of C, so that a C function that takes it
+  over may free it. A `s` that holds a byte 0 is a **range error** (C
+  would see a string cut short, silently); if `malloc` fails, "out of
+  memory".
+- `cvalue(p: CString): String`: the bytes up to the first 0, copied into
+  a `String`; `nil` is a nil error. `cvalue(p, n)` copies exactly `n`
+  bytes (`n` an `Int64` from 0; a negative one is a range error), a 0
+  among them included.
+- `cvalue(a, n)`, `a` an array of `CChar`, `CUChar` or `Byte` that C
+  filled as a buffer: its first `n` elements as a `String`, `n` checked
+  against the length of `a` (an index error past it).
+- `freecstring(var p: CString)`: frees `p` with the `free` of C and sets
+  it to `nil`; on `nil` it does nothing.
+
 ## 10. Run-time errors and checks
 
 ### 10.1 Run-time errors
@@ -1064,6 +1186,28 @@ Compile-time checks cannot be turned off (definite assignment, missing
 `return` and `out` values, constants out of range, types): they cost
 nothing at run time.
 
+### 10.4 The unchecked boundary
+
+A call of an external routine (§ 8.5) leaves the language:
+
+- **inside the call no guarantee of Luxia holds**: no run-time error is
+  raised, the memory it takes is not counted (§ 10.1), no pointer is
+  checked; a mistake in C may stop the process without a message of
+  Luxia;
+- an address given to C (a `var` or `out` parameter, an array, a record
+  by address) is valid **only during the call**: a C function that keeps
+  it, or frees memory of Luxia, makes the program erroneous, as in Ada;
+- the declaration is **not compared** with the library: a wrong
+  signature gives wrong data or a crash, as in Ada;
+- on either side of the call the rules of Luxia hold as everywhere.
+
+**Forbidding it.** `pragma restrictions(no_external)`, among the
+declarations of the program, makes every external routine, every C type
+by name, `CPointer`, `CString` and `pragma convention` a compile-time
+error; the option `limba --restrict=no_external` does the same without
+touching the source, as Ada's `Restrictions` for programs to be
+certified. A program that compiles so has no unchecked boundary.
+
 ## 11. Program structure
 
 ```pascal
@@ -1123,7 +1267,8 @@ VarSec     = "var" VarDecl ";" { VarDecl ";" } .
 VarDecl    = IdentList ( ":" Type [ ":=" Expr ] | ":=" Expr ) .
 IdentList  = ident { "," ident } .
 Routine    = ( "procedure" ident Params | "function" ident Params ":" Type )
-             ";" { LocalDecl } "begin" Stmts "end" [ ident ] ";" .
+             ";" ( { LocalDecl } "begin" Stmts "end" [ ident ] ";"
+                 | "external" string [ ident string ] ";" ) .
 LocalDecl  = ConstSec | TypeSec | VarSec | Pragma ";" .
 Params     = "(" [ Param { ";" Param } ] ")" .
 Param      = [ "var" | "out" ] IdentList ":" Type .
@@ -1174,7 +1319,9 @@ its exponent is a `Primary`.
 The semantic analysis rejects some constructs the grammar lets through,
 to give better messages: a function call used as a statement, a
 designator that is not a call used as a statement, `x:w:d` outside
-`write`/`writeln`, and a routine inside another.
+`write`/`writeln`, and a routine inside another. In an external
+routine, the `ident` before the second `string` must be `name`, a word
+of context, not a keyword.
 
 A branch of `case` begins with `when`, and a conditional `exit` or
 `continue` is written `exit when c`; since every statement ends with `;`,
@@ -1200,5 +1347,9 @@ and tools can anticipate them.
   subtypes.
 - Subtypes of `BigInt` with a range; functions of `BigInt` beyond its
   operators (greatest common divisor, square root, exact division).
+- Routines of Luxia given to C as pointers to functions (callbacks),
+  and variadic C functions (`printf`); a tool that writes the external
+  declarations from the headers of a C library, so that the signature is
+  no longer written by hand.
 - Ownership of pointers, making `dispose` safe at compile time, and
   lifting the rule of § 3.10 on arguments reached through a pointer.

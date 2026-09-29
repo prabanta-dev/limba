@@ -58,6 +58,16 @@ bool limba_type_counted(const limba_module *m, limba_id t)
     }
 }
 
+bool limba_target_known(const char *s, size_t len)
+{
+    static const char *const known[] = {"x86_64-linux", "aarch64-linux",
+                                        "x86_64-windows"};
+    for (size_t i = 0; i < sizeof(known) / sizeof(known[0]); i++)
+        if (strlen(known[i]) == len && !memcmp(known[i], s, len))
+            return true;
+    return false;
+}
+
 bool limba_type_holds_str(const limba_module *m, limba_id t)
 {
     return limba_type_counted(m, t);
@@ -96,6 +106,7 @@ limba_module *limba_module_new(void)
     m->name = LIMBA_NONE;
     m->memory = LIMBA_MEM_STRICT;
     m->language = LIMBA_NONE;
+    m->target = LIMBA_NONE;
     m->strings = limba_strtab_new();
     m->typeidx = limba_hash_new();
     m->symidx = limba_hash_new();

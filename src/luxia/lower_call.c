@@ -179,6 +179,9 @@ static void routine(lxl *L, uint32_t node, limba_sym s, limba_id *result)
     const limba_typeinfo *sig = ti(L, S->st.sym[s].type);
     uint32_t first = sig->first, count = sig->count;
     uint32_t *ops = NULL, n = 0, cap = 0;
+    /* a routine of C (§ 8.5): call.ext, an array its address alone, a
+       record by value the address of its bytes (IR § 11e) */
+    bool ext = lxl_external(L, s);
     bool agg = sig->elem != S->ts.void_ && !lxl_scalar(L, sig->elem);
     limba_id slot = LIMBA_NONE;
     if (agg) {
@@ -202,7 +205,7 @@ static void routine(lxl *L, uint32_t node, limba_sym s, limba_id *result)
         bool by_addr = true;
         if (ti(L, p.type)->kind == LIMBA_LTK_OPEN) {
             open_arg(L, node, a, p.type, &v[0], &v[1], &v[2]);
-            k = 3;
+            k = ext ? 1 : 3;
         } else if (p.mode != LXS_IN || !lxl_scalar(L, p.type)) {
             v[0] = lxl_addr(L, a);
         } else {
@@ -234,7 +237,8 @@ static void routine(lxl *L, uint32_t node, limba_sym s, limba_id *result)
     lxl_at(L, node);
     limba_id rt =
         sig->elem == S->ts.void_ || agg ? LIMBA_T_VOID : lxl_type(L, sig->elem);
-    limba_id r = lxl_emit(L, LIMBA_OP_CALL, rt, 0, L->func_of[s], 0, ops, n);
+    limba_id r = lxl_emit(L, ext ? LIMBA_OP_CALLEXT : LIMBA_OP_CALL, rt, 0,
+                          L->func_of[s], 0, ops, n);
     free(ops);
     for (uint32_t b = 0; b < nbacks; b += 3) {
         limba_id x = un(L, LIMBA_OP_LOAD, backs[b + 2], backs[b + 1]);
@@ -602,6 +606,61 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
                          bin(L, LIMBA_OP_MUL, LIMBA_T_I64, count,
                              lxl_iconst(L, LIMBA_T_I64, (int64_t)esize))};
         lxl_emit(L, LIMBA_OP_MEMCPY, LIMBA_T_VOID, 0, 0, 0, m, 3);
+        return;
+    }
+    case LXB_NEWCSTRING:
+        v = lxl_value(L, a0);
+        lxl_at(L, node); /* a 0 inside: the range error, here */
+        *result = lxl_rt(L, LIMBA_RT_CSTR_NEW, LIMBA_T_PTR, &v, 1);
+        return;
+    case LXB_CVALUE: {
+        const limba_typeinfo *x = ti(L, t0);
+        if (x->kind == LIMBA_LTK_ARRAY || x->kind == LIMBA_LTK_OPEN) {
+            /* a buffer C filled: its first n elements, n within it */
+            limba_id p, lo, hi;
+            open_arg(L, node, a0, t0, &p, &lo, &hi);
+            limba_id len = bin(L, LIMBA_OP_ADD, LIMBA_T_I64,
+                               bin(L, LIMBA_OP_SUB, LIMBA_T_I64, hi, lo),
+                               lxl_iconst(L, LIMBA_T_I64, 1));
+            limba_id n = lxl_value(L, arg(L, node, 1));
+            lxl_at(L, node);
+            /* 0 <= n <= length, without a sign: an empty array has
+               length 0 or less */
+            limba_id zero = lxl_iconst(L, LIMBA_T_I64, 0);
+            limba_id pos = icmp(L, LIMBA_CC_SGT, len, zero);
+            uint32_t so[3] = {pos, len, zero};
+            len = lxl_emit(L, LIMBA_OP_SELECT, LIMBA_T_I64, 0, 0, 0, so, 3);
+            lxl_check(L, icmp(L, LIMBA_CC_ULE, n, len), LXR_INDEX);
+            uint32_t args[2] = {p, n};
+            *result = lxl_rt(L, LIMBA_RT_CSTR_VALUE_N, LIMBA_T_STR, args, 2);
+            return;
+        }
+        v = lxl_value(L, a0);
+        limba_id n =
+            nargs(L, node) == 2 ? lxl_value(L, arg(L, node, 1)) : LIMBA_NONE;
+        lxl_at(L, node);
+        limba_id null =
+            lxl_emit(L, LIMBA_OP_NULLV, LIMBA_T_PTR, 0, 0, 0, NULL, 0);
+        lxl_check(L, icmp(L, LIMBA_CC_NE, v, null), LXR_NIL);
+        if (n == LIMBA_NONE) {
+            *result = lxl_rt(L, LIMBA_RT_CSTR_VALUE, LIMBA_T_STR, &v, 1);
+            return;
+        }
+        lxl_check(L, icmp(L, LIMBA_CC_SGE, n, lxl_iconst(L, LIMBA_T_I64, 0)),
+                  LXR_RANGE);
+        uint32_t args[2] = {v, n};
+        *result = lxl_rt(L, LIMBA_RT_CSTR_VALUE_N, LIMBA_T_STR, args, 2);
+        return;
+    }
+    case LXB_FREECSTRING: {
+        limba_id at = lxl_addr(L, a0);
+        lxl_at(L, node);
+        lxl_live(L, at);
+        v = un(L, LIMBA_OP_LOAD, LIMBA_T_PTR, at);
+        lxl_rt(L, LIMBA_RT_CSTR_FREE, LIMBA_T_VOID, &v, 1);
+        uint32_t so[2] = {
+            lxl_emit(L, LIMBA_OP_NULLV, LIMBA_T_PTR, 0, 0, 0, NULL, 0), at};
+        lxl_emit(L, LIMBA_OP_STORE, LIMBA_T_VOID, 0, 0, 0, so, 2);
         return;
     }
     case LXB_DISPOSE: {

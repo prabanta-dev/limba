@@ -63,6 +63,8 @@ typedef struct {
     size_t narena, caparena;
     void **globals;
     amap heap;      /* the blocks of mem_alloc not yet freed, with their size */
+    amap cstrs;     /* the C strings of cstr_new not yet freed: memory of C,
+                       out of the budget */
     amap words;     /* check_mem: the words of memory that hold a str */
     estr **counted; /* check_mem: the strings whose count ever moved */
     size_t ncounted, capcounted;
@@ -556,6 +558,57 @@ static bool runtime_big(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     return false;
 }
 
+/* a call that skips a check the IR owes it: a wrong module */
+static bool bad_module(E *e)
+{
+    e->status = LIMBA_EVAL_BAD;
+    return false;
+}
+
+/* the C strings (luxia_0.md § 9.9): malloc and free of C, as a C library
+   would have them; out of the budget, as memory of C */
+static bool runtime_c(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
+{
+    switch (rt) {
+    case LIMBA_RT_CSTR_NEW: {
+        const estr *s = str_of(a[0]);
+        if (memchr(s->data, 0, s->len))
+            return trap(e, LIMBA_TRAP_RANGE); /* C would cut it short */
+        char *p = malloc(s->len + 1);
+        if (!p)
+            return trap(e, LIMBA_TRAP_NOMEM);
+        memcpy(p, s->data, s->len);
+        p[s->len] = 0;
+        amap_put(&e->cstrs, (uintptr_t)p, s->len + 1);
+        *r = (uint64_t)(uintptr_t)p;
+        return true;
+    }
+    case LIMBA_RT_CSTR_VALUE: {
+        const char *p = (const char *)(uintptr_t)a[0];
+        if (!p)
+            return bad_module(e); /* the nil check comes before */
+        *r = sv(str_make(e, p, strlen(p)));
+        return true;
+    }
+    case LIMBA_RT_CSTR_VALUE_N: {
+        const char *p = (const char *)(uintptr_t)a[0];
+        if (!p || (int64_t)a[1] < 0)
+            return bad_module(e);
+        *r = sv(str_make(e, p, (size_t)a[1]));
+        return true;
+    }
+    case LIMBA_RT_CSTR_FREE:
+        if (!a[0])
+            return true;
+        /* only what cstr_new made: here there is no C to have made any */
+        if (!amap_del(&e->cstrs, a[0]))
+            return bad_module(e);
+        free((void *)(uintptr_t)a[0]);
+        return true;
+    }
+    return runtime_big(e, rt, a, r);
+}
+
 /* a whole string as a number: optional blanks around, nothing else */
 static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
 {
@@ -704,7 +757,7 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         return true;
     }
     default:
-        return runtime_big(e, rt, a, r);
+        return runtime_c(e, rt, a, r);
     }
 }
 
@@ -1770,6 +1823,10 @@ void limba_eval(const limba_module *m, const char *entry,
         free(e.arena[i]);
     free(e.arena);
     amap_free(&e.heap);
+    for (size_t k = 0; k < e.cstrs.cap; k++) /* C strings never freed */
+        if (e.cstrs.key[k] > 1)
+            free((void *)e.cstrs.key[k]);
+    amap_free(&e.cstrs);
     free(e.sconst);
     amap_free(&e.words);
     free(e.counted);

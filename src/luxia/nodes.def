@@ -72,3 +72,6 @@ LX_NODE(TBOX, "tbox", "i---")        /* I range <>: the name of I */
 LX_NODE(PRAGMA, "pragma", "nl--")    /* its name, the names of the checks;
                                         op: after the checks, the bits of
                                         the checks, LXS_UNSUPPRESS */
+LX_NODE(EXTERNAL, "external", "SSB-") /* the body of a routine of C: the
+                                         library, the symbol (b), whether
+                                         name gave it (c) */

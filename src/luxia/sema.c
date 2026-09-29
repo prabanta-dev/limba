@@ -155,7 +155,64 @@ static const struct {
     {"arg", LXB_ARG},
     {"halt", LXB_HALT},
     {"move", LXB_MOVE},
+    {"newcstring", LXB_NEWCSTRING},
+    {"cvalue", LXB_CVALUE},
+    {"freecstring", LXB_FREECSTRING},
 };
+
+/* the C types by name, in the order of csym (§ 3.13) */
+static const char *const cnames[LXS_NCTYPES] = {
+    "CChar",   "CSChar", "CUChar", "CShort",    "CUShort",    "CInt",
+    "CUInt",   "CLong",  "CULong", "CLongLong", "CULongLong", "CSizeT",
+    "CSSizeT", "CBool",  "CFloat", "CDouble"};
+
+static const char *const target_names[] = {"x86_64-linux", "aarch64-linux",
+                                           "x86_64-windows"};
+
+const char *lxs_target_name(unsigned target)
+{
+    return target < 3 ? target_names[target] : "?";
+}
+
+int lxs_target_find(const char *name, size_t len)
+{
+    for (int i = 0; i < 3; i++)
+        if (strlen(target_names[i]) == len &&
+            !memcmp(target_names[i], name, len))
+            return i;
+    return -1;
+}
+
+/* the C types by name for the platform (limba --target): distinct
+   types, the representation of its C */
+static void c_types(limba_lxs *S)
+{
+    bool win = S->target == LXS_X86_64_WINDOWS;
+    bool arm = S->target == LXS_AARCH64_LINUX;
+    limba_ltype base[LXS_NCTYPES] = {
+        arm ? S->ty_uint[0] : S->ty_int[0], /* char */
+        S->ty_int[0],
+        S->ty_uint[0],
+        S->ty_int[1],
+        S->ty_uint[1],
+        S->ty_int[2],
+        S->ty_uint[2],
+        win ? S->ty_int[2] : S->ty_int[3],   /* long */
+        win ? S->ty_uint[2] : S->ty_uint[3], /* unsigned long */
+        S->ty_int[3],
+        S->ty_uint[3],
+        S->ty_uint[3],
+        S->ty_int[3],
+        S->ts.bool_,
+        S->ty_f32,
+        S->ty_f64};
+    for (int i = 0; i < LXS_NCTYPES; i++) {
+        limba_ltype t = limba_types_distinct(&S->ts, base[i]);
+        S->st.sym[S->csym[i]].type = t;
+        limba_types_set_name(&S->ts, t, S->csym[i]);
+    }
+    S->ty_cbool = S->st.sym[S->csym[13]].type;
+}
 
 static void universe(limba_lxs *S)
 {
@@ -183,6 +240,22 @@ static void universe(limba_lxs *S)
     universe_type(S, "Char", S->ts.char_);
     universe_type(S, "String", S->ts.string);
     universe_type(S, "BigInt", S->ts.bigint);
+    /* the boundary with C: the opaque pointer, the C strings, the C types
+       by name (their types made by c_types, for the platform) */
+    S->ty_cpointer = limba_types_opaque(&S->ts);
+    S->ty_cstring = limba_types_distinct(&S->ts, S->ty_cpointer);
+    const char *const opaque[2] = {"CPointer", "CString"};
+    for (int i = 0; i < 2; i++) {
+        limba_sym s = universe_sym(S, opaque[i], LIMBA_LSYM_TYPE);
+        limba_ltype t = i ? S->ty_cstring : S->ty_cpointer;
+        S->st.sym[s].type = t;
+        S->st.sym[s].flags |= LXS_CBORDER;
+        limba_types_set_name(&S->ts, t, s);
+    }
+    for (int i = 0; i < LXS_NCTYPES; i++) {
+        S->csym[i] = universe_sym(S, cnames[i], LIMBA_LSYM_TYPE);
+        S->st.sym[S->csym[i]].flags |= LXS_CBORDER | LXS_CPLATFORM;
+    }
     static const struct {
         const char *name;
         int code;
@@ -195,6 +268,8 @@ static void universe(limba_lxs *S)
     for (size_t i = 0; i < sizeof(builtins) / sizeof(builtins[0]); i++) {
         limba_sym s = universe_sym(S, builtins[i].name, LIMBA_LSYM_BUILTIN);
         S->st.sym[s].value = builtins[i].id;
+        if (builtins[i].id >= LXB_NEWCSTRING)
+            S->st.sym[s].flags |= LXS_CBORDER;
     }
 }
 
@@ -214,6 +289,13 @@ void limba_lxs_init(limba_lxs *S, limba_lx_ast *t, limba_lx *lx,
     S->val = limba_xcalloc(n, sizeof(*S->val));
     lxs_value_new(S, 0); /* value 0: none */
     universe(S);
+#if defined(__aarch64__) && !defined(_WIN32)
+    S->target = LXS_AARCH64_LINUX;
+#elif defined(_WIN64)
+    S->target = LXS_X86_64_WINDOWS;
+#else
+    S->target = LXS_X86_64_LINUX;
+#endif
 }
 
 void limba_lxs_free(limba_lxs *S)
@@ -262,6 +344,16 @@ limba_sym lxs_lookup(limba_lxs *S, uint32_t scope, uint32_t node)
         lxs_error(S, LXE_BEFORE_DECL, node,
                   "'%.*s' is used before its declaration", (int)n, use);
         lxs_note(S, y->loc, y->len, "declared here");
+    }
+    if (y->flags & LXS_CBORDER) {
+        /* a name of the boundary with C (§ 10.4) */
+        if (S->no_external)
+            lxs_error(S, LXE_RESTRICTED, node,
+                      "'%.*s' is of the boundary with C, which pragma "
+                      "restrictions(no_external) forbids",
+                      (int)n, use);
+        if (y->flags & LXS_CPLATFORM)
+            S->c_bound = true;
     }
     return s;
 }
@@ -766,19 +858,202 @@ void limba_lxs_check(limba_lxs *S)
     if (p->kind != LXN_PROGRAM)
         return;
     uint32_t decls = p->b, body = p->c;
+    c_types(S);
+    /* pragma restrictions first: it governs every name of the file */
+    for (uint32_t i = 0; i < lxs_node(S, decls)->b; i++) {
+        uint32_t d = limba_lx_list_at(S->t, decls, i);
+        if (lxs_node(S, d)->kind == LXN_PRAGMA &&
+            lxs_pragma_is(S, d, "restrictions"))
+            lxs_c_pragma(S, d, 0);
+    }
     S->program = limba_scope_new(&S->st, S->universe, LXS_PROGRAM);
     lxs_declare_all(S, decls, S->program, true);
     lxs_resolve_all(S, decls);
+    /* then the records with the C convention, before the routines of C
+       that take them */
+    for (uint32_t i = 0; i < lxs_node(S, decls)->b; i++) {
+        uint32_t d = limba_lx_list_at(S->t, decls, i);
+        if (lxs_node(S, d)->kind == LXN_PRAGMA &&
+            lxs_pragma_is(S, d, "convention"))
+            lxs_c_pragma(S, d, S->program);
+    }
     for (uint32_t i = 0; i < lxs_node(S, decls)->b; i++) {
         uint32_t d = limba_lx_list_at(S->t, decls, i);
         limba_lx_node *x = lxs_node(S, d);
         if (x->kind == LXN_ROUTINE && S->sym[x->a])
             lxs_routine_body(S, S->sym[x->a]);
-        else if (x->kind == LXN_PRAGMA)
+        else if (x->kind == LXN_PRAGMA && !lxs_pragma_is(S, d, "convention") &&
+                 !lxs_pragma_is(S, d, "restrictions"))
             lxs_pragma(S, d);
     }
     S->result = 0;
     S->in_routine = false;
     S->loops = 0;
     lxs_stmts(S, body, limba_scope_new(&S->st, S->program, LXS_BLOCK));
+}
+
+/* ---- the boundary with C (§ 3.13, § 8.5, § 10.4) ---- */
+
+bool lxs_pragma_is(limba_lxs *S, uint32_t node, const char *name)
+{
+    limba_lx_node *x = lxs_node(S, node);
+    if (!x->a)
+        return false;
+    size_t n;
+    const char *s = lxs_name(S, lxs_node(S, x->a)->a, &n);
+    return n == strlen(name) && !memcmp(s, name, n);
+}
+
+/* a scalar type that crosses to C as it is: an integer of fixed size, a
+   real, CBool, an opaque pointer, a record with the C convention */
+static bool c_scalar(limba_lxs *S, limba_ltype t)
+{
+    const limba_typeinfo *x = lxs_ty(S, t);
+    switch (x->kind) {
+    case LIMBA_LTK_INT:
+        return !(x->flags & LIMBA_TF_RANGE);
+    case LIMBA_LTK_FLOAT:
+    case LIMBA_LTK_OPAQUE:
+        return true;
+    case LIMBA_LTK_BOOL:
+        return t == S->ty_cbool;
+    case LIMBA_LTK_RECORD:
+        return (x->flags & LIMBA_TF_CONVC) != 0;
+    }
+    return false;
+}
+
+/* a field of a record with the C convention: such a scalar, or an
+   array of fixed bounds of them */
+static bool c_field(limba_lxs *S, limba_ltype t)
+{
+    const limba_typeinfo *x = lxs_ty(S, t);
+    if (x->kind == LIMBA_LTK_ARRAY)
+        return !(x->flags & LIMBA_TF_DYNAMIC) && c_field(S, x->elem);
+    return c_scalar(S, t);
+}
+
+/* why t does not cross: a hint for the message */
+static const char *c_why(limba_lxs *S, limba_ltype t)
+{
+    const limba_typeinfo *x = lxs_ty(S, t);
+    switch (x->kind) {
+    case LIMBA_LTK_STRING:
+        return ": convert it with newcstring and pass a CString";
+    case LIMBA_LTK_BIGINT:
+        return ": it is counted, C knows no references";
+    case LIMBA_LTK_BOOL:
+        return ": C's _Bool is CBool";
+    case LIMBA_LTK_RECORD:
+        return ": give it the C layout, pragma convention(c, ...)";
+    case LIMBA_LTK_POINTER:
+        return ": give C an opaque pointer (new CPointer), or the object "
+               "as a var parameter";
+    case LIMBA_LTK_INT:
+        return ": a range is not C's; convert the value afterwards";
+    }
+    return "";
+}
+
+void lxs_c_pragma(limba_lxs *S, uint32_t node, uint32_t scope)
+{
+    limba_lx_node *x = lxs_node(S, node);
+    uint32_t args = x->b, n = args ? lxs_node(S, args)->b : 0;
+    size_t len;
+    const char *a0 =
+        n ? lxs_name(S, lxs_node(S, limba_lx_list_at(S->t, args, 0))->a, &len)
+          : "";
+    if (!n)
+        len = 0;
+    if (lxs_pragma_is(S, node, "restrictions")) {
+        if (scope) {
+            lxs_error(S, LXE_C_PRAGMA, node,
+                      "pragma restrictions goes among the declarations of "
+                      "the program");
+        } else if (n != 1 || len != 11 || memcmp(a0, "no_external", 11)) {
+            lxs_error(S, LXE_C_PRAGMA, node,
+                      "the restriction is no_external: "
+                      "'pragma restrictions(no_external)'");
+        } else {
+            S->no_external = true;
+        }
+        return;
+    }
+    /* convention(c, R) */
+    if (n != 2 || len != 1 || a0[0] != 'c') {
+        lxs_error(S, LXE_C_PRAGMA, node,
+                  "the convention is C: 'pragma convention(c, R)', R a "
+                  "record type declared here");
+        return;
+    }
+    if (S->no_external)
+        lxs_error(S, LXE_RESTRICTED, node,
+                  "pragma convention is of the boundary with C, which "
+                  "pragma restrictions(no_external) forbids");
+    uint32_t rn = limba_lx_list_at(S->t, args, 1);
+    limba_sym r = limba_sym_local(&S->st, scope, lxs_node(S, rn)->a);
+    limba_ltype t = 0;
+    if (r && S->st.sym[r].kind == LIMBA_LSYM_TYPE) {
+        lxs_force(S, r);
+        t = S->st.sym[r].type;
+    }
+    if (!t || lxs_ty(S, t)->kind != LIMBA_LTK_RECORD) {
+        lxs_error(S, LXE_C_PRAGMA, rn,
+                  "pragma convention takes a record type declared in the "
+                  "same declarations");
+        return;
+    }
+    S->ts.t[t].flags |= LIMBA_TF_CONVC;
+    S->c_bound = true;
+    const limba_typeinfo *ty = lxs_ty(S, t);
+    for (uint32_t i = 0; i < ty->count; i++) {
+        limba_ltype ft = S->ts.field[ty->first + i].type;
+        if (!c_field(S, ft)) {
+            char tb[128], fb[128];
+            lxs_error(S, LXE_C_BOUNDARY, rn,
+                      "a field of %s is %s, which does not cross to C%s",
+                      lxs_tname(S, t, tb), lxs_tname(S, ft, fb), c_why(S, ft));
+        }
+    }
+}
+
+void lxs_c_routine(limba_lxs *S, limba_sym s)
+{
+    limba_symbol *y = &S->st.sym[s];
+    limba_lx_node *x = lxs_node(S, y->node);
+    if (S->no_external) {
+        size_t n;
+        const char *sp = lxs_spell(S, s, &n);
+        lxs_error(S, LXE_RESTRICTED, x->a,
+                  "'%.*s' is an external routine, which pragma "
+                  "restrictions(no_external) forbids",
+                  (int)n, sp);
+    }
+    limba_ltype sig = y->type;
+    if (!sig)
+        return;
+    const limba_typeinfo *r = lxs_ty(S, sig);
+    char tb[128];
+    uint32_t plist = x->b, k = 0;
+    for (uint32_t i = 0; i < lxs_node(S, plist)->b; i++) {
+        uint32_t p = limba_lx_list_at(S->t, plist, i);
+        uint32_t names = lxs_node(S, p)->a;
+        for (uint32_t j = 0; j < lxs_node(S, names)->b; j++, k++) {
+            limba_ltype t = S->ts.param[r->first + k].type;
+            if (!t)
+                continue;
+            const limba_typeinfo *pt = lxs_ty(S, t);
+            bool ok = c_scalar(S, t) || (((pt->kind == LIMBA_LTK_ARRAY &&
+                                           !(pt->flags & LIMBA_TF_DYNAMIC)) ||
+                                          pt->kind == LIMBA_LTK_OPEN) &&
+                                         c_field(S, pt->elem));
+            if (!ok)
+                lxs_error(S, LXE_C_BOUNDARY, lxs_node(S, p)->b,
+                          "%s does not cross to C%s", lxs_tname(S, t, tb),
+                          c_why(S, t));
+        }
+    }
+    if (x->c && r->elem && !c_scalar(S, r->elem))
+        lxs_error(S, LXE_C_BOUNDARY, x->c, "%s does not cross to C%s",
+                  lxs_tname(S, r->elem, tb), c_why(S, r->elem));
 }

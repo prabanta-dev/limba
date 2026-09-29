@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Calls of C libraries (specification § 3.13, § 8.5, § 9.9, § 10.4), as
+  Pascal's `external` and Ada's `pragma Import`, with no dependency: a
+  routine whose body is `external "library" [name "symbol"]`; C types by
+  name (`CInt`, `CLong`, `CSizeT`, `CBool`...), distinct types with the
+  representation of C on the platform chosen by `limba --target`; opaque
+  pointers (`new CPointer`), only assigned, passed and compared; records
+  with `pragma convention(c, R)`; arrays, `var` and `out` as addresses.
+  Strings, BigInts, Booleans, characters, enumerations, pointers of Luxia
+  and ranges do not cross. C strings: `CString`, `newcstring`, `cvalue`,
+  `freecstring`. What C does is declared unchecked; `pragma
+  restrictions(no_external)` or `limba --restrict=no_external` forbids
+  the boundary. The IR, now version 5, writes the platform of a module
+  (`target`) and passes structs by value and as results of `call.ext`;
+  the reference interpreter runs the C strings, not the calls, which a
+  back end tests against `tests/luxia/ffi/probe.c`. `external` is a
+  keyword. New diagnostics L0060, L0061, L0062.
 - `BigInt`, a signed integer of any size (specification § 3.12, § 6.3,
   § 6.6): no overflow, memory its only limit; immutable and counted as a
   String, it goes wherever a String goes; not discrete, not bits, no

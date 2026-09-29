@@ -93,14 +93,20 @@ static bool check_types(vctx *v)
                 FAIL("type %" PRIu32 ": array of an invalid type", t);
             break;
         case LIMBA_TK_FUNC:
+            /* a struct only for the C of an extern (§ 11e): a function
+               of the IR and call.ind take scalars */
             if (ty->elem >= m->ntypes ||
-                (ty->elem != LIMBA_T_VOID && !is_value_type(m, ty->elem)))
+                (ty->elem != LIMBA_T_VOID && !is_value_type(m, ty->elem) &&
+                 m->types[ty->elem].kind != LIMBA_TK_STRUCT))
                 FAIL("type %" PRIu32 ": a function returns a scalar or void",
                      t);
             if (last > m->nmembers)
                 FAIL("type %" PRIu32 ": parameters out of range", t);
             for (uint32_t i = 0; i < ty->count; i++)
-                if (!is_value_type(m, m->members[ty->first + i].type))
+                if (!is_value_type(m, m->members[ty->first + i].type) &&
+                    !(m->members[ty->first + i].type < m->ntypes &&
+                      m->types[m->members[ty->first + i].type].kind ==
+                          LIMBA_TK_STRUCT))
                     FAIL("type %" PRIu32 ": parameter %" PRIu32
                          " is not a scalar",
                          t, i);
@@ -108,6 +114,42 @@ static bool check_types(vctx *v)
         default:
             FAIL("type %" PRIu32 ": kind %u is not a user type", t, ty->kind);
         }
+    }
+    return true;
+}
+
+/* a function type of scalars only: a function of the IR, call.ind */
+static bool scalar_sig(const limba_module *m, limba_id t)
+{
+    const limba_type *ty = &m->types[t];
+    if (ty->elem != LIMBA_T_VOID && !is_value_type(m, ty->elem))
+        return false;
+    for (uint32_t i = 0; i < ty->count; i++)
+        if (!is_value_type(m, m->members[ty->first + i].type))
+            return false;
+    return true;
+}
+
+/* a type an extern may take (or return, if result: void too): an integer,
+   a real, a ptr, or a struct of them, none of 0 bytes, nothing counted */
+static bool c_type(const limba_module *m, limba_id t, bool result)
+{
+    if (t >= m->ntypes)
+        return false;
+    if (t == LIMBA_T_VOID)
+        return result;
+    if (limba_type_is_int(t) || limba_type_is_float(t) || t == LIMBA_T_PTR)
+        return true;
+    const limba_type *ty = &m->types[t];
+    if (ty->kind != LIMBA_TK_STRUCT || !ty->size || limba_type_counted(m, t))
+        return false;
+    for (uint32_t i = 0; i < ty->count; i++) {
+        limba_id f = m->members[ty->first + i].type;
+        while (f < m->ntypes && m->types[f].kind == LIMBA_TK_ARRAY &&
+               m->types[f].count)
+            f = m->types[f].elem;
+        if (!c_type(m, f, false))
+            return false;
     }
     return true;
 }
@@ -122,6 +164,12 @@ static bool check_symbols(vctx *v)
         FAIL("module name out of range");
     if (m->language != LIMBA_NONE && m->language >= nstr)
         FAIL("language name out of range");
+    if (m->target != LIMBA_NONE) {
+        size_t n = 0;
+        const char *s = m->target < nstr ? limba_str(m, m->target, &n) : "";
+        if (m->target >= nstr || !limba_target_known(s, n))
+            FAIL("target: no such platform");
+    }
     /* a module words the traps that exist, and cannot make new ones */
     for (uint32_t i = 0; i < m->nmessages; i++) {
         const limba_message *msg = &m->messages[i];
@@ -172,14 +220,26 @@ static bool check_symbols(vctx *v)
             FAIL("extern %" PRIu32 ": names out of range", i);
         if (!type_ok(m, e->type) || m->types[e->type].kind != LIMBA_TK_FUNC)
             FAIL("extern @%s: not a function type", name_of(m, e->name));
+        /* what C knows: integers, reals, addresses, structs of them;
+           never a counted handle (§ 11e) */
+        const limba_type *ft = &m->types[e->type];
+        for (uint32_t k = 0; k <= ft->count; k++) {
+            limba_id t = k < ft->count ? m->members[ft->first + k].type
+                                       : ft->elem;
+            if (!c_type(m, t, k == ft->count))
+                FAIL("extern @%s: %s %" PRIu32 " has a type C does not know",
+                     name_of(m, e->name),
+                     k < ft->count ? "parameter" : "the result", k);
+        }
     }
     for (uint32_t i = 0; i < m->nfuncs; i++) {
         const limba_func *f = &m->funcs[i];
         if (f->name >= nstr)
             FAIL("function %" PRIu32 ": no name", i);
         if (!type_ok(m, f->type) || m->types[f->type].kind != LIMBA_TK_FUNC ||
-            m->types[f->type].variadic)
-            FAIL("function @%s: not a (non-variadic) function type",
+            m->types[f->type].variadic || !scalar_sig(m, f->type))
+            FAIL("function @%s: not a (non-variadic) function type of "
+                 "scalars",
                  name_of(m, f->name));
     }
     return true;
@@ -287,7 +347,21 @@ static bool check_call(vctx *v, uint32_t u, const limba_inst *in)
     if (!limba_call_sig(v->m, in, &s))
         IFAIL(u, "the callee does not exist");
     uint32_t first = 0;
+    bool ext = in->op == LIMBA_OP_CALLEXT;
+    /* a struct result: no value, its place the first operand (§ 11e) */
+    bool sret = ext && s.ret < v->m->ntypes &&
+                v->m->types[s.ret].kind == LIMBA_TK_STRUCT;
+    if (sret) {
+        limba_id t;
+        if (in->nops < 1 || !use(v, u, v->f->operands[in->first], &t))
+            IFAIL(u, "call.ext of a struct result: the place first");
+        if (t != LIMBA_T_PTR)
+            IFAIL(u, "call.ext of a struct result: the place is a ptr");
+        first = 1;
+    }
     if (in->op == LIMBA_OP_CALLIND) {
+        if (!scalar_sig(v->m, (limba_id)in->imm))
+            IFAIL(u, "call.ind of a function type with a struct");
         limba_id t;
         if (!use(v, u, v->f->operands[in->first], &t))
             return false;
@@ -303,10 +377,15 @@ static bool check_call(vctx *v, uint32_t u, const limba_inst *in)
         limba_id t;
         if (!use(v, u, v->f->operands[in->first + first + i], &t))
             return false;
-        if (i < s.n && t != limba_sig_param(&s, i))
+        limba_id want = i < s.n ? limba_sig_param(&s, i) : t;
+        /* a struct by value: the address of its bytes */
+        if (ext && want < v->m->ntypes &&
+            v->m->types[want].kind == LIMBA_TK_STRUCT)
+            want = LIMBA_T_PTR;
+        if (t != want)
             IFAIL(u, "argument %" PRIu32 " has the wrong type", i);
     }
-    if (in->type != s.ret)
+    if (in->type != (sret ? LIMBA_T_VOID : s.ret))
         IFAIL(u, "the result type differs from the callee's");
     return true;
 }

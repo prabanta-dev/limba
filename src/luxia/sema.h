@@ -27,8 +27,17 @@
 /* flags of a symbol */
 #define LXS_UNRESOLVED 1u
 #define LXS_RESOLVING 2u
-#define LXS_LOOPVAR 4u /* the variable of a for: constant in the body */
-#define LXS_TOP 8u     /* declared at the level of the program */
+#define LXS_LOOPVAR 4u    /* the variable of a for: constant in the body */
+#define LXS_TOP 8u        /* declared at the level of the program */
+#define LXS_CBORDER 16u   /* a name of the boundary with C (§ 3.13, § 9.9) */
+#define LXS_CPLATFORM 32u /* a C type by name: binds to the platform */
+
+/* the platforms whose C the C types by name follow (limba --target) */
+enum { LXS_X86_64_LINUX, LXS_AARCH64_LINUX, LXS_X86_64_WINDOWS };
+/* the name of a platform, as in the IR; the one of a name, -1 if none */
+const char *lxs_target_name(unsigned target);
+int lxs_target_find(const char *name, size_t len);
+#define LXS_NCTYPES 16
 
 /* modes of a parameter, the op of a PARAM node mapped */
 enum { LXS_IN, LXS_VAR, LXS_OUT };
@@ -85,6 +94,9 @@ enum {
     LXB_ARG,
     LXB_HALT,
     LXB_MOVE,
+    LXB_NEWCSTRING,
+    LXB_CVALUE,
+    LXB_FREECSTRING,
 };
 
 /* a constant: every number and discrete value is a rational (integers,
@@ -127,6 +139,15 @@ typedef struct {
     /* p^ of an array created by new may be read here as a whole: the
        argument of low, high, length and move (§ 3.10) */
     bool open_ok;
+    /* the boundary with C (§ 3.13, § 8.5, § 10.4): the platform of the C
+       types by name (set before limba_lxs_check); no external routine
+       nor C type allowed (pragma restrictions, limba --restrict); the
+       program uses a C type by name or a record with the C convention */
+    unsigned target;
+    bool no_external;
+    bool c_bound;
+    limba_ltype ty_cpointer, ty_cstring, ty_cbool;
+    limba_sym csym[LXS_NCTYPES];
 } limba_lxs;
 
 void limba_lxs_init(limba_lxs *S, limba_lx_ast *t, limba_lx *lx,
@@ -153,6 +174,14 @@ static inline const limba_typeinfo *lxs_ty(const limba_lxs *S, limba_ltype t)
 {
     return &S->ts.t[t];
 }
+
+/* the boundary with C (sema.c): is the PRAGMA node named so; pragma
+   convention or restrictions, in scope (0: at the start of the file,
+   before any declaration is known); the signature of an external
+   routine */
+bool lxs_pragma_is(limba_lxs *S, uint32_t node, const char *name);
+void lxs_c_pragma(limba_lxs *S, uint32_t node, uint32_t scope);
+void lxs_c_routine(limba_lxs *S, limba_sym s);
 
 /* declarations and types (sema.c) */
 limba_sym lxs_lookup(limba_lxs *S, uint32_t scope, uint32_t node);

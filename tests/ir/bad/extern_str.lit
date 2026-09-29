@@ -1,0 +1,3 @@
+; expect: has a type C does not know
+; a counted handle cannot cross to C
+extern @puts : fn(str) -> i32 = "puts" in "c"

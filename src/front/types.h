@@ -39,6 +39,7 @@ enum {
     LIMBA_LTK_NIL,
     LIMBA_LTK_BIGINT, /* an integer of any size: a counted handle, not
                          discrete */
+    LIMBA_LTK_OPAQUE, /* an address of memory of C, never dereferenced */
 };
 
 #define LIMBA_TF_SIGNED 1u
@@ -46,6 +47,7 @@ enum {
 #define LIMBA_TF_RANGE 4u       /* lo and hi narrow the base */
 #define LIMBA_TF_DYNAMIC 8u     /* ARRAY: bounds computed at run time */
 #define LIMBA_TF_INCOMPLETE 16u /* RECORD: fields still being added */
+#define LIMBA_TF_CONVC 32u      /* RECORD: the layout of C, promised */
 
 typedef struct {
     uint8_t kind;
@@ -98,6 +100,8 @@ static inline const limba_typeinfo *limba_ty(const limba_types *ts,
 limba_ltype limba_types_int(limba_types *ts, unsigned bits, unsigned flags);
 limba_ltype limba_types_float(limba_types *ts, unsigned bits);
 limba_ltype limba_types_enum(limba_types *ts, uint32_t count);
+/* an opaque pointer type, void * of C */
+limba_ltype limba_types_opaque(limba_types *ts);
 /* base narrowed to lo..hi: compatible with base */
 limba_ltype limba_types_range(limba_types *ts, limba_ltype base, __int128 lo,
                               __int128 hi);

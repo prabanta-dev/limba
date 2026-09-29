@@ -22,7 +22,7 @@
 #include <stdio.h>
 
 /* bumped whenever the binary form or the tables change incompatibly */
-#define LIMBA_IR_VERSION 4
+#define LIMBA_IR_VERSION 5
 
 typedef uint32_t limba_id;
 #define LIMBA_NONE UINT32_MAX
@@ -319,6 +319,11 @@ typedef struct limba_module {
        those of traps.def. An engine's own errors (an invalid module, its
        limits, call.ext, unreachable) keep its own prefix */
     limba_id language;
+    /* the platform whose C the module follows (x86_64-linux...), string
+       id, LIMBA_NONE for none: written when its externs pass C types
+       that differ between platforms; an engine refuses a module of
+       another platform (progetto_ir.md § 11e) */
+    limba_id target;
     limba_message *messages;
     uint32_t nmessages, capmessages;
     limba_strtab *strings;
@@ -344,6 +349,9 @@ limba_module *limba_module_new(void);
 void limba_module_free(limba_module *m);
 
 limba_id limba_str_intern(limba_module *m, const char *s, size_t len);
+/* the platforms a module may name as its target: x86_64-linux,
+   aarch64-linux, x86_64-windows */
+bool limba_target_known(const char *s, size_t len);
 /* the text of a trap in the language of m (checked by the verifier) */
 void limba_message_add(limba_module *m, int64_t code, limba_id text);
 /* the text of a trap in module m: its own message for the code, else that

@@ -323,12 +323,21 @@ void lxs_pragma(limba_lxs *S, uint32_t node)
     if (x->a) {
         size_t n;
         const char *s = lxs_name(S, lxs_node(S, x->a)->a, &n);
-        if (n == 10 && !memcmp(s, "unsuppress", 10))
+        if (n == 10 && !memcmp(s, "unsuppress", 10)) {
             op = LXS_UNSUPPRESS;
-        else if (!(n == 8 && !memcmp(s, "suppress", 8)))
-            lxs_error(S, LXE_PRAGMA_NAME, x->a,
-                      "the pragmas are suppress and unsuppress, not '%.*s'",
+        } else if ((n == 10 && !memcmp(s, "convention", 10)) ||
+                   (n == 12 && !memcmp(s, "restrictions", 12))) {
+            lxs_error(S, LXE_C_PRAGMA, x->a,
+                      "pragma %.*s goes among the declarations, not among "
+                      "the statements",
                       (int)n, s);
+            return;
+        } else if (!(n == 8 && !memcmp(s, "suppress", 8))) {
+            lxs_error(S, LXE_PRAGMA_NAME, x->a,
+                      "the pragmas are suppress, unsuppress, convention and "
+                      "restrictions, not '%.*s'",
+                      (int)n, s);
+        }
     }
     for (uint32_t i = 0; x->b && i < lxs_node(S, x->b)->b; i++) {
         uint32_t c = limba_lx_list_at(S->t, x->b, i);
@@ -361,13 +370,22 @@ void lxs_routine_body(limba_lxs *S, limba_sym routine)
     uint32_t body = x->d;
     if (!scope || !body)
         return;
+    if (lxs_node(S, body)->kind == LXN_EXTERNAL) {
+        lxs_c_routine(S, routine);
+        return;
+    }
     uint32_t locals = lxs_node(S, body)->a, stmts = lxs_node(S, body)->b;
     lxs_declare_all(S, locals, scope, false);
     lxs_resolve_all(S, locals);
     for (uint32_t i = 0; i < lxs_node(S, locals)->b; i++) {
         uint32_t d = limba_lx_list_at(S->t, locals, i);
-        if (lxs_node(S, d)->kind == LXN_PRAGMA)
-            lxs_pragma(S, d);
+        if (lxs_node(S, d)->kind == LXN_PRAGMA) {
+            if (lxs_pragma_is(S, d, "convention") ||
+                lxs_pragma_is(S, d, "restrictions"))
+                lxs_c_pragma(S, d, scope);
+            else
+                lxs_pragma(S, d);
+        }
     }
     S->result = sig ? lxs_ty(S, sig)->elem : S->ts.void_;
     S->in_routine = true;

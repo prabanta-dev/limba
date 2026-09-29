@@ -86,7 +86,8 @@ typedef struct {
     uint8_t *taken;    /* per symbol: its address is needed */
     uint8_t *assigned; /* per symbol: the target of an assignment */
     limba_id *tmap;    /* per language type: the IR type, 0 unknown */
-    limba_id *func_of; /* per symbol of a routine: its function */
+    limba_id *func_of; /* per symbol of a routine: its function, or its
+                          extern for a routine of C */
     /* the function being built */
     limba_ssa *ssa;
     limba_id fid, cur;
@@ -159,6 +160,8 @@ limba_id lxl_via(const lxl *L, limba_id a);
    emitted right before the access */
 void lxl_live(lxl *L, limba_id a);
 /* does a value of type t hold a String (then counted in memory)? */
+/* is s a routine of C (§ 8.5), whose func_of is an extern */
+bool lxl_external(const lxl *L, limba_sym s);
 bool lxl_holds_str(lxl *L, limba_ltype t);
 /* retain or release (op) every String of n values of type t at p (n an
    i64 value); nothing for a type without Strings */

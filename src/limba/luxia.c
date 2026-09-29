@@ -142,11 +142,24 @@ static bool suppress_bits(const char *list, unsigned *bits)
 
 int limba_luxia_main(const char *in, const char *emit, const char *outpath,
                      bool check, int level, const limba_opt_options *opt,
-                     const char *suppress)
+                     const char *suppress, const char *target,
+                     const char *restrict_)
 {
     unsigned off = 0;
     if (!suppress_bits(suppress, &off))
         return 2;
+    int platform = target ? lxs_target_find(target, strlen(target)) : -1;
+    if (target && platform < 0) {
+        fprintf(stderr,
+                "limba: --target: '%s' is no platform: x86_64-linux, "
+                "aarch64-linux or x86_64-windows\n",
+                target);
+        return 2;
+    }
+    if (restrict_ && strcmp(restrict_, "no_external")) {
+        fprintf(stderr, "limba: --restrict: the restriction is no_external\n");
+        return 2;
+    }
     if (off)
         fprintf(stderr,
                 "limba: warning: --suppress turns checks off in the whole "
@@ -177,6 +190,9 @@ int limba_luxia_main(const char *in, const char *emit, const char *outpath,
         if (rep.errors == 0 && !(emit && !strcmp(emit, "ast"))) {
             limba_lxs_init(&sema, &ast, &lx, &src, &rep);
             sema.suppress = off;
+            if (platform >= 0)
+                sema.target = (unsigned)platform;
+            sema.no_external = restrict_ != NULL;
             limba_lxs_check(&sema);
             checked = true;
         }

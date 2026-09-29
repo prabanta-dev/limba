@@ -379,6 +379,40 @@ static uint32_t routine(limba_lxp *P)
         limba_lxp_type(P);
     }
     limba_lxp_expect(P, LX_SEMI, "after the heading");
+    if (lxp_kind(P) == LX_KW_EXTERNAL) {
+        /* external "library" [name "symbol"]; (§ 8.5) */
+        limba_loc eloc = lxp_loc(P);
+        limba_lxp_next(P);
+        uint32_t lib = 0, sym = 0, named = 0;
+        if (lxp_kind(P) == LX_STRING) {
+            lib = P->lx->tok[P->pos].val;
+            limba_lxp_next(P);
+        } else {
+            limba_lxp_expected(P, "the name of the library, a string");
+        }
+        if (lxp_kind(P) == LX_IDENT) {
+            size_t n;
+            const char *w =
+                limba_strtab_get(P->lx->names, P->lx->tok[P->pos].val, &n);
+            if (n == 4 && !memcmp(w, "name", 4)) {
+                limba_lxp_next(P);
+                if (lxp_kind(P) == LX_STRING) {
+                    sym = P->lx->tok[P->pos].val;
+                    named = 1;
+                    limba_lxp_next(P);
+                } else {
+                    limba_lxp_expected(P, "the name of the symbol, a string");
+                }
+            } else {
+                limba_lxp_expected(P, "'name' or ';'");
+            }
+        }
+        limba_lxp_expect(P, LX_SEMI, "after the external declaration");
+        uint32_t b = lxp_node(P, LXN_EXTERNAL, eloc, lib, sym, named, 0);
+        uint32_t r = lxp_node(P, LXN_ROUTINE, loc, name, ps, result, b);
+        P->t->node[r].op = (uint8_t)kind;
+        return r;
+    }
     uint32_t locals = decls(P, false);
     uint32_t begin = P->pos;
     limba_loc bloc = lxp_loc(P);

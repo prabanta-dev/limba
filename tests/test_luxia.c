@@ -595,7 +595,42 @@ static const sema_case sema_cases[] = {
     {"program p; var y: Int32 range <>; begin end.", "L0049@1:19"},
     {"program p; type V = array[Int8 range <>] of Int8; function F(): V; "
      "begin end F; begin end.",
-     "L0049@1:65"}, /* BigInt: not discrete, not bits, no range, no mixing, no
+     "L0049@1:65"},
+    /* the boundary with C (§ 3.13, § 8.5, § 10.4): what does not cross,
+       the pragmas written wrong, the restriction, the opaque pointer */
+    {"program p; procedure P(s: String); external \"c\"; begin end.",
+     "L0060@1:27"},
+    {"program p; function F(): Boolean; external \"c\"; begin end.",
+     "L0060@1:26"},
+    {"program p; type R = record a: CInt; end; procedure P(r: R); external \"c\"; begin end.",
+     "L0060@1:57"},
+    {"program p; type R = record a: CInt; end; pragma convention(c, R); type Q = ^R; procedure P(q: Q); external \"c\"; begin end.",
+     "L0060@1:95"},
+    {"program p; type S = Int32 range 1..9; procedure P(s: S); external \"c\"; begin end.",
+     "L0060@1:54"},
+    {"program p; type R = record a: String; end; pragma convention(c, R); begin end.",
+     "L0060@1:65"},
+    {"program p; type R = record a: CInt; end; pragma convention(ada, R); begin end.",
+     "L0062@1:42"},
+    {"program p; type R = record a: CInt; end; pragma convention(c, Int32); begin end.",
+     "L0062@1:63"},
+    {"program p; pragma restrictions(no_heap); begin end.", "L0062@1:12"},
+    {"program p; pragma restrictions(no_external); procedure P(); external \"c\"; begin end.",
+     "L0061@1:56"},
+    {"program p; pragma restrictions(no_external); var s: CString; begin end.",
+     "L0061@1:53"},
+    {"program p; type R = record a: CInt; end; begin pragma convention(c, R); end.",
+     "L0062@1:55"},
+    {"program p; var q: CPointer; begin q := q + 1; end.", "L0027@1:44"},
+    {"program p; var q: CPointer; i: Int64; begin i := Int64(q); end.",
+     "L0039@1:50"},
+    {"program p; type TA = new CPointer; TB = new CPointer; var x: TA; y: TB; begin x := y; end.",
+     "L0027@1:84"},
+    {"program p; var c: CInt; i: Int32 := 1; begin c := i; end.", "L0027@1:51"},
+    {"program p; var s: String; begin writeln(cvalue(s)); end.", "L0027@1:48"},
+    {"program p; procedure P(); external name \"x\"; begin end.", "L0010@1:36"},
+    {"program p; var q: CPointer; begin writeln(q^); end.", "L0042@1:44"},
+    /* BigInt: not discrete, not bits, no range, no mixing, no
     real constant, the limit of the constants */
     {"program p; type R = BigInt range 1..10; begin end.", "L0050@1:21"},
     {"program p; var a: array[BigInt] of Int32; begin end.", "L0027@1:25"},
@@ -1269,6 +1304,20 @@ static const run_case run_cases[] =
          "", "trap 103 at 1:49"},
         {"program p; var b: BigInt := 2; begin writeln(Int64(b ** 63 - 1)); writeln(Int64(b ** 63)); end.",
          "9223372036854775807\n", "trap 103 at 1:75"},
+        /* C strings (§ 9.9): made, read, read n bytes, read from a buffer,
+       freed; CBool and the C types by name; a 0 inside, nil, a negative
+       count, a count past the buffer */
+        {"program p;\nvar s: CString; t: CString; buf: array[Int32 range 1..4] of Byte; q: CPointer; b: CBool;\nbegin\n  writeln(s = nil, \" \", q = nil);\n  s := newcstring(\"ciao, mondo\");\n  writeln(cvalue(s), \"|\", cvalue(s, 4), \"|\", length(cvalue(s, 0)));\n  t := s;\n  freecstring(s);\n  writeln(s = nil, \" \", t = nil);\n  buf[1] := 104; buf[2] := 105; buf[3] := 0; buf[4] := 33;\n  writeln(cvalue(buf, 2), \"|\", length(cvalue(buf, 4)));\n  b := CBool(true);\n  writeln(Boolean(b), \" \", not b, \" \", CInt(7) * CInt(6), \" \", CLong(3) + 4);\nend.",
+         "true true\nciao, mondo|ciao|0\ntrue false\nhi|4\ntrue false 42 7\n",
+         "ok"},
+        {"program p; var s: CString; begin s := newcstring(\"a\" & chr(0) & \"b\"); end.",
+         "", "trap 101 at 1:39"},
+        {"program p; var s: CString; begin writeln(cvalue(s)); end.", "",
+         "trap 102 at 1:42"},
+        {"program p; var s: CString; n: Int64 := -1; begin s := newcstring(\"x\"); writeln(cvalue(s, n)); end.",
+         "", "trap 101 at 1:80"},
+        {"program p; var buf: array[Int32 range 1..4] of Byte; n: Int64 := 5; begin writeln(cvalue(buf, n)); end.",
+         "", "trap 100 at 1:83"},
         /* a width counts characters, not bytes */
         {"program p; var s: String := \"\xc3\xa8\xe2\x82\xac\"; begin writeln(s:5, "
          "\"|\", 'x':3, \"|\"); end.",
@@ -1611,6 +1660,107 @@ static int test_random(void)
     return (int)failures;
 }
 
+/* every program of tests/luxia/ffi calls C (§ 8.5): valid Luxia 0, its
+   IR valid, for x86_64-linux (the reference interpreter does not call C:
+   a back end runs them with probe.c and compares expected/) */
+/* the IR of the program at path for platform target (LXS_*), NULL with
+   the errors reported */
+static limba_module *ffi_module(const char *path, unsigned target)
+{
+    size_t len;
+    char *text = slurp(path, &len);
+    if (!text)
+        return NULL;
+    limba_source s;
+    limba_source_init(&s);
+    uint32_t f = limba_source_add(&s, "t.luxia", text, len);
+    limba_report rep;
+    limba_report_init(&rep, &s, 'L', 0);
+    limba_lx lx;
+    limba_lx_init(&lx);
+    limba_lx_run(&lx, &s, f, &rep);
+    limba_lx_ast t;
+    limba_lx_ast_init(&t);
+    limba_lx_parse(&t, &lx, &s, &rep);
+    limba_lxs sema;
+    limba_lxs_init(&sema, &t, &lx, &s, &rep);
+    sema.target = target;
+    if (rep.errors == 0)
+        limba_lxs_check(&sema);
+    limba_module *m = rep.errors ? NULL : limba_lxl_program(&sema);
+    if (rep.errors && getenv("LIMBA_TEST_VERBOSE"))
+        limba_report_print(&rep, stderr);
+    limba_lxs_free(&sema);
+    limba_lx_ast_free(&t);
+    limba_lx_free(&lx);
+    limba_report_free(&rep);
+    limba_source_free(&s);
+    free(text);
+    return m;
+}
+
+/* the name of the target of m is want */
+static bool target_is(const limba_module *m, const char *want)
+{
+    size_t n = 0;
+    const char *s = m->target != LIMBA_NONE ? limba_str(m, m->target, &n) : "";
+    return n == strlen(want) && !memcmp(s, want, n);
+}
+
+/* every program of tests/luxia/ffi calls C (§ 8.5): valid Luxia 0, its
+   IR valid, for x86_64-linux (the reference interpreter does not call C:
+   a back end runs them with probe.c and compares expected/); probes.luxia
+   for x86_64-windows too, where C's long is 32 bits */
+static int test_ffi(unsigned *count)
+{
+    static const char dir[] = "tests/luxia/ffi";
+    int failures = 0;
+    DIR *d = opendir(dir);
+    if (!d) {
+        fprintf(stderr, "test_luxia: %s: cannot open\n", dir);
+        return 1;
+    }
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        size_t n = strlen(e->d_name);
+        if (n < 7 || strcmp(e->d_name + n - 6, ".luxia"))
+            continue;
+        char path[512];
+        snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+        limba_module *m = ffi_module(path, LXS_X86_64_LINUX);
+        limba_diag dg = {{0}, 0};
+        if (!m || limba_verify(m, &dg) != 0 || m->nexterns == 0 ||
+            !target_is(m, "x86_64-linux")) {
+            fprintf(stderr, "test_luxia: %s: %s\n", path,
+                    m ? (dg.msg[0] ? dg.msg : "no extern, or no target")
+                      : "compile errors");
+            failures++;
+        }
+        (*count)++;
+        limba_module_free(m);
+    }
+    closedir(d);
+    /* long of Win64: 32 bits */
+    limba_module *w =
+        ffi_module("tests/luxia/ffi/probes.luxia", LXS_X86_64_WINDOWS);
+    bool ok = w && target_is(w, "x86_64-windows");
+    for (uint32_t i = 0; ok && i < w->nexterns; i++) {
+        size_t k;
+        const char *nm = limba_str(w, w->externs[i].name, &k);
+        const limba_type *ft = &w->types[w->externs[i].type];
+        if (k == 3 && !memcmp(nm, "Inc", 3))
+            ok = ft->elem == LIMBA_T_I32 &&
+                 w->members[ft->first].type == LIMBA_T_I32;
+    }
+    if (!ok) {
+        fprintf(stderr, "test_luxia: probes.luxia for x86_64-windows: long "
+                        "is not 32 bits, or no target\n");
+        failures++;
+    }
+    limba_module_free(w);
+    return failures;
+}
+
 int main(void)
 {
     int failures = test_lexer() + test_report() + test_limit();
@@ -1620,12 +1770,14 @@ int main(void)
     failures += test_sema();
     unsigned programs = 0;
     failures += test_programs(&programs);
+    unsigned ffi = 0;
+    failures += test_ffi(&ffi);
     failures += test_run();
     failures += test_random();
     printf("test_luxia: %zu lexer, %zu expression, %zu program, %zu "
-           "semantic and %zu run cases, %u valid programs, report and limit, "
-           "%d failures\n",
+           "semantic and %zu run cases, %u valid programs, %u calling C, "
+           "report and limit, %d failures\n",
            COUNT(lex_cases), COUNT(expr_cases), COUNT(program_cases),
-           COUNT(sema_cases), COUNT(run_cases), programs, failures);
+           COUNT(sema_cases), COUNT(run_cases), programs, ffi, failures);
     return failures ? 1 : 0;
 }

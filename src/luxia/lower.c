@@ -46,6 +46,7 @@ bool lxl_scalar(const lxl *L, limba_ltype t)
     case LIMBA_LTK_STRING:
     case LIMBA_LTK_BIGINT:
     case LIMBA_LTK_POINTER:
+    case LIMBA_LTK_OPAQUE:
     case LIMBA_LTK_NIL:
         return true;
     }
@@ -86,6 +87,7 @@ limba_id lxl_type(lxl *L, limba_ltype t)
         r = LIMBA_T_REF;
         break;
     case LIMBA_LTK_POINTER:
+    case LIMBA_LTK_OPAQUE:
     case LIMBA_LTK_NIL:
     case LIMBA_LTK_OPEN:
         r = LIMBA_T_PTR;
@@ -959,6 +961,8 @@ static void scan_taken(lxl *L)
                 mark_taken(L, list_at(L, args, 0));
             if (y->value == LXB_VAL && list_n(L, args) > 1)
                 mark_taken(L, list_at(L, args, 1));
+            if (y->value == LXB_FREECSTRING && list_n(L, args) > 0)
+                mark_taken(L, list_at(L, args, 0));
             continue;
         }
         if (y->kind != LIMBA_LSYM_ROUTINE || !y->type)
@@ -1022,6 +1026,35 @@ static limba_id func_type(lxl *L, limba_sym s)
     limba_id ft = limba_type_func(L->m, ret, ps, n, false);
     free(ps);
     return ft;
+}
+
+/* the C signature of an external routine (§ 8.5, IR § 11e): a record by
+   value is its struct, a record result too; var, out and arrays are
+   addresses */
+static limba_id ext_type(lxl *L, limba_sym s)
+{
+    const limba_typeinfo *sig = ti(L, L->S->st.sym[s].type);
+    limba_id *ps = limba_xmalloc((sig->count + 1) * sizeof(*ps));
+    for (uint32_t i = 0; i < sig->count; i++) {
+        limba_param p = L->S->ts.param[sig->first + i];
+        const limba_typeinfo *x = ti(L, p.type);
+        ps[i] = p.mode != LXS_IN || x->kind == LIMBA_LTK_ARRAY ||
+                        x->kind == LIMBA_LTK_OPEN
+                    ? LIMBA_T_PTR
+                    : lxl_type(L, p.type);
+    }
+    limba_id ret =
+        sig->elem == L->S->ts.void_ ? LIMBA_T_VOID : lxl_type(L, sig->elem);
+    limba_id ft = limba_type_func(L->m, ret, ps, sig->count, false);
+    free(ps);
+    return ft;
+}
+
+bool lxl_external(const lxl *L, limba_sym s)
+{
+    const limba_symbol *y = &L->S->st.sym[s];
+    return y->node && nd(L, y->node)->kind == LXN_ROUTINE &&
+           nd(L, nd(L, y->node)->d)->kind == LXN_EXTERNAL;
 }
 
 static void begin_function(lxl *L, limba_id fid)
@@ -1193,6 +1226,11 @@ limba_module *limba_lxl_program_each(limba_lxs *S,
     L->m = limba_module_new();
     /* its traps are worded as Luxia says them: the texts of traps.def */
     L->m->language = limba_str_intern(L->m, "luxia", 5);
+    /* C types by name or the C layout: bound to the platform (§ 3.13) */
+    if (S->c_bound) {
+        const char *tn = lxs_target_name(S->target);
+        L->m->target = limba_str_intern(L->m, tn, strlen(tn));
+    }
     L->store = limba_xcalloc(S->st.nsym + 1, sizeof(*L->store));
     L->taken = limba_xcalloc(S->st.nsym + 1, 1);
     L->assigned = limba_xcalloc(S->st.nsym + 1, 1);
@@ -1218,6 +1256,30 @@ limba_module *limba_lxl_program_each(limba_lxs *S,
             size_t n;
             const char *sp = lxs_spell(S, s, &n);
             limba_id name = limba_str_intern(L->m, sp, n);
+            if (lxl_external(L, s)) {
+                /* a routine of C: an extern of the module, its symbol
+                   the name as written unless name gives it */
+                const limba_lx_node *e = nd(L, x->d);
+                size_t ln, sn;
+                const char *lib =
+                    limba_strtab_get(L->S->lx->strings, e->a, &ln);
+                const char *sym =
+                    e->c ? limba_strtab_get(L->S->lx->strings, e->b, &sn)
+                         : lxs_spell(S, s, &sn);
+                limba_id eid = limba_extern_add(
+                    L->m, name, ext_type(L, s), limba_str_intern(L->m, sym, sn),
+                    limba_str_intern(L->m, lib, ln));
+                if (eid == LIMBA_NONE) {
+                    char buf[160];
+                    snprintf(buf, sizeof(buf), "%.*s.external", (int)n, sp);
+                    name = limba_str_intern(L->m, buf, strlen(buf));
+                    eid = limba_extern_add(L->m, name, ext_type(L, s),
+                                           limba_str_intern(L->m, sym, sn),
+                                           limba_str_intern(L->m, lib, ln));
+                }
+                L->func_of[s] = eid;
+                continue;
+            }
             limba_id fid = limba_func_add(L->m, name, func_type(L, s), 0);
             if (fid == LIMBA_NONE) {
                 char buf[160];
@@ -1252,7 +1314,8 @@ limba_module *limba_lxl_program_each(limba_lxs *S,
     for (uint32_t i = 0; i < list_n(L, decls); i++) {
         uint32_t d = list_at(L, decls, i);
         const limba_lx_node *x = nd(L, d);
-        if (x->kind == LXN_ROUTINE && S->sym[x->a])
+        if (x->kind == LXN_ROUTINE && S->sym[x->a] &&
+            !lxl_external(L, S->sym[x->a]))
             routine_body(L, S->sym[x->a]);
     }
     /* main: the records and arrays without a value (§ 4.5), the initial

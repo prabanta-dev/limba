@@ -1,0 +1,26 @@
+; output: ciao, mondo
+; output: ciao
+; output: 11
+; result: 0
+; C strings in the reference interpreter: made with a 0 after, read back
+; up to the 0 or n bytes, freed (a null pointer freed does nothing)
+func @main : fn() -> i64 {
+b0:
+  v0 = sconst str "ciao, mondo"
+  v1 = call.rt ptr cstr_new(v0)
+  v2 = call.rt str cstr_value(v1)
+  call.rt void print_str(v2)
+  call.rt void print_nl()
+  v3 = iconst i64 4
+  v4 = call.rt str cstr_value_n(v1, v3)
+  call.rt void print_str(v4)
+  call.rt void print_nl()
+  v5 = call.rt i64 str_len(v2)
+  call.rt void print_i64(v5)
+  call.rt void print_nl()
+  call.rt void cstr_free(v1)
+  v6 = null ptr
+  call.rt void cstr_free(v6)
+  v7 = iconst i64 0
+  ret v7
+}

@@ -1,0 +1,111 @@
+// The calls of C (§ 8.5) against probe.c, built as the library "probe":
+// every family of what crosses the boundary once. The reference
+// interpreter does not call C: a back end runs this and compares its
+// output with expected/probes.out.
+program Probes;
+
+type
+  Handle = new CPointer;
+  Small = record a, b: Int32; end;
+  Mixed = record x: Float64; k: Int32; end;
+  Big = record a, b, c: Int64; end;
+
+pragma convention(c, Small);
+pragma convention(c, Mixed);
+pragma convention(c, Big);
+
+function Sub8(a, b: Int8): Int8;
+  external "probe" name "probe_i8";
+function Twice16(a: UInt16): UInt16;
+  external "probe" name "probe_u16";
+function MulDec(a, b: CInt): CInt;
+  external "probe" name "probe_int";
+function Inc(a: CLong): CLong;
+  external "probe" name "probe_long";
+function NextByte(c: CUChar): CUChar;
+  external "probe" name "probe_uchar";
+function Len(s: CString): CSizeT;
+  external "probe" name "probe_len";
+function Norm2(a, b: CDouble): CDouble;
+  external "probe" name "probe_norm2";
+function Half(x: CFloat): CFloat;
+  external "probe" name "probe_half";
+function Even(x: Int64): CBool;
+  external "probe" name "probe_even";
+function Swap(s: Small): Small;
+  external "probe" name "probe_swap";
+function Scale(m: Mixed; f: Float64): Mixed;
+  external "probe" name "probe_mixed";
+function Rotate(b: Big): Big;
+  external "probe" name "probe_rotate";
+function Sum(b: Big): Int64;
+  external "probe" name "probe_sum";
+procedure Fill(var b: Big; out n: Int32);
+  external "probe" name "probe_fill";
+function Total(a: array[Int32 range <>] of Int32; n: CSizeT): Int64;
+  external "probe" name "probe_total";
+procedure ScaleAll(var a: array[Int32 range <>] of Float64; n: CSizeT;
+                   f: Float64);
+  external "probe" name "probe_scale";
+function NewHandle(tag: Int64): Handle;
+  external "probe" name "probe_new";
+function Tag(h: Handle): Int64;
+  external "probe" name "probe_tag";
+procedure FreeHandle(h: Handle);
+  external "probe" name "probe_free";
+function Greet(who: CString): CString;
+  external "probe" name "probe_greet";
+function Many(a, b, c, d, e, f, g, h: Int64;
+              p, q, r, s, t, u, v, w, x: Float64): Float64;
+  external "probe" name "probe_many";
+
+var
+  sm: Small;
+  mx: Mixed;
+  bg: Big;
+  n: Int32;
+  v: array[Int32 range 1..4] of Int32;
+  d: array[Int32 range 1..3] of Float64;
+  hd: Handle;
+  name, greeting: CString;
+
+begin
+  writeln(Sub8(-100, 28), " ", Twice16(40000), " ", MulDec(6, 7), " ",
+          Inc(CLong(-1)), " ", NextByte(CUChar(255)));
+  name := newcstring("Luxia");
+  writeln(Len(name), " ", Norm2(3.0, 4.0), " ", Half(CFloat(5.0)), " ",
+          Boolean(Even(10)), " ", Boolean(Even(7)));
+  sm.a := 1;
+  sm.b := 2;
+  var sw := Swap(sm);
+  writeln(sw.a, " ", sw.b);
+  mx.x := 1.5;
+  mx.k := 41;
+  var sc := Scale(mx, 2.0);
+  writeln(sc.x, " ", sc.k);
+  bg.a := 10;
+  bg.b := 20;
+  bg.c := 30;
+  var ro := Rotate(bg);
+  writeln(ro.a, " ", ro.b, " ", ro.c, " ", Sum(bg));
+  Fill(bg, n);
+  writeln(bg.a, " ", bg.b, " ", bg.c, " ", n);
+  v[1] := 1;
+  v[2] := 2;
+  v[3] := 3;
+  v[4] := 4;
+  d[1] := 0.5;
+  d[2] := 1.5;
+  d[3] := -2.0;
+  ScaleAll(d, 3, 2.0);
+  writeln(Total(v, 4), " ", d[1], " ", d[2], " ", d[3]);
+  hd := NewHandle(77);
+  writeln(hd <> nil, " ", Tag(hd), " ", Tag(nil));
+  FreeHandle(hd);
+  greeting := Greet(name);
+  writeln(cvalue(greeting));
+  freecstring(greeting);
+  freecstring(name);
+  writeln(Many(1, 2, 3, 4, 5, 6, 7, 8, 0.5, 0.25, 0.125, 1.0, 2.0, 3.0, 4.0,
+               5.0, 6.0));
+end Probes.

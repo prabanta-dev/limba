@@ -55,6 +55,11 @@ void limba_types_free(limba_types *ts)
     memset(ts, 0, sizeof(*ts));
 }
 
+limba_ltype limba_types_opaque(limba_types *ts)
+{
+    return add(ts, LIMBA_LTK_OPAQUE, 0, PTR_SIZE, PTR_SIZE);
+}
+
 limba_ltype limba_types_int(limba_types *ts, unsigned bits, unsigned flags)
 {
     limba_ltype id = add(ts, LIMBA_LTK_INT, flags, bits / 8, bits / 8);
@@ -326,6 +331,8 @@ static size_t show(const limba_types *ts, limba_ltype id, limba_name_fn name,
         return put(buf, size, len, "a routine", 9);
     case LIMBA_LTK_BIGINT:
         return put(buf, size, len, "an integer of any size", 22);
+    case LIMBA_LTK_OPAQUE:
+        return put(buf, size, len, "an opaque pointer", 17);
     }
     if (t->flags & LIMBA_TF_RANGE) {
         len = show(ts, t->base, name, ctx, buf, size, len, depth + 1);
