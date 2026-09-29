@@ -206,9 +206,12 @@ int limba_writer_end(limba_writer *wr, const limba_module *m, uint8_t **buf,
         case LIMBA_TK_FUNC:
             limba_w_byte(&w, ty->variadic);
             limba_w_uleb(&w, ty->elem);
+            limba_w_byte(&w, ty->rext);
             limba_w_uleb(&w, ty->count);
-            for (uint32_t i = 0; i < ty->count; i++)
+            for (uint32_t i = 0; i < ty->count; i++) {
                 limba_w_uleb(&w, m->members[ty->first + i].type);
+                limba_w_byte(&w, (uint8_t)m->members[ty->first + i].offset);
+            }
             break;
         }
     }
@@ -429,13 +432,19 @@ limba_module *limba_read(const uint8_t *buf, size_t len, limba_diag *d)
         } else if (kind == LIMBA_TK_FUNC) {
             uint8_t variadic = limba_r_byte(&r);
             limba_id ret = r_id(&r);
-            uint32_t n = limba_r_count(&r, 1);
+            uint8_t rext = limba_r_byte(&r);
+            uint32_t n = limba_r_count(&r, 2);
             limba_id *params = limba_xmalloc((size_t)n * sizeof(*params) + 1);
-            for (uint32_t k = 0; k < n; k++)
+            uint8_t *exts = limba_xmalloc((size_t)n + 1);
+            for (uint32_t k = 0; k < n; k++) {
                 params[k] = r_id(&r);
+                exts[k] = limba_r_byte(&r);
+            }
             if (!r.bad && variadic <= 1)
-                got = limba_type_func(m, ret, params, n, variadic);
+                got = limba_type_func_ext(m, ret, rext, params, exts, n,
+                                          variadic);
             free(params);
+            free(exts);
         }
         /* written types are distinct, so each one is new here */
         if (!r.bad && got != expect) {

@@ -160,6 +160,17 @@ bool lp_string(P *p, limba_id *id)
 
 /* ---- types ---- */
 
+/* sext or zext after the type of a parameter or a result: how an extern
+   takes a narrow integer (progetto_ir.md § 11e) */
+static uint8_t lp_ext(P *p)
+{
+    if (lp_accept_word(p, "sext"))
+        return LIMBA_EXT_SEXT;
+    if (lp_accept_word(p, "zext"))
+        return LIMBA_EXT_ZEXT;
+    return LIMBA_EXT_NONE;
+}
+
 bool lp_type(P *p, limba_id *out)
 {
     const limba_tok *k = lp_peek(p);
@@ -186,6 +197,7 @@ bool lp_type(P *p, limba_id *out)
     }
     if (lp_accept_word(p, "fn")) {
         limba_id params[256], ret;
+        uint8_t exts[256], rext = LIMBA_EXT_NONE;
         uint32_t n = 0;
         bool variadic = false;
         if (!lp_expect(p, TK_LPAREN, "'('"))
@@ -201,12 +213,14 @@ bool lp_type(P *p, limba_id *out)
             }
             if (n == 256)
                 return lp_fail(p, "%s", "more than 256 parameters");
-            if (!lp_type(p, &params[n++]))
+            if (!lp_type(p, &params[n]))
                 return false;
+            exts[n++] = lp_ext(p);
         }
         if (!lp_expect(p, TK_ARROW, "'->'") || !lp_type(p, &ret))
             return false;
-        *out = limba_type_func(p->m, ret, params, n, variadic);
+        rext = lp_ext(p);
+        *out = limba_type_func_ext(p->m, ret, rext, params, exts, n, variadic);
         return true;
     }
     if (k->kind == TK_IDENT) {

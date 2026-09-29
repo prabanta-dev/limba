@@ -63,6 +63,17 @@ static void print_sym(FILE *out, char sigil, const limba_module *m,
         print_bytes(out, s, n);
 }
 
+/* the extension of a narrow integer of an extern: sext, zext */
+static void print_ext(FILE *out, uint32_t ext)
+{
+    if (ext == LIMBA_EXT_SEXT)
+        fputs(" sext", out);
+    else if (ext == LIMBA_EXT_ZEXT)
+        fputs(" zext", out);
+    else if (ext)
+        fprintf(out, " ext%" PRIu32, ext); /* the verifier refuses it */
+}
+
 static void print_type(FILE *out, const limba_module *m, limba_id t)
 {
     const limba_type *ty = &m->types[t];
@@ -85,11 +96,13 @@ static void print_type(FILE *out, const limba_module *m, limba_id t)
             if (i)
                 fputs(", ", out);
             print_type(out, m, m->members[ty->first + i].type);
+            print_ext(out, m->members[ty->first + i].offset);
         }
         if (ty->variadic)
             fputs(ty->count ? ", ..." : "...", out);
         fputs(") -> ", out);
         print_type(out, m, ty->elem);
+        print_ext(out, ty->rext);
         return;
     }
 }

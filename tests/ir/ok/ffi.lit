@@ -1,7 +1,8 @@
 ; calls of C (progetto_ir.md § 11e): the platform whose C the externs
 ; follow; a struct by value passed as the address of its bytes; a struct
 ; result written at the address given first, the call without a value;
-; an opaque pointer and a _Bool (i1)
+; an opaque pointer and a _Bool (i1); narrow integers extended as C
+; wants them (sext, zext)
 module "ffi"
 target "x86_64-linux"
 type %div = { i32 @0, i32 @4 } size 8 align 4
@@ -9,6 +10,7 @@ type %big = { i64 @0, i64 @8, i64 @16 } size 24 align 8
 extern @div : fn(i32, i32) -> %div = "div" in "c"
 extern @sum : fn(%big) -> i64 = "probe_sum" in "probe"
 extern @isnull : fn(ptr) -> i1 = "probe_isnull" in "probe"
+extern @widen : fn(i8 zext, i16 sext) -> i32 zext = "probe_w" in "probe"
 
 func @main : fn() -> i64 {
   slot 8 align 4
@@ -22,5 +24,8 @@ b0:
   v4 = call.ext i64 @sum(v3)
   v5 = null ptr
   v6 = call.ext i1 @isnull(v5)
+  v7 = iconst i8 -56
+  v8 = iconst i16 -30000
+  v9 = call.ext i32 @widen(v7, v8)
   ret v4
 }

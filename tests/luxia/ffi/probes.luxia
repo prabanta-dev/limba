@@ -55,6 +55,20 @@ procedure FreeHandle(h: Handle);
   external "probe" name "probe_free";
 function Greet(who: CString): CString;
   external "probe" name "probe_greet";
+function WidenUC(c: CUChar): CUInt;
+  external "probe" name "probe_widen_uc";
+function WidenSC(c: CSChar): CInt;
+  external "probe" name "probe_widen_sc";
+function WidenUS(s: CUShort): CUInt;
+  external "probe" name "probe_widen_us";
+function WidenSS(s: CShort): CInt;
+  external "probe" name "probe_widen_ss";
+function WidenUI(u: CUInt): UInt64;
+  external "probe" name "probe_widen_ui";
+function NarrowUC(x: CInt): CUChar;
+  external "probe" name "probe_narrow_uc";
+function NarrowSC(x: CInt): CSChar;
+  external "probe" name "probe_narrow_sc";
 function Many(a, b, c, d, e, f, g, h: Int64;
               p, q, r, s, t, u, v, w, x: Float64): Float64;
   external "probe" name "probe_many";
@@ -108,4 +122,8 @@ begin
   freecstring(name);
   writeln(Many(1, 2, 3, 4, 5, 6, 7, 8, 0.5, 0.25, 0.125, 1.0, 2.0, 3.0, 4.0,
                5.0, 6.0));
+  // narrow integers near their top: each extended as C wants it
+  writeln(WidenUC(CUChar(200)), " ", WidenSC(CSChar(-56)), " ",
+          WidenUS(CUShort(65000)), " ", WidenSS(CShort(-30000)), " ",
+          WidenUI(CUInt(4000000000)), " ", NarrowUC(456), " ", NarrowSC(200));
 end Probes.

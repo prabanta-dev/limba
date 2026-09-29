@@ -192,6 +192,7 @@ static uint64_t type_hash(const struct type_key *k)
     if (k->t.kind == LIMBA_TK_STRUCT)
         return limba_fnv(&k->t.name, sizeof(k->t.name), h);
     h = limba_fnv(&k->t.variadic, 1, h);
+    h = limba_fnv(&k->t.rext, 1, h);
     h = limba_fnv(&k->t.elem, sizeof(k->t.elem), h);
     h = limba_fnv(&k->t.count, sizeof(k->t.count), h);
     if (k->t.kind == LIMBA_TK_FUNC && k->t.count)
@@ -207,13 +208,14 @@ static bool type_same(const void *ctx, uint32_t id)
         return false;
     if (t->kind == LIMBA_TK_STRUCT)
         return t->name == k->t.name;
-    if (t->variadic != k->t.variadic || t->elem != k->t.elem ||
-        t->count != k->t.count)
+    if (t->variadic != k->t.variadic || t->rext != k->t.rext ||
+        t->elem != k->t.elem || t->count != k->t.count)
         return false;
     if (t->kind != LIMBA_TK_FUNC)
         return true;
     for (uint32_t i = 0; i < t->count; i++)
-        if (k->m->members[t->first + i].type != k->members[i].type)
+        if (k->m->members[t->first + i].type != k->members[i].type ||
+            k->m->members[t->first + i].offset != k->members[i].offset)
             return false;
     return true;
 }
@@ -255,14 +257,23 @@ limba_id limba_type_array(limba_module *m, limba_id elem, uint32_t count)
 limba_id limba_type_func(limba_module *m, limba_id ret, const limba_id *params,
                          uint32_t nparams, bool variadic)
 {
+    return limba_type_func_ext(m, ret, LIMBA_EXT_NONE, params, NULL, nparams,
+                               variadic);
+}
+
+limba_id limba_type_func_ext(limba_module *m, limba_id ret, unsigned rext,
+                             const limba_id *params, const uint8_t *exts,
+                             uint32_t nparams, bool variadic)
+{
     limba_member stack[16];
     limba_member *mem =
         nparams <= 16 ? stack : limba_xmalloc(nparams * sizeof(*mem));
     for (uint32_t i = 0; i < nparams; i++)
-        mem[i] = (limba_member){params[i], 0};
+        mem[i] = (limba_member){params[i], exts ? exts[i] : 0};
     struct type_key k = {.m = m, .members = mem};
     k.t.kind = LIMBA_TK_FUNC;
     k.t.variadic = variadic;
+    k.t.rext = (uint8_t)rext;
     k.t.name = LIMBA_NONE;
     k.t.elem = ret;
     k.t.count = nparams;

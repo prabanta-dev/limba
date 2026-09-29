@@ -1740,6 +1740,29 @@ static int test_ffi(unsigned *count)
         limba_module_free(m);
     }
     closedir(d);
+    /* the extensions C wants: unsigned char zext, signed sext, _Bool
+       none */
+    limba_module *x =
+        ffi_module("tests/luxia/ffi/probes.luxia", LXS_X86_64_LINUX);
+    unsigned seen = 0;
+    for (uint32_t i = 0; x && i < x->nexterns; i++) {
+        size_t k;
+        const char *nm = limba_str(x, x->externs[i].name, &k);
+        const limba_type *ft = &x->types[x->externs[i].type];
+        uint32_t p0 = ft->count ? x->members[ft->first].offset : 0;
+        if (k == 8 && !memcmp(nm, "NextByte", 8))
+            seen += p0 == LIMBA_EXT_ZEXT && ft->rext == LIMBA_EXT_ZEXT;
+        else if (k == 4 && !memcmp(nm, "Sub8", 4))
+            seen += p0 == LIMBA_EXT_SEXT && ft->rext == LIMBA_EXT_SEXT;
+        else if (k == 4 && !memcmp(nm, "Even", 4))
+            seen += p0 == LIMBA_EXT_NONE && ft->rext == LIMBA_EXT_NONE;
+    }
+    if (seen != 3) {
+        fprintf(stderr, "test_luxia: probes.luxia: the extensions of the "
+                        "narrow integers are wrong\n");
+        failures++;
+    }
+    limba_module_free(x);
     /* long of Win64: 32 bits */
     limba_module *w =
         ffi_module("tests/luxia/ffi/probes.luxia", LXS_X86_64_WINDOWS);

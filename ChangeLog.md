@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The IR is version 6: in the signature of an extern, a narrow integer
+  (`i8`, `i16`, `i32`) says how C wants it extended in a register,
+  `sext` or `zext` (LLVM's `signext`, `zeroext`); `i1`, C's `_Bool`, never
+  carries one. A callee compiled by Clang trusts the caller to extend, so
+  an `unsigned char` of 200 sign-extended arrived as -56. Limba writes
+  the marker from the Luxia type; the probe library gains narrow values
+  near their top and an `unsigned int` past 2^31.
 - Calls of C libraries (specification § 3.13, § 8.5, § 9.9, § 10.4), as
   Pascal's `external` and Ada's `pragma Import`, with no dependency: a
   routine whose body is `external "library" [name "symbol"]`; C types by

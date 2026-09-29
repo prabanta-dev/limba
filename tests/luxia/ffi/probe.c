@@ -12,7 +12,12 @@
  * width (a result C wraps), long, unsigned char, size_t, float, double,
  * _Bool, structs of 8, 16 (an integer and a double) and 24 bytes by
  * value and as results, addresses (var, out, arrays), an opaque pointer,
- * a string C allocates, and more arguments than registers.
+ * a string C allocates, and more arguments than registers. The widen and
+ * narrow ones take or give an integer narrower than a register near its
+ * top: a callee compiled by clang trusts the caller to have extended it
+ * (sign or zeros, the sext and zext of the IR), so a wrong extension
+ * shows there; 4 000 000 000 is past 2^31, where the extension of 32 bits
+ * counts on other platforms.
  */
 #include <stdbool.h>
 #include <stddef.h>
@@ -155,6 +160,41 @@ char *probe_greet(const char *name)
         memcpy(s + 7, name, n + 1);
     }
     return s;
+}
+
+unsigned probe_widen_uc(unsigned char c)
+{
+    return c;
+}
+
+int probe_widen_sc(signed char c)
+{
+    return c;
+}
+
+unsigned probe_widen_us(unsigned short s)
+{
+    return s;
+}
+
+int probe_widen_ss(short s)
+{
+    return s;
+}
+
+uint64_t probe_widen_ui(unsigned u)
+{
+    return u;
+}
+
+unsigned char probe_narrow_uc(int x)
+{
+    return (unsigned char)x;
+}
+
+signed char probe_narrow_sc(int x)
+{
+    return (signed char)x;
 }
 
 /* eight integers and nine doubles: past the registers of either kind */

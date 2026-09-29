@@ -42,6 +42,15 @@ static bool type_ok(const limba_module *m, limba_id t)
     return t < m->ntypes;
 }
 
+/* the extension ext on a parameter or result of type t */
+static bool ext_ok(limba_id t, uint32_t ext)
+{
+    if (ext == LIMBA_EXT_NONE)
+        return true;
+    return (ext == LIMBA_EXT_SEXT || ext == LIMBA_EXT_ZEXT) &&
+           (t == LIMBA_T_I8 || t == LIMBA_T_I16 || t == LIMBA_T_I32);
+}
+
 /* a type a value may have: scalar, not void */
 static bool is_value_type(const limba_module *m, limba_id t)
 {
@@ -102,6 +111,18 @@ static bool check_types(vctx *v)
                      t);
             if (last > m->nmembers)
                 FAIL("type %" PRIu32 ": parameters out of range", t);
+            /* sext and zext only on i8, i16, i32: i1 is C's _Bool, 0 or
+               1, zero-extended (§ 11e) */
+            if (!ext_ok(ty->elem, ty->rext))
+                FAIL("type %" PRIu32 ": the result: sext or zext on an "
+                     "i8, i16 or i32 only",
+                     t);
+            for (uint32_t i = 0; i < ty->count; i++)
+                if (!ext_ok(m->members[ty->first + i].type,
+                            m->members[ty->first + i].offset))
+                    FAIL("type %" PRIu32 ": parameter %" PRIu32
+                         ": sext or zext on an i8, i16 or i32 only",
+                         t, i);
             for (uint32_t i = 0; i < ty->count; i++)
                 if (!is_value_type(m, m->members[ty->first + i].type) &&
                     !(m->members[ty->first + i].type < m->ntypes &&
@@ -122,10 +143,11 @@ static bool check_types(vctx *v)
 static bool scalar_sig(const limba_module *m, limba_id t)
 {
     const limba_type *ty = &m->types[t];
-    if (ty->elem != LIMBA_T_VOID && !is_value_type(m, ty->elem))
+    if ((ty->elem != LIMBA_T_VOID && !is_value_type(m, ty->elem)) || ty->rext)
         return false;
     for (uint32_t i = 0; i < ty->count; i++)
-        if (!is_value_type(m, m->members[ty->first + i].type))
+        if (!is_value_type(m, m->members[ty->first + i].type) ||
+            m->members[ty->first + i].offset)
             return false;
     return true;
 }
@@ -224,8 +246,8 @@ static bool check_symbols(vctx *v)
            never a counted handle (§ 11e) */
         const limba_type *ft = &m->types[e->type];
         for (uint32_t k = 0; k <= ft->count; k++) {
-            limba_id t = k < ft->count ? m->members[ft->first + k].type
-                                       : ft->elem;
+            limba_id t =
+                k < ft->count ? m->members[ft->first + k].type : ft->elem;
             if (!c_type(m, t, k == ft->count))
                 FAIL("extern @%s: %s %" PRIu32 " has a type C does not know",
                      name_of(m, e->name),

@@ -1,0 +1,3 @@
+; expect: sext or zext on an i8, i16 or i32 only
+; an i64 fills its register: nothing to extend
+extern @f : fn(i64 zext) -> i64 = "f" in "c"

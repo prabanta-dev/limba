@@ -1028,24 +1028,42 @@ static limba_id func_type(lxl *L, limba_sym s)
     return ft;
 }
 
+/* how C takes a narrow integer of type t: sext for a signed one, zext
+   for one without a sign (a Bits type too); none for i1 (C's _Bool) and
+   the rest (IR § 11e) */
+static uint8_t ext_of(lxl *L, limba_ltype t)
+{
+    limba_id it = lxl_type(L, t);
+    if (it != LIMBA_T_I8 && it != LIMBA_T_I16 && it != LIMBA_T_I32)
+        return LIMBA_EXT_NONE;
+    const limba_typeinfo *x = ti(L, t);
+    return (x->flags & LIMBA_TF_SIGNED) && !(x->flags & LIMBA_TF_MODULAR)
+               ? LIMBA_EXT_SEXT
+               : LIMBA_EXT_ZEXT;
+}
+
 /* the C signature of an external routine (§ 8.5, IR § 11e): a record by
    value is its struct, a record result too; var, out and arrays are
-   addresses */
+   addresses; a narrow integer says its extension */
 static limba_id ext_type(lxl *L, limba_sym s)
 {
     const limba_typeinfo *sig = ti(L, L->S->st.sym[s].type);
     limba_id *ps = limba_xmalloc((sig->count + 1) * sizeof(*ps));
+    uint8_t *exts = limba_xcalloc(sig->count + 1, 1);
     for (uint32_t i = 0; i < sig->count; i++) {
         limba_param p = L->S->ts.param[sig->first + i];
         const limba_typeinfo *x = ti(L, p.type);
-        ps[i] = p.mode != LXS_IN || x->kind == LIMBA_LTK_ARRAY ||
-                        x->kind == LIMBA_LTK_OPEN
-                    ? LIMBA_T_PTR
-                    : lxl_type(L, p.type);
+        bool addr = p.mode != LXS_IN || x->kind == LIMBA_LTK_ARRAY ||
+                    x->kind == LIMBA_LTK_OPEN;
+        ps[i] = addr ? LIMBA_T_PTR : lxl_type(L, p.type);
+        exts[i] = addr ? LIMBA_EXT_NONE : ext_of(L, p.type);
     }
-    limba_id ret =
-        sig->elem == L->S->ts.void_ ? LIMBA_T_VOID : lxl_type(L, sig->elem);
-    limba_id ft = limba_type_func(L->m, ret, ps, sig->count, false);
+    bool none = sig->elem == L->S->ts.void_;
+    limba_id ret = none ? LIMBA_T_VOID : lxl_type(L, sig->elem);
+    limba_id ft = limba_type_func_ext(
+        L->m, ret, none ? LIMBA_EXT_NONE : ext_of(L, sig->elem), ps, exts,
+        sig->count, false);
+    free(exts);
     free(ps);
     return ft;
 }

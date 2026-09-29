@@ -22,7 +22,7 @@
 #include <stdio.h>
 
 /* bumped whenever the binary form or the tables change incompatibly */
-#define LIMBA_IR_VERSION 5
+#define LIMBA_IR_VERSION 6
 
 typedef uint32_t limba_id;
 #define LIMBA_NONE UINT32_MAX
@@ -201,9 +201,16 @@ enum {
     LIMBA_T_FIRST_USER
 };
 
+/* how a narrow integer of an extern goes in a register, as C wants it
+   (progetto_ir.md § 11e): the sign of a signed char, zeros for an
+   unsigned one; LLVM's signext and zeroext. Only i8, i16 and i32 of the
+   type of an extern carry one; none is the sign, the canonical form */
+enum limba_ext { LIMBA_EXT_NONE, LIMBA_EXT_SEXT, LIMBA_EXT_ZEXT };
+
 typedef struct {
     uint8_t kind;     /* enum limba_type_kind */
     uint8_t variadic; /* function types */
+    uint8_t rext;     /* function types: the limba_ext of the result */
     uint32_t size;    /* bytes; 0 for void and function types */
     uint32_t align;
     limba_id name;  /* structs: the name, a string id */
@@ -212,7 +219,8 @@ typedef struct {
     uint32_t first; /* structs and functions: index in m->members */
 } limba_type;
 
-/* a struct field (type, offset) or a function parameter (type, 0) */
+/* a struct field (type, offset) or a function parameter (type, its
+   limba_ext) */
 typedef struct {
     limba_id type;
     uint32_t offset;
@@ -365,6 +373,11 @@ uint32_t limba_str_count(const limba_module *m);
 limba_id limba_type_array(limba_module *m, limba_id elem, uint32_t count);
 limba_id limba_type_func(limba_module *m, limba_id ret, const limba_id *params,
                          uint32_t nparams, bool variadic);
+/* the same with the limba_ext of the result and of each parameter (exts
+   may be NULL: none) */
+limba_id limba_type_func_ext(limba_module *m, limba_id ret, unsigned rext,
+                             const limba_id *params, const uint8_t *exts,
+                             uint32_t nparams, bool variadic);
 /* a named struct with an explicit layout; LIMBA_NONE if the name is taken */
 limba_id limba_type_struct(limba_module *m, limba_id name,
                            const limba_member *fields, uint32_t nfields,
