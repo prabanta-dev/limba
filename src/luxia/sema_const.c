@@ -260,7 +260,8 @@ uint32_t lxs_fold_binary(limba_lxs *S, uint32_t node, unsigned op, uint32_t a,
                 cap = cap ? 2 * cap : 64;
                 buf = limba_xrealloc(buf, cap, 1);
             }
-            memcpy(buf + n, s, len);
+            if (len > 0) /* buf is still NULL after two empty strings */
+                memcpy(buf + n, s, len);
             n += len;
         }
         uint32_t id = lxs_value_new(S, LXV_STR);

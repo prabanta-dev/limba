@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Joining two empty constant strings (`"" & ""`) no longer passes a null
+  pointer to `memcpy`: undefined behaviour in C, harmless in practice,
+  found by the undefined-behaviour sanitizer; a fixed case now covers it.
+  The random programs also change two Strings in one loop, so that the
+  jump into the loop passes one string twice, a case an engine that
+  counts references must keep.
 - Input and output in blocks (specification § 9.1, § 9.2), with the rules
   of `move` on the tract: `readbytes(a, from, count)` reads up to `count`
   bytes of the standard input into an array of `Byte` and returns how

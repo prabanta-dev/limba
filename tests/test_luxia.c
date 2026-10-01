@@ -748,6 +748,10 @@ static const run_case run_cases[] =
     {
         {"program p; begin writeln(\"ciao, \", 42, ' ', true); end.",
          "ciao, 42 true\n", "ok"},
+        /* constant strings joined, two empty ones too */
+        {"program p; const e = \"\" & \"\"; f = e & 'a' & \"\"; "
+         "begin writeln(length(e), f); end.",
+         "0a\n", "ok"},
         /* integers: div truncates, mod has the sign of the divisor, rem of
            the dividend */
         {"program p;\nvar a, b, c: Int32;\nbegin\n  a := -7; b := 2; c := -2;\n"

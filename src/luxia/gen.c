@@ -2265,10 +2265,12 @@ static void loop_body(G *g, uint32_t s, uint32_t first)
 }
 
 /* var s: String := a string made at run time; var t: String := s; a loop
-   of 1 to 4 rounds that changes s or shares it with t again; then s and t
-   written: one string in two variables, and Strings carried round a loop
-   and read after it (in SSA, the arguments of the jumps of the loop, which
-   an engine that counts must keep); into out, 5 statements */
+   of 1 to 4 rounds that changes s, or both s and t, or shares s with t
+   again; then s and t written: one string in two variables, and Strings
+   carried round a loop and read after it (in SSA, the arguments of the
+   jumps of the loop, which an engine that counts must keep; when both
+   change, the jump into the loop passes one string twice); into out, 5
+   statements */
 static uint32_t str_loop(G *g, uint32_t *out)
 {
     uint32_t sv = new_v(g, T_STR, V_LOCAL);
@@ -2287,21 +2289,31 @@ static uint32_t str_loop(G *g, uint32_t *out)
     uint32_t loop = new_s(g, S_WHILE);
     e = binop(g, O_LT, T_BOOL, var_ref(g, w), lit(g, T_I32, 1 + below(g, 4)));
     g->st[loop].e = e;
-    uint32_t a = new_s(g, S_ASSIGN);
-    unsigned how = below(g, 3);
+    uint32_t a = new_s(g, S_ASSIGN), a2 = 0;
+    unsigned how = below(g, 4);
     if (how == 2) { /* t := s: shared again */
         e = var_ref(g, sv);
         g->st[a].var = tv;
     } else {
-        uint32_t l = var_ref(g, how ? tv : sv);
+        uint32_t l = var_ref(g, how == 1 ? tv : sv);
         uint32_t r = made_str(g);
         e = binop(g, O_CAT, T_STR, l, r);
         g->st[a].var = sv;
     }
     g->st[a].e = e;
+    if (how == 3) { /* and t := t & a string made at run time */
+        a2 = new_s(g, S_ASSIGN);
+        uint32_t l = var_ref(g, tv);
+        uint32_t r = made_str(g);
+        e = binop(g, O_CAT, T_STR, l, r);
+        g->st[a2].var = tv;
+        g->st[a2].e = e;
+    }
     uint32_t b = 0, n = 0, bs = bump(g, w);
     append(g, &b, &n, bs, false);
     append(g, &b, &n, a, false);
+    if (a2)
+        append(g, &b, &n, a2, false);
     g->st[loop].blk = b;
     g->st[loop].nblk = n;
     uint32_t items[3];
