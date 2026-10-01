@@ -134,6 +134,11 @@ lir_run program.lir          # runs it in the reference interpreter
   and on the way proves that every variable is assigned before it is
   read and that every function returns a value.
 
+The front end is also a library (`include/limba/limba_luxia.h`): a
+program that runs the IR in memory compiles a source and receives each
+function as soon as it is complete, verified and optimised, as `limba`
+does to write its `.lir`.
+
 **The IR** (`include/limba/ir.h`, `src/ir/`) is the contract with Meri and
 does not know Luxia:
 
@@ -189,7 +194,7 @@ files.
 
 | | |
 |---|---|
-| `include/limba/` | the public API: the IR, its operations, the run-time table, the optimiser, the printing and reading of numbers shared with Meri |
+| `include/limba/` | the public API: the IR, its operations, the run-time table, the optimiser, the front end of Luxia as a library (`limba_luxia.h`), the printing and reading of numbers shared with Meri |
 | `src/common/` | hash tables, interned strings, LEB128, allocation |
 | `src/ir/` | the IR: building, verifier, CFG and dominators, text and binary forms |
 | `src/opt/` | the pass manager and the passes |

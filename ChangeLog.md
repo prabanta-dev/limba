@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The front end of Luxia is a library, `include/limba/limba_luxia.h`
+  ("limba" is Sardinian for language): `limba_luxia_compile_file` and
+  `limba_luxia_compile_text` take the options of `limba` and a consumer
+  that receives the module once declared, each function as it is
+  complete (verified, optimised, then freed unless kept), the end with
+  its outcome, and each diagnosis with its code and place. The header
+  states what a consumer may rely on: every declaration comes first, ids
+  never change while arrays may move, a function given is never touched
+  again, and errors found while the bodies are made arrive after some
+  functions were given. The `limba` command is now one such consumer:
+  its output is byte for byte the same.
 - The IR is version 6: in the signature of an extern, a narrow integer
   (`i8`, `i16`, `i32`) says how C wants it extended in a register,
   `sext` or `zext` (LLVM's `signext`, `zeroext`); `i1`, C's `_Bool`, never
