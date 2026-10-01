@@ -47,9 +47,10 @@ limba_module *limba_lxl_program(limba_lxs *S);
 /* the same, calling done as each function is complete, with the last
    edit of its SSA left to apply (limba_ssa_finish_edit): done applies it
    (limba_edit_end) or gives it to the optimiser, and may then write the
-   function and clear it (limba_func_clear) */
+   function and clear it (limba_func_clear); done returns false to stop:
+   no other body is made, and the module given back is not complete */
 limba_module *limba_lxl_program_each(limba_lxs *S,
-                                     void (*done)(void *ctx, limba_module *m,
+                                     bool (*done)(void *ctx, limba_module *m,
                                                   limba_id fid, limba_edit *e),
                                      void *ctx);
 
@@ -133,8 +134,9 @@ typedef struct {
     limba_id live_ptr, live_block;
     /* lxl_array_parts of an array made by new: its elements from p + 16 */
     uint32_t heap_disp;
-    void (*done)(void *ctx, limba_module *m, limba_id fid, limba_edit *e);
+    bool (*done)(void *ctx, limba_module *m, limba_id fid, limba_edit *e);
     void *ctx;
+    bool stopped; /* done said to stop */
 } lxl;
 
 /* IR types */

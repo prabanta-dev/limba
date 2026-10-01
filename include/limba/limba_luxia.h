@@ -22,7 +22,9 @@
  *   variable read before it has a value): functions given before stay
  *   given, none is given after the first error, and end says so;
  * - no state is shared between two compilations: two threads may compile
- *   at once.
+ *   at once;
+ * - out of memory, the process ends with status 70, as limba does: the
+ *   front end does not give it back as an error.
  */
 #ifndef LIMBA_LUXIA_H
 #define LIMBA_LUXIA_H
@@ -76,7 +78,7 @@ typedef struct {
     void (*begin)(void *ctx, const limba_module *m);
     /* function fid of m is complete, verified if asked, optimised at the
        level asked: 0 to go on, anything else to stop (no other function
-       is given, and the result is LIMBA_LUXIA_STOPPED). Then its body is
+       is made, and the result is LIMBA_LUXIA_STOPPED). Then its body is
        freed (limba_func_clear) unless keep_bodies. NULL if not needed */
     int (*func)(void *ctx, limba_module *m, limba_id fid);
     /* the end, called once if begin was: status as the result of the

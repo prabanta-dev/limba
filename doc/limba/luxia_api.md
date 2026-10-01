@@ -102,10 +102,13 @@ call only.
    no module: the consumer throws away what it received.
 6. **Errors before any function** (lexical, syntactic, semantic, an
    option, a file not read) call neither `begin` nor `end`.
-7. **Stopping.** After `func` asks to stop, no other function is given;
-   the result and the status of `end` are `LIMBA_LUXIA_STOPPED`.
+7. **Stopping.** After `func` asks to stop, no other function is made:
+   the front end ends at once, and errors in the bodies not made are not
+   found. The result and the status of `end` are `LIMBA_LUXIA_STOPPED`.
 8. **No shared state.** Two compilations share nothing: two threads may
    compile at once.
+9. **Out of memory**, the process ends with status 70, as `limba` does:
+   the front end does not give it back as an error.
 
 ## Example
 
@@ -114,7 +117,9 @@ call only.
 
 static int take(void *ctx, limba_module *m, limba_id fid)
 {
+    (void)ctx;
     /* translate m->funcs[fid] now: its body is freed on return */
+    (void)m->funcs[fid];
     return 0;
 }
 

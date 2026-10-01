@@ -1382,13 +1382,12 @@ typedef struct {
     limba_diag d;
 } optctx;
 
-static void opt_func(void *ctx, limba_module *m, limba_id fid, limba_edit *e)
+static bool opt_func(void *ctx, limba_module *m, limba_id fid, limba_edit *e)
 {
     optctx *c = ctx;
-    if (c->bad)
-        limba_edit_cancel(e);
-    else if (limba_optimizer_func_edit(c->z, m, fid, e, &c->d) != 0)
+    if (limba_optimizer_func_edit(c->z, m, fid, e, &c->d) != 0)
         c->bad = true;
+    return !c->bad;
 }
 
 /* compile a Luxia source to a verified module and run it, then compile it

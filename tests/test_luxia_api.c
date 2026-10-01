@@ -71,6 +71,36 @@ static const char syntax[] = "program Bad;\n"
                              "  writeln(1 +);\n"
                              "end Bad.\n";
 
+/* Sum calls Later, declared after it: given before Later's body is made */
+static const char forward[] = "program Forward;\n"
+                              "\n"
+                              "function Sum(n: Int32): Int32;\n"
+                              "begin\n"
+                              "  var s: Int32 := 0;\n"
+                              "  for var i := 1 to n do\n"
+                              "    s := s + Later(i);\n"
+                              "  end;\n"
+                              "  return s;\n"
+                              "end Sum;\n"
+                              "\n"
+                              "function Later(x: Int32): Int32;\n"
+                              "begin\n"
+                              "  return x * x;\n"
+                              "end Later;\n"
+                              "\n"
+                              "begin\n"
+                              "  writeln(Sum(4));\n"
+                              "end Forward.\n";
+
+/* four names never declared */
+static const char many[] = "program Many;\n"
+                           "begin\n"
+                           "  writeln(a1);\n"
+                           "  writeln(a2);\n"
+                           "  writeln(a3);\n"
+                           "  writeln(a4);\n"
+                           "end Many.\n";
+
 typedef struct {
     int begins, funcs, ends, diags;
     int func_before_begin; /* a function given before begin */
@@ -82,6 +112,11 @@ typedef struct {
     limba_writer *w;
     limba_luxia_diag first; /* the first diagnosis, its strings copied */
     char file[64], message[256];
+    int last_severity; /* of the last diagnosis */
+    char last[128];
+    uint8_t given[16]; /* per function: given already */
+    int forward_calls; /* calls of a function not given yet, its body
+                          empty */
 } seen;
 
 static void on_begin(void *ctx, const limba_module *m)
@@ -98,6 +133,17 @@ static int on_func(void *ctx, limba_module *m, limba_id fid)
         s->func_before_begin++;
     s->funcs++;
     s->last_fid = fid;
+    const limba_func *f = &m->funcs[fid];
+    for (uint32_t b = 0; b < f->nblocks; b++)
+        for (uint32_t k = 0; k < f->blocks[b].ninsts; k++) {
+            const limba_inst *x = &f->insts[f->blocks[b].insts[k]];
+            limba_id g = (limba_id)x->imm;
+            if (x->op == LIMBA_OP_CALL && g < 16 && !s->given[g] &&
+                !m->funcs[g].nblocks)
+                s->forward_calls++;
+        }
+    if (fid < 16)
+        s->given[fid] = 1;
     if (s->w)
         limba_writer_func(s->w, m, fid);
     return s->stop_after && s->funcs >= s->stop_after;
@@ -118,6 +164,8 @@ static void on_end(void *ctx, const limba_module *m, int status)
 static void on_diag(void *ctx, const limba_luxia_diag *d)
 {
     seen *s = ctx;
+    s->last_severity = d->severity;
+    snprintf(s->last, sizeof(s->last), "%s", d->message);
     if (!s->diags++) {
         s->first = *d;
         snprintf(s->file, sizeof(s->file), "%s", d->file ? d->file : "");
@@ -233,6 +281,93 @@ static void test_stop(void)
           "stop: end %d with %p (%d)", s.ends, (void *)s.end_m, s.end_status);
 }
 
+/* a stop ends the making of bodies: the error of Second, after First,
+   is never found */
+static void test_stop_early(void)
+{
+    seen s;
+    limba_luxia_consumer c = consumer(&s, false);
+    s.stop_after = 1;
+    limba_module *m = NULL;
+    int r = limba_luxia_compile_text("late.luxia", late, sizeof(late) - 1, NULL,
+                                     &c, &m);
+    CHECK(r == LIMBA_LUXIA_STOPPED && !m, "stop early: result %d", r);
+    CHECK(s.funcs == 1 && !s.diags,
+          "stop early: %d functions, %d diagnoses (%s)", s.funcs, s.diags,
+          s.message);
+}
+
+/* a call of a routine declared later: its body is not made yet when the
+   caller is given (calls are resolved by index, afterwards) */
+static void test_forward(int level)
+{
+    limba_luxia_options o = {0};
+    o.level = level;
+    seen s;
+    limba_luxia_consumer c = consumer(&s, false);
+    limba_module *m = NULL;
+    int r = limba_luxia_compile_text("forward.luxia", forward,
+                                     sizeof(forward) - 1, &o, &c, &m);
+    CHECK(r == LIMBA_LUXIA_OK && m, "forward -O%d: result %d", level, r);
+    CHECK(s.forward_calls >= 1,
+          "forward -O%d: no call of a function not given yet", level);
+    CHECK(m && s.funcs == (int)m->nfuncs && s.last_fid == 0,
+          "forward -O%d: %d functions, the last %u", level, s.funcs,
+          s.last_fid);
+    limba_module_free(m);
+}
+
+/* the options a consumer may leave at their defaults */
+static void test_options(void)
+{
+    /* the errors after max_errors are dropped, and a note says so */
+    limba_luxia_options o = {0};
+    o.max_errors = 2;
+    seen s;
+    limba_luxia_consumer c = consumer(&s, false);
+    limba_module *m = NULL;
+    int r = limba_luxia_compile_text("many.luxia", many, sizeof(many) - 1, &o,
+                                     &c, &m);
+    CHECK(r == LIMBA_LUXIA_ERRORS && !m, "max_errors: result %d", r);
+    CHECK(s.diags == 3 && s.last_severity == LIMBA_LUXIA_NOTE &&
+              strstr(s.last, "stopped after 2 errors"),
+          "max_errors: %d diagnoses, the last '%s'", s.diags, s.last);
+
+    /* printed as limba prints them */
+    char *text = NULL;
+    size_t ntext = 0;
+    o.max_errors = 0;
+    o.diag_out = open_memstream(&text, &ntext);
+    r = limba_luxia_compile_text("bad.luxia", syntax, sizeof(syntax) - 1, &o,
+                                 NULL, &m);
+    fclose(o.diag_out);
+    CHECK(r == LIMBA_LUXIA_ERRORS && text && strstr(text, "bad.luxia:3:") &&
+              strstr(text, ": error[L") && strstr(text, "writeln(1 +);"),
+          "diag_out: result %d, printed '%s'", r, text ? text : "");
+    free(text);
+
+    /* verified on request, and an empty text */
+    o.diag_out = NULL;
+    o.verify = true;
+    r = limba_luxia_compile_text("calls.luxia", good, sizeof(good) - 1, &o,
+                                 NULL, &m);
+    CHECK(r == LIMBA_LUXIA_OK && m, "verify: result %d", r);
+    limba_module_free(m);
+    r = limba_luxia_compile_text("empty.luxia", NULL, 0, NULL, NULL, &m);
+    CHECK(r == LIMBA_LUXIA_ERRORS && !m, "empty: result %d", r);
+
+#ifndef __SANITIZE_ADDRESS__
+    /* the memory of the compilation is left, the module is given back
+       (a leak by design: not in the builds that look for leaks) */
+    o.verify = false;
+    o.no_free = true;
+    r = limba_luxia_compile_text("calls.luxia", good, sizeof(good) - 1, &o,
+                                 NULL, &m);
+    CHECK(r == LIMBA_LUXIA_OK && m && m->nfuncs == 3, "no_free: result %d", r);
+    limba_module_free(m);
+#endif
+}
+
 /* errors before any function: neither begin nor end */
 static void test_before(void)
 {
@@ -281,9 +416,15 @@ int main(void)
     test_good(1);
     test_late();
     test_stop();
+    test_stop_early();
+    test_forward(0);
+    test_forward(1);
+    test_options();
     test_before();
-    printf("test_luxia_api: the calls, the module, the bodies, errors after "
-           "functions given, stop, diagnoses, %d failures\n",
-           failures);
+    printf(
+        "test_luxia_api: the calls, the module, the bodies, errors after "
+        "functions given, stop, calls of later functions, options, diagnoses, "
+        "%d failures\n",
+        failures);
     return failures ? 1 : 0;
 }

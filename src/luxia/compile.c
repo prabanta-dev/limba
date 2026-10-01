@@ -98,18 +98,16 @@ typedef struct {
     limba_diag d;
 } stream;
 
-static void stream_func(void *ctx, limba_module *m, limba_id fid, limba_edit *e)
+/* false to stop: the IR is not valid, or the consumer asked; the front
+   end then makes no other body */
+static bool stream_func(void *ctx, limba_module *m, limba_id fid, limba_edit *e)
 {
     stream *st = ctx;
-    if (st->bad || st->opt_bad || st->stopped) {
-        limba_edit_cancel(e);
-        return;
-    }
     if (st->z && !st->verify) {
         /* the last edit of the SSA and those of the passes, applied once */
         if (limba_optimizer_func_edit(st->z, m, fid, e, &st->d) != 0) {
             st->opt_bad = true;
-            return;
+            return false;
         }
     } else {
         limba_edit_end(e);
@@ -117,11 +115,11 @@ static void stream_func(void *ctx, limba_module *m, limba_id fid, limba_edit *e)
             st->v = limba_verifier_new(m);
         if (st->verify && limba_verifier_func(st->v, fid, &st->d) != 0) {
             st->bad = true;
-            return;
+            return false;
         }
         if (st->z && limba_optimizer_func(st->z, m, fid, &st->d) != 0) {
             st->opt_bad = true;
-            return;
+            return false;
         }
     }
     const limba_luxia_consumer *c = st->c;
@@ -135,6 +133,7 @@ static void stream_func(void *ctx, limba_module *m, limba_id fid, limba_edit *e)
         st->stopped = true;
     if (!c->keep_bodies)
         limba_func_clear(&m->funcs[fid]);
+    return !st->stopped;
 }
 
 /* the bits of the checks named in list, separated by commas; false if
@@ -198,7 +197,12 @@ static int compile(const char *path, const char *text, size_t len,
     uint32_t file = text ? limba_source_add(&src, path, text, len)
                          : limba_source_load(&src, path);
     if (file == UINT32_MAX) {
-        say(o, c, LIMBA_LUXIA_ERROR, "%s: %s", path, strerror(errno));
+        /* strerror may share a buffer between threads */
+        int err = errno;
+        char why[128];
+        if (strerror_r(err, why, sizeof(why)) != 0)
+            snprintf(why, sizeof(why), "error %d", err);
+        say(o, c, LIMBA_LUXIA_ERROR, "%s: %s", path, why);
         limba_source_free(&src);
         return LIMBA_LUXIA_ERRORS;
     }
@@ -245,7 +249,10 @@ static int compile(const char *path, const char *text, size_t len,
             false,  false, {{0}, 0}};
         limba_module *m = limba_lxl_program_each(&sema, stream_func, &st);
         flush(&rep, o, c);
-        if (m) {
+        if (m && st.stopped) {
+            /* the module is not complete: nothing to verify */
+            status = LIMBA_LUXIA_STOPPED;
+        } else if (m) {
             limba_diag d = {{0}, 0};
             bool bad = verify && (st.bad || limba_verify_decls(m, &d) != 0);
             if (st.bad || st.opt_bad)
@@ -258,8 +265,6 @@ static int compile(const char *path, const char *text, size_t len,
             } else if (st.opt_bad) {
                 say(o, c, LIMBA_LUXIA_ERROR, "%s: %s", path, d.msg);
                 status = LIMBA_LUXIA_INTERNAL;
-            } else if (st.stopped) {
-                status = LIMBA_LUXIA_STOPPED;
             }
         } else {
             status = LIMBA_LUXIA_ERRORS;

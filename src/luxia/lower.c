@@ -1144,7 +1144,7 @@ static void end_function(lxl *L, uint32_t node, bool function)
     limba_ssa_free(L->ssa);
     L->ssa = NULL;
     if (L->done && !L->S->rep->errors)
-        L->done(L->ctx, L->m, L->fid, &e);
+        L->stopped = !L->done(L->ctx, L->m, L->fid, &e);
     else
         limba_edit_end(&e);
 }
@@ -1231,7 +1231,7 @@ limba_module *limba_lxl_program(limba_lxs *S)
 }
 
 limba_module *limba_lxl_program_each(limba_lxs *S,
-                                     void (*done)(void *ctx, limba_module *m,
+                                     bool (*done)(void *ctx, limba_module *m,
                                                   limba_id fid, limba_edit *e),
                                      void *ctx)
 {
@@ -1329,13 +1329,15 @@ limba_module *limba_lxl_program_each(limba_lxs *S,
             }
         }
     }
-    for (uint32_t i = 0; i < list_n(L, decls); i++) {
+    for (uint32_t i = 0; i < list_n(L, decls) && !L->stopped; i++) {
         uint32_t d = list_at(L, decls, i);
         const limba_lx_node *x = nd(L, d);
         if (x->kind == LXN_ROUTINE && S->sym[x->a] &&
             !lxl_external(L, S->sym[x->a]))
             routine_body(L, S->sym[x->a]);
     }
+    if (L->stopped)
+        goto done;
     /* main: the records and arrays without a value (§ 4.5), the initial
        values of the globals, then the body */
     L->result = 0;
@@ -1361,6 +1363,7 @@ limba_module *limba_lxl_program_each(limba_lxs *S,
     stmts(L, body);
     end_function(L, S->t->root, false);
 
+done:
     free(L->store);
     free(L->taken);
     free(L->assigned);

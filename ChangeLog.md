@@ -11,8 +11,14 @@
   states what a consumer may rely on: every declaration comes first, ids
   never change while arrays may move, a function given is never touched
   again, and errors found while the bodies are made arrive after some
-  functions were given. The `limba` command is now one such consumer:
-  its output is byte for byte the same.
+  functions were given; a stop ends the front end at once; out of
+  memory ends the process. The `limba` command is now one such consumer:
+  its `.lir` and its diagnostics are byte for byte the same. Its
+  `--emit=lit` and `--check` at `-O1` now optimise a function at a time,
+  as the `.lir` does, not the whole module: the `.lit` shows the IR of
+  the `.lir`, which differed when a routine called one declared after it
+  (the whole module put the later one in line). With `--emit=tokens` or
+  `--emit=ast`, `--suppress` and `--target` are not looked at.
 - The IR is version 6: in the signature of an extern, a narrow integer
   (`i8`, `i16`, `i32`) says how C wants it extended in a register,
   `sext` or `zext` (LLVM's `signext`, `zeroext`); `i1`, C's `_Bool`, never
