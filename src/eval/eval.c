@@ -307,6 +307,9 @@ static void out_f64(E *e, double v)
 static void store(void *p, limba_id t, uint64_t v);
 static bool mem_store(E *e, uintptr_t p, limba_id t, uint64_t v);
 static bool forget(E *e, uintptr_t p, size_t n);
+static bool no_str(E *e, uintptr_t p, size_t n);
+static bool badmem(E *e);
+static bool runtime_arrays(E *e, uint32_t rt, const uint64_t *a, uint64_t *r);
 
 /* UTF-8 of a code point, into buf (4 bytes); its length */
 static size_t utf8(uint32_t c, char *buf)
@@ -605,6 +608,88 @@ static bool runtime_c(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
             return bad_module(e);
         free((void *)(uintptr_t)a[0]);
         return true;
+    }
+    return runtime_arrays(e, rt, a, r);
+}
+
+/* the routines of arrays (luxia_0.md § 9.5): the tract, the pattern,
+   nil and dangling are checked before, in the IR */
+static bool runtime_arrays(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
+{
+    uint8_t *p = (uint8_t *)(uintptr_t)a[0];
+    int64_t n = (int64_t)a[1];
+    switch (rt) {
+    case LIMBA_RT_MEM_TRANSLATE: {
+        const uint8_t *t = (const uint8_t *)(uintptr_t)a[2];
+        if (n < 0 || (n && (!p || !t)))
+            return bad_module(e);
+        if (!n)
+            return true;
+        if (e->lim.check_mem && (!no_str(e, (uintptr_t)p, (size_t)n) ||
+                                 !no_str(e, (uintptr_t)t, 256)))
+            return false;
+        uint8_t table[256]; /* first: the table may be the array itself */
+        memcpy(table, t, sizeof(table));
+        for (int64_t i = 0; i < n; i++)
+            p[i] = table[p[i]];
+        return true;
+    }
+    case LIMBA_RT_MEM_REVERSE: {
+        size_t size = (size_t)a[2], len;
+        if (n < 0 || !size || (n && !p) ||
+            __builtin_mul_overflow((size_t)n, size, &len))
+            return bad_module(e);
+        if (n < 2)
+            return true;
+        if (e->lim.check_mem && e->words.live) {
+            /* the str in the tract go with their elements */
+            size_t *offs = NULL, k = 0, cap = 0;
+            uintptr_t s = (uintptr_t)p;
+            for (uintptr_t w = s & ~(uintptr_t)7; w < s + len; w += 8)
+                if (amap_find(&e->words, w) != AMAP_NONE) {
+                    LIMBA_GROW(offs, k, cap);
+                    offs[k++] = w - s;
+                }
+            bool ok = forget(e, s, len);
+            for (size_t i = 0; i < k && ok; i++) {
+                size_t el = offs[i] / size, off = offs[i] % size;
+                uintptr_t w = s + ((size_t)n - 1 - el) * size + off;
+                if (w & 7)
+                    ok = badmem(e);
+                else
+                    amap_put(&e->words, w, 0);
+            }
+            free(offs);
+            if (!ok)
+                return false;
+        }
+        for (size_t i = 0, j = (size_t)n - 1; i < j; i++, j--)
+            for (size_t b = 0; b < size; b++) {
+                uint8_t x = p[i * size + b];
+                p[i * size + b] = p[j * size + b];
+                p[j * size + b] = x;
+            }
+        return true;
+    }
+    case LIMBA_RT_MEM_COUNT: {
+        const uint8_t *q = (const uint8_t *)(uintptr_t)a[2];
+        int64_t m = (int64_t)a[3];
+        if (n < 0 || m < 1 || !q || (n && !p))
+            return bad_module(e);
+        if (e->lim.check_mem && (!no_str(e, (uintptr_t)p, (size_t)n) ||
+                                 !no_str(e, (uintptr_t)q, (size_t)m)))
+            return false;
+        int64_t c = 0;
+        for (int64_t i = 0; i + m <= n;)
+            if (!memcmp(p + i, q, (size_t)m)) {
+                c++;
+                i += m;
+            } else {
+                i++;
+            }
+        *r = (uint64_t)c;
+        return true;
+    }
     }
     return runtime_big(e, rt, a, r);
 }

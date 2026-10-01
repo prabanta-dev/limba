@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Three routines of arrays (specification § 9.5), with the rules of
+  `move`: `translate(a, from, count, table)` replaces each Byte of a
+  tract by its entry in an `array[Byte] of Byte`, read whole first so
+  that it may be the array itself; `reverse(a, from, count)` reverses a
+  tract of any element type in place; `occurrences(a, from, count,
+  pattern)` counts the non-overlapping occurrences of a pattern of Bytes
+  or a String in a tract of Bytes or a String, and an empty pattern is a
+  range error, as Ada's `Pattern_Error`. Narrower types than `Byte` are
+  compile-time errors. In the IR: `mem_translate`, `mem_reverse` and
+  `mem_count` at the end of the run-time table, which changes its
+  fingerprint (version 6 unchanged); the checks stay instructions of the
+  IR before the call. The random programs use them on arrays made by
+  `new`.
 - The front end of Luxia is a library, `include/limba/limba_luxia.h`
   ("limba" is Sardinian for language): `limba_luxia_compile_file` and
   `limba_luxia_compile_text` take the options of `limba` and a consumer

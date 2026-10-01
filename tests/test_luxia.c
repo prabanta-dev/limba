@@ -549,6 +549,31 @@ static const sema_case sema_cases[] = {
     {"program p; type A = array[Int32 range <>] of Int32; procedure f(a: "
      "A); begin move(a, low(a), a, low(a), 0); end f; begin end.",
      "L0034@1:94"},
+    /* translate, reverse, occurrences (§ 9.5): a String is not written,
+       the table is indexed by Byte and holds Bytes, the elements are
+       Bytes, reverse takes an array, written, the pattern holds Bytes,
+       the names are the language's */
+    {"program p; type T = array[Byte] of Byte; var tb: T; s: String; begin translate(s, 1, 1, tb); end.",
+     "L0027@1:80"},
+    {"program p; type T = array[Byte] of Byte; var tb: T; u: array[Int32 range 0..255] of Byte; a: array[Int32 range 1..3] of Byte; begin translate(a, 1, 3, u); end.",
+     "L0027@1:152"},
+    {"program p; type T = array[Byte] of Byte; var tb: T; type S = Byte range 0..9; var a: array[Int32 range 1..3] of S; begin translate(a, 1, 3, tb); end.",
+     "L0027@1:132"},
+    {"program p; type T = array[Byte] of Byte; var tb: T; n: Int32; begin reverse(n, 1, 1); end.",
+     "L0027@1:77"},
+    {"program p; type A = array[Int32 range <>] of Int32; procedure f(a: "
+     "A); begin reverse(a, low(a), 0); end f; begin end.",
+     "L0034@1:86"},
+    {"program p; var a: array[Int32 range 1..3] of Byte; q: array[Int32 "
+     "range 1..3] of Int32; n: Int32; begin n := occurrences(a, 1, 3, q); "
+     "end.",
+     "L0027@1:131"},
+    {"program p; var reverse: Int32; begin end.", "L0023@1:16"},
+    {"program p; type T = array[Byte] of Byte; var q: ^T; n: Int64; a: "
+     "array[Int8 range -2..2] of Byte; m: Int8; begin q := new(T); "
+     "translate(a, -2, 5, q^); n := occurrences(\"abab\", 1, 4, \"ab\"); m "
+     ":= occurrences(a, -2, 5, a); end.",
+     ""},
     {"program p; type R = record s: String; end; var q: ^R; b: Boolean; "
      "begin q := new(R); b := readline(q.s); end.",
      "L0059@1:101"},
@@ -1038,6 +1063,47 @@ static const run_case run_cases[] =
          "new(A range 1..3); var q := p; dispose(p);\n  move(q^, 1, q^, 2, "
          "0);\nend t.",
          "", "trap 105 at 2:3"},
+        /* translate, reverse, occurrences (§ 9.5): a complement and its
+           reverse, counts without overlaps, empty tracts that check no
+           bound, a table translated through itself (read whole first),
+           records with Strings reversed (counted as they were) */
+        {"program t;\ntype Rec = record k: Int32; w: String; end;\nvar "
+         "tbl: array[Byte] of Byte;\n  a: array[Int32 range 1..8] of "
+         "Byte;\n  rs: array[Int32 range 1..3] of Rec;\nbegin\n  var s: "
+         "String := \"GATTACAA\";\n  for var i := low(tbl) to high(tbl) do "
+         "tbl[i] := i; end;\n  tbl[65] := 84; tbl[84] := 65; tbl[67] := 71; "
+         "tbl[71] := 67;\n  for var i: Int32 := 1 to 8 do a[i] := "
+         "s[Int64(i)]; end;\n  translate(a, 1, 8, tbl);\n  for var i: Int32 "
+         ":= 1 to 8 do writebyte(a[i]); end;\n  writeln(\"\");\n  reverse(a, "
+         "1, 8);\n  for var i: Int32 := 1 to 8 do writebyte(a[i]); end;\n  "
+         "writeln(\"\");\n  writeln(occurrences(a, 1, 8, \"TT\"), \" \", "
+         "occurrences(s, 1, 8, \"A\"), \" \", occurrences(\"aaaa\", 1, 4, "
+         "\"aa\"), \" \", occurrences(a, 9, 0, \"x\"));\n  reverse(a, 30, "
+         "0);\n  translate(a, -4, 0, tbl);\n  tbl[0] := 1; tbl[1] := 0;\n  "
+         "translate(tbl, 0, 2, tbl);\n  writeln(tbl[0], \" \", tbl[1]);\n  "
+         "for var i: Int32 := 1 to 3 do rs[i].k := i; rs[i].w := \"w\" & "
+         "str(i); end;\n  reverse(rs, 1, 3);\n  writeln(rs[1].k, rs[1].w, "
+         "\" \", rs[3].k, rs[3].w);\nend t.",
+         "CTAATGTT\nTTGTAATC\n1 4 2 0\n0 1\n3w3 1w1\n", "ok"},
+        {"program t; var a: array[Int32 range 1..8] of Byte; begin var c: "
+         "Int32 := -1;\n  reverse(a, 1, c);\nend t.",
+         "", "trap 101 at 2:3"},
+        {"program t; var a: array[Int32 range 1..8] of Byte; tbl: "
+         "array[Byte] of Byte; begin\n  translate(a, 7, 3, tbl);\nend t.",
+         "", "trap 100 at 2:3"},
+        {"program t; var a: array[Int32 range 1..8] of Byte; begin\n  "
+         "writeln(occurrences(a, 1, 8, \"\"));\nend t.",
+         "", "trap 101 at 2:11"},
+        {"program t; var a: array[Int32 range 1..8] of Byte; begin\n  "
+         "writeln(occurrences(a, 1, 0, \"\"));\nend t.",
+         "", "trap 101 at 2:11"},
+        {"program t; type Bs = array[Int32 range <>] of Byte; begin var p := "
+         "new(Bs range 1..3); dispose(p);\n  reverse(p^, 1, 1);\nend t.",
+         "", "trap 105 at 2:3"},
+        {"program t; type Bs = array[Int32 range <>] of Byte; begin var p := "
+         "new(Bs range 1..3); var q := new(Bs range 1..1); dispose(q);\n  "
+         "writeln(occurrences(p^, 1, 3, q^));\nend t.",
+         "", "trap 105 at 2:11"},
         /* the destination out of its bounds; a dispose between the bounds
            and the copy; the bounds of a freed array are not read */
         {"program t; type A = array[Int32 range <>] of Int32; begin var p := "

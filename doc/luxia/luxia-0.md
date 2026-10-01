@@ -332,7 +332,8 @@ Records have the C layout.
   and the dangling checks; `low(p^)`, `high(p^)` and `length(p^)` give
   them, in the base type of `I`. As for an open-array parameter, `p^` is
   neither assigned nor read as a whole: the program works on its
-  elements, or copies them with `move` (§ 9.5).
+  elements, or copies them with `move` and treats them with `translate`,
+  `reverse` and `occurrences` (§ 9.5).
 - There is no pointer arithmetic and no way to take the address of a
   variable.
 - A pointer to an object that `dispose` has freed is **dangling**.
@@ -350,9 +351,9 @@ Records have the C layout.
   variable first. A scalar reached through a pointer may be an `in`
   argument (its value) or an `out` one (it goes back through the pointer
   after the call, checked there), not a `var` one (`readline` and `val`
-  included). Only `move` takes arrays reached through a pointer: it runs
-  no code of the program while it copies, and checks them itself
-  (§ 9.5). Ada allows such arguments, and a deallocation during the call
+  included). Only `move`, `translate`, `reverse` and `occurrences` take
+  arrays reached through a pointer: they run no code of the program
+  while they work, and check them themselves (§ 9.5). Ada allows such arguments, and a deallocation during the call
   makes the execution erroneous; SPARK allows them without a copy through
   the ownership of pointers. This rule will go with that ownership
   (Appendix A).
@@ -1013,6 +1014,38 @@ At the end of the file `s` becomes `""`: `s` always has a value, like an
   element without a value carries its invalid value (§ 3.11). `src` and
   `dst` may be reached through a pointer: `move` checks `nil` and a
   dangling pointer itself, at the copy.
+- `translate(a, from, count, table)`, `reverse(a, from, count)` and
+  `occurrences(a, from, count, pattern)` work on the tract `from .. from
+  + count - 1` of the array `a`, with the rules of `move`: `from` and
+  `count` are values of the base type `I` of the index of `a`, computed
+  from the left after `a`; `count < 0` is a range error; `count = 0`
+  does nothing and checks no bound; otherwise the tract must lie within
+  the bounds of `a` (index error), checked before anything is read or
+  written. An array reached through a pointer is checked for `nil` and a
+  dangling pointer by the routine itself, as by `move`.
+  - `translate` replaces each element `x` of the tract by `table[x]`, as
+    Python's `bytes.translate`. `a` is a writable array of `Byte`;
+    `table` is an array indexed by `Byte` whose elements are `Byte`
+    (`array[Byte] of Byte`), so that it has a value for every byte: a
+    narrower index or element type is a compile-time error. `table` is
+    read whole before `a` changes, so `a` and `table` may be the same
+    array.
+  - `reverse` reverses the order of the elements of the tract, in place,
+    as Python's `bytearray.reverse`. `a` is a writable array of any
+    element type; Strings, BigInts and pointers move with their elements
+    (no value is made or lost), and an element without a value carries
+    its invalid value (§ 3.11).
+  - `occurrences` is the number of non-overlapping occurrences of
+    `pattern` in the tract, searched from the left, as Python's
+    `bytes.count` and Ada's `Ada.Strings.Fixed.Count`: a value of `I`,
+    never above `count`. `a` is an array of `Byte` or a `String` (only
+    read; a `String` is indexed from 1 by `Int64`, § 3.8); `pattern` is a
+    `String` or an array of `Byte`, taken whole, evaluated after
+    `count`. An empty pattern is a range error, whatever `count` is, as
+    Ada's `Pattern_Error` (Python answers `count + 1`).
+
+  The names `translate`, `reverse` and `occurrences` are names of the
+  language: like every other one, they cannot be declared again (§ 5.4).
 - `low(T)`, `high(T)` of a discrete type `T` (an integer type, a subtype
   with a range, an enumeration, `Char`, `Boolean`): the first and the last
   value of `T`, a constant of type `T` (as Ada's `T'First` and `T'Last`).

@@ -116,6 +116,37 @@ static limba_id inside(lxl *L, bool sg, limba_id i, limba_id lo, limba_id hi,
                bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b), c);
 }
 
+/* the checks of a tract of count elements from index from, in an array
+   lo..hi (§ 9.5, as move): count below 0 a range error, then, unless
+   count is 0, the tract inside the array (index error) */
+static void tract_checks(lxl *L, bool sg, limba_id from, limba_id count,
+                         limba_id lo, limba_id hi)
+{
+    limba_id zero = lxl_iconst(L, LIMBA_T_I64, 0);
+    if (sg)
+        lxl_check(L, icmp(L, LIMBA_CC_SGE, count, zero), LXR_RANGE);
+    lxl_check(L,
+              bin(L, LIMBA_OP_OR, LIMBA_T_I1, icmp(L, LIMBA_CC_EQ, count, zero),
+                  inside(L, sg, from, lo, hi, count)),
+              LXR_INDEX);
+}
+
+/* node a of translate or occurrences, an array of Bytes or a String: the
+   address of its first byte and its bounds as i64 values (a String from
+   1, its bytes valid while the String has a reference: § 11c) */
+static void bytes_span(lxl *L, uint32_t a, uint32_t at, limba_id *base,
+                       limba_id *lo, limba_id *hi)
+{
+    if (ti(L, L->S->type[a])->kind != LIMBA_LTK_STRING) {
+        span(L, a, at, base, lo, hi);
+        return;
+    }
+    limba_id s = lxl_value(L, a);
+    *base = lxl_rt(L, LIMBA_RT_STR_PTR, LIMBA_T_PTR, &s, 1);
+    *lo = lxl_iconst(L, LIMBA_T_I64, 1);
+    *hi = lxl_rt(L, LIMBA_RT_STR_LEN, LIMBA_T_I64, &s, 1);
+}
+
 /* the length of a computed array, whose bounds are values of type it */
 static limba_id dyn_length(lxl *L, limba_id lo, limba_id hi, limba_ltype it)
 {
@@ -606,6 +637,66 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
                          bin(L, LIMBA_OP_MUL, LIMBA_T_I64, count,
                              lxl_iconst(L, LIMBA_T_I64, (int64_t)esize))};
         lxl_emit(L, LIMBA_OP_MEMCPY, LIMBA_T_VOID, 0, 0, 0, m, 3);
+        return;
+    }
+    case LXB_TRANSLATE: {
+        /* translate(a, from, count, table), from the left (§ 9.5): the
+           checks of move, then the bytes through the table, read whole
+           first (mem_translate) */
+        limba_ltype ib = lxs_base(S, ti(L, t0)->index);
+        limba_id b, lo, hi, tb, tlo, thi;
+        span(L, a0, node, &b, &lo, &hi);
+        limba_id from = lxl_to_i64(L, lxl_value(L, arg(L, node, 1)), ib);
+        limba_id count = lxl_to_i64(L, lxl_value(L, arg(L, node, 2)), ib);
+        span(L, arg(L, node, 3), node, &tb, &tlo, &thi);
+        lxl_at(L, node);
+        tract_checks(L, lxl_signed(L, ib), from, count, lo, hi);
+        limba_id pa = element_at(L, b, lo, from, 1);
+        lxl_live(L, pa);
+        lxl_live(L, tb);
+        uint32_t args[3] = {pa, count, tb};
+        lxl_rt(L, LIMBA_RT_MEM_TRANSLATE, LIMBA_T_VOID, args, 3);
+        return;
+    }
+    case LXB_REVERSE: {
+        /* reverse(a, from, count): a permutation, no String counted */
+        limba_ltype ib = lxs_base(S, ti(L, t0)->index);
+        limba_id b, lo, hi;
+        span(L, a0, node, &b, &lo, &hi);
+        limba_id from = lxl_to_i64(L, lxl_value(L, arg(L, node, 1)), ib);
+        limba_id count = lxl_to_i64(L, lxl_value(L, arg(L, node, 2)), ib);
+        lxl_at(L, node);
+        tract_checks(L, lxl_signed(L, ib), from, count, lo, hi);
+        uint64_t esize = ti(L, ti(L, t0)->elem)->size;
+        limba_id pa = element_at(L, b, lo, from, esize);
+        lxl_live(L, pa);
+        uint32_t args[3] = {pa, count,
+                            lxl_iconst(L, LIMBA_T_I64, (int64_t)esize)};
+        lxl_rt(L, LIMBA_RT_MEM_REVERSE, LIMBA_T_VOID, args, 3);
+        return;
+    }
+    case LXB_OCCURRENCES: {
+        /* occurrences(a, from, count, pattern): the checks of move, then
+           an empty pattern a range error, whatever count is */
+        bool str = ti(L, t0)->kind == LIMBA_LTK_STRING;
+        limba_ltype ib = str ? S->ty_int[3] : lxs_base(S, ti(L, t0)->index);
+        limba_id b, lo, hi, qb, qlo, qhi;
+        bytes_span(L, a0, node, &b, &lo, &hi);
+        limba_id from = lxl_to_i64(L, lxl_value(L, arg(L, node, 1)), ib);
+        limba_id count = lxl_to_i64(L, lxl_value(L, arg(L, node, 2)), ib);
+        bytes_span(L, arg(L, node, 3), node, &qb, &qlo, &qhi);
+        lxl_at(L, node);
+        tract_checks(L, lxl_signed(L, ib), from, count, lo, hi);
+        limba_id m = length64(L, qlo, qhi);
+        lxl_check(L, icmp(L, LIMBA_CC_SGT, m, lxl_iconst(L, LIMBA_T_I64, 0)),
+                  LXR_RANGE);
+        limba_id pa = element_at(L, b, lo, from, 1);
+        limba_id pq = element_at(L, qb, qlo, qlo, 1);
+        lxl_live(L, pa);
+        lxl_live(L, pq);
+        uint32_t args[4] = {pa, count, pq, m};
+        *result = from_i64(
+            L, lxl_rt(L, LIMBA_RT_MEM_COUNT, LIMBA_T_I64, args, 4), ib);
         return;
     }
     case LXB_NEWCSTRING:

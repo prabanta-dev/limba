@@ -158,3 +158,16 @@ LIMBA_RT(CSTR_NEW, "cstr_new", "(str) -> ptr",
 LIMBA_RT(CSTR_VALUE, "cstr_value", "(ptr) -> str", LIMBA_RTA_ALLOC)
 LIMBA_RT(CSTR_VALUE_N, "cstr_value_n", "(ptr, i64) -> str", LIMBA_RTA_ALLOC)
 LIMBA_RT(CSTR_FREE, "cstr_free", "(ptr) -> void", LIMBA_RTA_WRITES_MEM)
+/* the routines of arrays of luxia_0.md § 9.5, checked before, in the IR
+   (count >= 0, the tract inside its array, the pattern not empty, nil
+   and dangling): no trap, and with n = 0 no pointer is read. translate:
+   a[i] := table[a[i]] for the n bytes at a, the 256 bytes of table read
+   first (table may be a itself); reverse: the n elements of size bytes
+   at a, in place, no str counted (a permutation); count: the
+   non-overlapping occurrences of the m >= 1 bytes at p in the n bytes
+   at a, searched from the left */
+LIMBA_RT(MEM_TRANSLATE, "mem_translate", "(ptr, i64, ptr) -> void",
+         LIMBA_RTA_WRITES_MEM)
+LIMBA_RT(MEM_REVERSE, "mem_reverse", "(ptr, i64, i64) -> void",
+         LIMBA_RTA_WRITES_MEM)
+LIMBA_RT(MEM_COUNT, "mem_count", "(ptr, i64, ptr, i64) -> i64", 0)

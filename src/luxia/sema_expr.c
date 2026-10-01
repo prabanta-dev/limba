@@ -691,6 +691,32 @@ static limba_ltype arg_of(limba_lxs *S, uint32_t a, uint32_t scope,
     return want ? want : t;
 }
 
+/* an argument of translate or occurrences: an array of Byte (or of what
+   new made), or a String if string_ok; written if write. The base type of
+   its index, 0 if it is none of them */
+static limba_ltype bytes_arg(limba_lxs *S, uint32_t a, uint32_t scope,
+                             const char *nm, bool string_ok, bool write)
+{
+    S->open_ok = true;
+    limba_ltype t = lxs_expr(S, a, scope, 0);
+    S->open_ok = false;
+    if (!t)
+        return 0;
+    unsigned k = kind(S, t);
+    if (string_ok && k == LIMBA_LTK_STRING)
+        return S->ty_int[3];
+    if ((k == LIMBA_LTK_ARRAY || k == LIMBA_LTK_OPEN) &&
+        lxs_ty(S, t)->elem == S->ty_bits[0]) {
+        if (write)
+            lxs_writable(S, a, true);
+        return lxs_base(S, lxs_ty(S, t)->index);
+    }
+    char ta[128];
+    lxs_error(S, LXE_TYPE_MISMATCH, a, "%s takes an array of Bytes%s, not %s",
+              nm, string_ok ? " or a String" : "", lxs_tname(S, t, ta));
+    return 0;
+}
+
 /* a value that write can print; a constant without a type prints as an
    Int64 or a Float64 */
 static void printable(limba_lxs *S, uint32_t a, uint32_t scope)
@@ -975,6 +1001,65 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
             arg_of(S, arg_at(S, node, 4), scope, ib);
         }
         return set(S, node, S->ts.void_);
+    case LXB_TRANSLATE:
+        /* translate(a, from, count, table): a of Bytes, written; table
+           indexed by Byte, of Bytes: the type holds its 256 values
+           (§ 9.5) */
+        if (arity(S, node, 4, nm, scope)) {
+            limba_ltype ib =
+                bytes_arg(S, arg_at(S, node, 0), scope, nm, false, true);
+            arg_of(S, arg_at(S, node, 1), scope, ib);
+            arg_of(S, arg_at(S, node, 2), scope, ib);
+            uint32_t tab = arg_at(S, node, 3);
+            S->open_ok = true;
+            limba_ltype tt = lxs_expr(S, tab, scope, 0);
+            S->open_ok = false;
+            if (tt && (kind(S, tt) != LIMBA_LTK_ARRAY ||
+                       lxs_ty(S, tt)->index != S->ty_bits[0] ||
+                       lxs_ty(S, tt)->elem != S->ty_bits[0])) {
+                char ta[128];
+                lxs_error(S, LXE_TYPE_MISMATCH, tab,
+                          "translate takes a table indexed by Byte, of "
+                          "Bytes (array[Byte] of Byte), not %s",
+                          lxs_tname(S, tt, ta));
+            }
+        }
+        return set(S, node, S->ts.void_);
+    case LXB_REVERSE:
+        /* reverse(a, from, count): an array of any element, written */
+        if (arity(S, node, 3, nm, scope)) {
+            uint32_t a = arg_at(S, node, 0);
+            S->open_ok = true;
+            limba_ltype at = lxs_expr(S, a, scope, 0);
+            S->open_ok = false;
+            unsigned ak = at ? kind(S, at) : 0;
+            limba_ltype ib = 0;
+            if (at && ak != LIMBA_LTK_ARRAY && ak != LIMBA_LTK_OPEN) {
+                char ta[128];
+                lxs_error(S, LXE_TYPE_MISMATCH, a,
+                          "reverse takes an array, not %s",
+                          lxs_tname(S, at, ta));
+            } else if (at) {
+                ib = lxs_base(S, lxs_ty(S, at)->index);
+                lxs_writable(S, a, true);
+            }
+            arg_of(S, arg_at(S, node, 1), scope, ib);
+            arg_of(S, arg_at(S, node, 2), scope, ib);
+        }
+        return set(S, node, S->ts.void_);
+    case LXB_OCCURRENCES: {
+        /* occurrences(a, from, count, pattern): a of Bytes or a String,
+           read; pattern a String or Bytes, whole; a count of the index
+           base, as length */
+        limba_ltype ib = 0;
+        if (arity(S, node, 4, nm, scope)) {
+            ib = bytes_arg(S, arg_at(S, node, 0), scope, nm, true, false);
+            arg_of(S, arg_at(S, node, 1), scope, ib);
+            arg_of(S, arg_at(S, node, 2), scope, ib);
+            bytes_arg(S, arg_at(S, node, 3), scope, nm, true, false);
+        }
+        return set(S, node, ib);
+    }
     case LXB_DISPOSE:
         if (arity(S, node, 1, nm, scope)) {
             uint32_t a = arg_at(S, node, 0);
@@ -1202,7 +1287,8 @@ limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
         if (e && kind(S, e) == LIMBA_LTK_OPEN && !S->open_ok) {
             lxs_error(S, LXE_OPEN_ARRAY_PLACE, node,
                       "an array made by new is used through its elements, "
-                      "low, high, length and move: not as a whole");
+                      "low, high, length, move, translate, reverse and "
+                      "occurrences: not as a whole");
             return set(S, node, 0);
         }
         return set(S, node, e);

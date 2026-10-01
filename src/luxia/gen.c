@@ -284,7 +284,13 @@ enum {
     S_HNEW,
     S_HSET,
     S_MOVE,
-    S_HFREE
+    S_HFREE,
+    /* the routines of arrays (§ 9.5) on var^, from e, count fld:
+       reverse; translate through a table zN[j] = j * fn + args, declared
+       and filled before; writeln(occurrences(var^, e, fld, idx^)) */
+    S_REV,
+    S_TRANS,
+    S_OCC
 };
 
 typedef struct {
@@ -2571,6 +2577,47 @@ static uint32_t heap_move(G *g, uint32_t h, uint32_t d, v128 lo, v128 hi)
     return m;
 }
 
+/* a tract of h for reverse, translate and occurrences: from and count,
+   count -1..4 (lo..hi as heap_write), into the statement's e and fld */
+static uint32_t heap_tract(G *g, unsigned k, uint32_t h, v128 lo, v128 hi)
+{
+    unsigned ix = g->ty[g->ty[g->v[h].t].elem].index;
+    v128 n = fam(ix) == 'S' ? (v128)below(g, 6) - 1 : (v128)below(g, 5);
+    v128 f = some_index(g, ix, lo, hi);
+    if (lo <= hi && chance(g, 70)) {
+        /* inside: the routine is reached, its work seen */
+        v128 len = hi - lo + 1 < 4 ? hi - lo + 1 : 4;
+        n = (v128)below(g, (uint32_t)len + 1);
+        f = lo + (v128)below(g, (uint32_t)(hi - lo + 1 - n) + 1);
+    } else if (lo <= hi && n > hi - lo + 1 && chance(g, 80)) {
+        n = hi - lo + 1;
+    }
+    uint32_t from = lit(g, ix, f);
+    uint32_t count = lit(g, ix, n);
+    uint32_t m = new_s(g, k);
+    g->st[m].var = h;
+    g->st[m].e = from;
+    g->st[m].fld = count;
+    return m;
+}
+
+/* translate(h^, ...) through a table of j * K + C, h of Bytes */
+static uint32_t heap_trans(G *g, uint32_t h, v128 lo, v128 hi)
+{
+    uint32_t m = heap_tract(g, S_TRANS, h, lo, hi);
+    g->st[m].fn = chance(g, 30) ? 1 : below(g, 256);
+    g->st[m].args = below(g, 256);
+    return m;
+}
+
+/* writeln(occurrences(h^, from, count, d^)), h and d of Bytes */
+static uint32_t heap_occ(G *g, uint32_t h, uint32_t d, v128 lo, v128 hi)
+{
+    uint32_t m = heap_tract(g, S_OCC, h, lo, hi);
+    g->st[m].idx = d;
+    return m;
+}
+
 /* dispose(h), sometimes followed at once by a second dispose (invalid)
    or a read (dangling); into out, the count */
 static uint32_t heap_free(G *g, uint32_t h, uint32_t *out)
@@ -2593,7 +2640,8 @@ static uint32_t heap_free(G *g, uint32_t h, uint32_t *out)
 /* an array made by new (§ 3.10, § 9.7): declared with small bounds,
    filled, written, often moved within and disposed of; or on one in
    scope, an element set or written, a move between two of one type, a
-   dispose; into out, at most 11 */
+   dispose; reversed, and for Bytes translated and counted; into out, at
+   most 21 */
 static uint32_t heap_array(G *g, uint32_t *out)
 {
     uint32_t nh = 0, ht = 0;
@@ -2623,7 +2671,10 @@ static uint32_t heap_array(G *g, uint32_t *out)
         for (v128 i = lo; i <= hi && n < 6; i++) {
             if (chance(g, 20))
                 continue; /* without a value: a read of it is caught */
-            uint32_t idx = lit(g, ix, i), e = element_value(g, el);
+            /* Bytes of a few values: occurrences finds some */
+            uint32_t idx = lit(g, ix, i), e = el == T_B8 && chance(g, 70)
+                                                  ? lit(g, T_B8, below(g, 2))
+                                                  : element_value(g, el);
             uint32_t a = new_s(g, S_HSET);
             g->st[a].var = v;
             g->st[a].idx = idx;
@@ -2634,6 +2685,40 @@ static uint32_t heap_array(G *g, uint32_t *out)
         if (chance(g, 40)) {
             out[n++] = heap_move(g, v, v, lo, hi);
             out[n++] = heap_write(g, v, false, lo, hi);
+        }
+        if (chance(g, 30)) {
+            out[n++] = heap_tract(g, S_REV, v, lo, hi);
+            out[n++] = heap_write(g, v, false, lo, hi);
+        }
+        if (el == T_B8 && chance(g, 50)) {
+            out[n++] = heap_trans(g, v, lo, hi);
+            out[n++] = heap_write(g, v, false, lo, hi);
+        }
+        if (el == T_B8 && chance(g, 50)) {
+            /* the pattern: the array itself, or a new one of 0 to 3
+               Bytes, so that occurrences overlap or the pattern is
+               empty */
+            uint32_t pv = v;
+            if (chance(g, 70)) {
+                v128 plo = lo, phi = lo + (v128)below(g, 4) - 1;
+                if (phi < tmin(ix))
+                    phi = plo;
+                pv = new_v(g, ht, V_LOCAL);
+                uint32_t ps = new_s(g, S_HNEW);
+                g->st[ps].var = pv;
+                g->st[ps].e = lit(g, ix, plo);
+                g->st[ps].e2 = lit(g, ix, phi);
+                show(g, pv);
+                out[n++] = ps;
+                for (v128 i = plo; i <= phi; i++) {
+                    uint32_t a = new_s(g, S_HSET);
+                    g->st[a].var = pv;
+                    g->st[a].idx = lit(g, ix, i);
+                    g->st[a].e = lit(g, T_B8, below(g, 2));
+                    out[n++] = a;
+                }
+            }
+            out[n++] = heap_occ(g, v, pv, lo, hi);
         }
         if (chance(g, 30))
             n += heap_free(g, v, out + n);
@@ -2657,6 +2742,15 @@ static uint32_t heap_array(G *g, uint32_t *out)
     }
     if (c < 8) {
         out[0] = heap_move(g, (uint32_t)h, (uint32_t)pick_heap(g, ht), 1, 0);
+        return 1;
+    }
+    if (c < 9 && chance(g, 50)) {
+        if (el == T_B8 && chance(g, 50))
+            out[0] = heap_trans(g, (uint32_t)h, 1, 0);
+        else if (el == T_B8)
+            out[0] = heap_occ(g, (uint32_t)h, (uint32_t)pick_heap(g, ht), 1, 0);
+        else
+            out[0] = heap_tract(g, S_REV, (uint32_t)h, 1, 0);
         return 1;
     }
     return heap_free(g, (uint32_t)h, out);
@@ -3149,7 +3243,7 @@ static uint32_t block(G *g, int n, uint32_t *count)
     uint32_t *x = NULL, nx = 0, cap = 0;
     g->nesting++;
     for (int i = 0; i < n && g->budget > 0; i++) {
-        uint32_t some[12];
+        uint32_t some[24];
         uint32_t k = stmt(g, some);
         for (uint32_t j = 0; j < k; j++) {
             LIMBA_GROW(x, nx, cap);
@@ -3904,6 +3998,42 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         pexpr(g, o, s.e2);
         put(o, ", ");
         pexpr(g, o, s.fld);
+        put(o, ");\n");
+        break;
+    case S_REV:
+    case S_TRANS:
+    case S_OCC:
+        if (s.k == S_TRANS) {
+            /* the table first, in its own lines */
+            putf(o, "var z%u: array[Byte] of Byte;\n", si);
+            indent(o, ind);
+            putf(o, "for var j%u := low(z%u) to high(z%u) do\n", si, si, si);
+            indent(o, ind + 1);
+            putf(o, "z%u[j%u] := j%u * %u + %u;\n", si, si, si, s.fn, s.args);
+            indent(o, ind);
+            put(o, "end;\n");
+            indent(o, ind);
+        }
+        if (s.k == S_OCC)
+            put(o, "writeln(");
+        /* nil, dangling, range and index at the name */
+        g->st[si].line = o->line;
+        g->st[si].col = o->col;
+        put(o, s.k == S_REV     ? "reverse("
+               : s.k == S_TRANS ? "translate("
+                                : "occurrences(");
+        put_name(o, g, s.var);
+        put(o, "^, ");
+        pexpr(g, o, s.e);
+        put(o, ", ");
+        pexpr(g, o, s.fld);
+        if (s.k == S_TRANS) {
+            putf(o, ", z%u", si);
+        } else if (s.k == S_OCC) {
+            put(o, ", ");
+            put_name(o, g, s.idx);
+            put(o, "^)");
+        }
         put(o, ");\n");
         break;
     case S_HALT:
@@ -5298,6 +5428,76 @@ static int run_stmt(X *x, uint32_t si)
                     (size_t)count * sizeof(v128));
         return X_NEXT;
     }
+    case S_REV:
+    case S_TRANS:
+    case S_OCC: {
+        /* from the left: the array (nil, dangling), from, count, the
+           pattern of occurrences (nil, dangling); count < 0 a range
+           error, the tract inside the array unless count is 0, an empty
+           pattern a range error */
+        unsigned ix = g->ty[g->ty[g->v[s->var].t].elem].index;
+        struct xh *a = heap_at(x, s->var, s->line, s->col);
+        if (!a)
+            return X_RET;
+        uint32_t ah = (uint32_t)(a - x->harr);
+        v128 from = ev(x, s->e);
+        v128 count = x->trap ? 0 : ev(x, s->fld);
+        if (x->trap)
+            return X_RET;
+        uint32_t ph = 0;
+        if (s->k == S_OCC) {
+            struct xh *p = heap_at(x, s->idx, s->line, s->col);
+            if (!p)
+                return X_RET;
+            ph = (uint32_t)(p - x->harr);
+        }
+        a = &x->harr[ah];
+        if (fam(ix) == 'S' && count < 0) {
+            stop(x, 101, s->line, s->col);
+            return X_RET;
+        }
+        if (count > 0 &&
+            !(from >= a->lo && from <= a->hi && count - 1 <= a->hi - from)) {
+            stop(x, 100, s->line, s->col);
+            return X_RET;
+        }
+        /* no address of a cell when the tract is empty: hcell may be
+           NULL */
+        v128 *c = count > 0 ? &x->hcell[a->first + (from - a->lo)] : NULL;
+        if (s->k == S_REV) {
+            for (v128 i = 0, j = count - 1; i < j; i++, j--) {
+                v128 t = c[i];
+                c[i] = c[j];
+                c[j] = t;
+            }
+        } else if (s->k == S_TRANS) {
+            for (v128 i = 0; i < count; i++)
+                c[i] = (c[i] * (v128)s->fn + (v128)s->args) & 255;
+        } else {
+            const struct xh *p = &x->harr[ph];
+            v128 m = p->hi - p->lo + 1;
+            if (m < 1) {
+                stop(x, 101, s->line, s->col);
+                return X_RET;
+            }
+            const v128 *q = &x->hcell[p->first];
+            v128 found = 0;
+            for (v128 i = 0; c && i + m <= count;) {
+                v128 k = 0;
+                while (k < m && c[i + k] == q[k])
+                    k++;
+                if (k == m) {
+                    found++;
+                    i += m;
+                } else {
+                    i++;
+                }
+            }
+            print_value(g, &x->out, ix, found);
+            put(&x->out, "\n");
+        }
+        return X_NEXT;
+    }
     case S_HFREE: {
         v128 pv = x->cell[x->ref[s->var]];
         if (!pv)
@@ -5448,7 +5648,8 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
        (§ 3.10, § 9.7) */
     for (uint32_t k = 0, n = below(&g, 3); k < n; k++) {
         unsigned ix = int_type(&g);
-        uint32_t el = counted_or_var(&g, 20);
+        /* Bytes often, for translate and occurrences (§ 9.5) */
+        uint32_t el = chance(&g, 35) ? T_B8 : counted_or_var(&g, 20);
         uint32_t ot = new_type(
             &g, (xt){K_OPEN, (uint8_t)base(&g, el), ix, el, 0, 0, 0, 0});
         new_type(&g, (xt){K_HEAP, T_BOOL, 0, ot, 0, 0, 0, 0});

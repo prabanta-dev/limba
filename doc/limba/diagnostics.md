@@ -1028,9 +1028,10 @@ cannot have it. `range <>` outside the index of an array gives "'range
 <>' is the index of an array parameter only" (§ 3.7.1). The same code
 reports `new(A)` without the bounds of an open array ("an open array
 needs the bounds of its index: new(A range low..high)") and an array
-made by `new` used as a whole, outside `low`, `high`, `length` and
-`move` ("an array made by new is used through its elements, low, high,
-length and move: not as a whole", § 3.10).
+made by `new` used as a whole, outside `low`, `high`, `length`,
+`move`, `translate`, `reverse` and `occurrences` ("an array made by new
+is used through its elements, low, high, length, move, translate,
+reverse and occurrences: not as a whole", § 3.10).
 
 ```pascal
 program p;

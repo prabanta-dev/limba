@@ -158,6 +158,9 @@ static const struct {
     {"newcstring", LXB_NEWCSTRING},
     {"cvalue", LXB_CVALUE},
     {"freecstring", LXB_FREECSTRING},
+    {"translate", LXB_TRANSLATE},
+    {"reverse", LXB_REVERSE},
+    {"occurrences", LXB_OCCURRENCES},
 };
 
 /* the C types by name, in the order of csym (§ 3.13) */

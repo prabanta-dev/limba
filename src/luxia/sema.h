@@ -97,6 +97,9 @@ enum {
     LXB_NEWCSTRING,
     LXB_CVALUE,
     LXB_FREECSTRING,
+    LXB_TRANSLATE,
+    LXB_REVERSE,
+    LXB_OCCURRENCES,
 };
 
 /* a constant: every number and discrete value is a rational (integers,
@@ -137,7 +140,8 @@ typedef struct {
        --suppress), LXS_CHECK_* bits; the pragmas add to them */
     unsigned suppress;
     /* p^ of an array created by new may be read here as a whole: the
-       argument of low, high, length and move (§ 3.10) */
+       argument of low, high, length, move, translate, reverse and
+       occurrences (§ 3.10) */
     bool open_ok;
     /* the boundary with C (§ 3.13, § 8.5, § 10.4): the platform of the C
        types by name (set before limba_lxs_check); no external routine
