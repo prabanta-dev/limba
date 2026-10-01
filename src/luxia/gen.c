@@ -290,7 +290,16 @@ enum {
        and filled before; writeln(occurrences(var^, e, fld, idx^)) */
     S_REV,
     S_TRANS,
-    S_OCC
+    S_OCC,
+    /* the standard streams in blocks (§ 9.1, § 9.2), from e, count fld:
+       writeln(readbytes(var^, ...)) and writebytes(var^, ...) of an array
+       of Bytes made by new; writebytes(var, ...) of a String;
+       writeln(readbytes(zN, e, fld)) of an array zN: array[Int32 range
+       1..4] of Byte declared before, the tract inside */
+    S_RDB,
+    S_WRB,
+    S_WRS,
+    S_RDZ
 };
 
 typedef struct {
@@ -1705,19 +1714,21 @@ static uint32_t char_expr(G *g, int d, bool need_var)
     return i;
 }
 
-/* halt(0) or halt(k), k in 2..255; or a status at an edge (-1, 0, 1, 2,
-   255, 256) through a variable, which is no constant: 1 and those out of
-   0..255 are a range error at the name. Into out, the count */
+/* halt(0) or halt(k), k in 2..255 but 141; or a status at an edge (-1,
+   0, 1, 2, 141, 255, 256) through a variable, which is no constant: 1,
+   141 and those out of 0..255 are a range error at the name. Into out,
+   the count */
 static uint32_t halt_stmt(G *g, uint32_t *out)
 {
     uint32_t n = 0, e;
     if (chance(g, 50)) {
-        e = lit(g, T_I32, chance(g, 30) ? 0 : 2 + below(g, 254));
+        uint32_t k = chance(g, 30) ? 0 : 2 + below(g, 253);
+        e = lit(g, T_I32, k < 141 ? k : k + 1);
     } else {
-        static const int edge[] = {-1, 0, 1, 2, 255, 256};
+        static const int edge[] = {-1, 0, 1, 2, 141, 255, 256};
         uint32_t v = new_v(g, T_I32, V_LOCAL);
         uint32_t d = new_s(g, S_VAR);
-        uint32_t k = lit(g, T_I32, edge[below(g, 6)]);
+        uint32_t k = lit(g, T_I32, edge[below(g, 7)]);
         g->st[d].var = v;
         g->st[d].e = k;
         show(g, v);
@@ -2577,7 +2588,8 @@ static uint32_t heap_move(G *g, uint32_t h, uint32_t d, v128 lo, v128 hi)
     return m;
 }
 
-/* a tract of h for reverse, translate and occurrences: from and count,
+/* a tract of h for reverse, translate, occurrences, readbytes and
+   writebytes: from and count,
    count -1..4 (lo..hi as heap_write), into the statement's e and fld */
 static uint32_t heap_tract(G *g, unsigned k, uint32_t h, v128 lo, v128 hi)
 {
@@ -2618,6 +2630,35 @@ static uint32_t heap_occ(G *g, uint32_t h, uint32_t d, v128 lo, v128 hi)
     return m;
 }
 
+/* writebytes(s, from, count) of a String variable s in scope: mostly
+   from 1..2 and count 0..2, inside most Strings, so that the bytes are
+   seen; else from 0..5 and count -1..4 around its length; 0 if there is
+   none */
+static uint32_t str_bytes(G *g)
+{
+    int sv = pick_var(g, T_STR, false, false);
+    if (sv < 0)
+        return 0;
+    uint32_t m = new_s(g, S_WRS);
+    g->st[m].var = (uint32_t)sv;
+    bool inside = chance(g, 70);
+    g->st[m].e = lit(g, T_I64, inside ? 1 + below(g, 2) : below(g, 6));
+    g->st[m].fld = lit(g, T_I64, inside ? below(g, 3) : (v128)below(g, 6) - 1);
+    return m;
+}
+
+/* writeln(readbytes(zN, from, count)) of a local array of 4 Bytes, the
+   tract inside: the input read in blocks often, whatever the program
+   holds */
+static uint32_t local_read(G *g)
+{
+    unsigned f = 1 + below(g, 2);
+    uint32_t m = new_s(g, S_RDZ);
+    g->st[m].e = lit(g, T_I32, f);
+    g->st[m].fld = lit(g, T_I32, below(g, 6 - f));
+    return m;
+}
+
 /* dispose(h), sometimes followed at once by a second dispose (invalid)
    or a read (dangling); into out, the count */
 static uint32_t heap_free(G *g, uint32_t h, uint32_t *out)
@@ -2640,8 +2681,8 @@ static uint32_t heap_free(G *g, uint32_t h, uint32_t *out)
 /* an array made by new (§ 3.10, § 9.7): declared with small bounds,
    filled, written, often moved within and disposed of; or on one in
    scope, an element set or written, a move between two of one type, a
-   dispose; reversed, and for Bytes translated and counted; into out, at
-   most 21 */
+   dispose; reversed, and for Bytes translated, counted, read and
+   written; into out, at most 24 */
 static uint32_t heap_array(G *g, uint32_t *out)
 {
     uint32_t nh = 0, ht = 0;
@@ -2720,6 +2761,12 @@ static uint32_t heap_array(G *g, uint32_t *out)
             }
             out[n++] = heap_occ(g, v, pv, lo, hi);
         }
+        if (el == T_B8 && chance(g, 50)) {
+            out[n++] = heap_tract(g, S_RDB, v, lo, hi);
+            out[n++] = heap_write(g, v, false, lo, hi);
+        }
+        if (el == T_B8 && chance(g, 50))
+            out[n++] = heap_tract(g, S_WRB, v, lo, hi);
         if (chance(g, 30))
             n += heap_free(g, v, out + n);
         return n;
@@ -2745,10 +2792,13 @@ static uint32_t heap_array(G *g, uint32_t *out)
         return 1;
     }
     if (c < 9 && chance(g, 50)) {
-        if (el == T_B8 && chance(g, 50))
+        unsigned w = el == T_B8 ? below(g, 4) : 4;
+        if (w == 0)
             out[0] = heap_trans(g, (uint32_t)h, 1, 0);
-        else if (el == T_B8)
+        else if (w == 1)
             out[0] = heap_occ(g, (uint32_t)h, (uint32_t)pick_heap(g, ht), 1, 0);
+        else if (w < 4)
+            out[0] = heap_tract(g, w == 2 ? S_RDB : S_WRB, (uint32_t)h, 1, 0);
         else
             out[0] = heap_tract(g, S_REV, (uint32_t)h, 1, 0);
         return 1;
@@ -2790,8 +2840,8 @@ static uint32_t stmt(G *g, uint32_t *out)
             return copy_call(g, (uint32_t)fn, (uint32_t)d, !pure, out);
     }
     if (!pure && chance(g, 1)) {
-        /* halt(0), halt(k) for k in 2..255, or a computed status that may
-           be outside */
+        /* halt(0), halt(k) for k in 2..255 but 141, or a computed status
+           that may be outside */
         return halt_stmt(g, out);
     }
     if (!pure && chance(g, 4))
@@ -2803,6 +2853,17 @@ static uint32_t stmt(G *g, uint32_t *out)
     }
     if (!pure && chance(g, 8)) {
         uint32_t s = read_write(g);
+        if (s) {
+            out[0] = s;
+            return 1;
+        }
+    }
+    if (!pure && chance(g, 4)) {
+        out[0] = local_read(g);
+        return 1;
+    }
+    if (!pure && chance(g, 10)) {
+        uint32_t s = str_bytes(g);
         if (s) {
             out[0] = s;
             return 1;
@@ -3243,7 +3304,7 @@ static uint32_t block(G *g, int n, uint32_t *count)
     uint32_t *x = NULL, nx = 0, cap = 0;
     g->nesting++;
     for (int i = 0; i < n && g->budget > 0; i++) {
-        uint32_t some[24];
+        uint32_t some[32];
         uint32_t k = stmt(g, some);
         for (uint32_t j = 0; j < k; j++) {
             LIMBA_GROW(x, nx, cap);
@@ -4036,6 +4097,34 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         }
         put(o, ");\n");
         break;
+    case S_RDZ:
+        putf(o, "var z%u: array[Int32 range 1..4] of Byte;\n", si);
+        indent(o, ind);
+        put(o, "writeln(");
+        g->st[si].line = o->line;
+        g->st[si].col = o->col;
+        putf(o, "readbytes(z%u, ", si);
+        pexpr(g, o, s.e);
+        put(o, ", ");
+        pexpr(g, o, s.fld);
+        put(o, "));\n");
+        break;
+    case S_RDB:
+    case S_WRB:
+    case S_WRS:
+        if (s.k == S_RDB)
+            put(o, "writeln(");
+        /* nil, dangling, range and index at the name */
+        g->st[si].line = o->line;
+        g->st[si].col = o->col;
+        put(o, s.k == S_RDB ? "readbytes(" : "writebytes(");
+        put_name(o, g, s.var);
+        put(o, s.k == S_WRS ? ", " : "^, ");
+        pexpr(g, o, s.e);
+        put(o, ", ");
+        pexpr(g, o, s.fld);
+        put(o, s.k == S_RDB ? "));\n" : ");\n");
+        break;
     case S_HALT:
         put(o, "halt(");
         pexpr(g, o, s.e);
@@ -4191,8 +4280,12 @@ typedef struct {
     uint32_t line, col;
     uint64_t steps;
     v128 ret;
-    uint32_t rt;   /* the type of the result of the running function */
-    uint32_t next; /* the line of the input readline reads next */
+    uint32_t rt; /* the type of the result of the running function */
+    /* the input, which readline and readbytes read from inpos; in_end:
+       its end met, final (§ 9.2) */
+    const char *in;
+    size_t inlen, inpos;
+    bool in_end;
 } X;
 
 static v128 wrap(unsigned t, v128 v)
@@ -4880,10 +4973,21 @@ static v128 ev(X *x, uint32_t i)
         return 1;
     }
     case E_READ: {
-        /* the next line, without its end; past the last, "" and false */
-        bool more = x->next < g->nline;
-        x->cell[x->ref[e->var]] = more ? g->line[x->next++] : 0;
-        return more;
+        /* the next line, without its LF or CR LF; at the end "" and
+           false, and the end is final */
+        if (x->in_end || x->inpos == x->inlen) {
+            x->in_end = true;
+            x->cell[x->ref[e->var]] = 0;
+            return 0;
+        }
+        const char *b = x->in + x->inpos;
+        const char *nl = memchr(b, '\n', x->inlen - x->inpos);
+        size_t n = nl ? (size_t)(nl - b) : x->inlen - x->inpos;
+        x->inpos += n + (nl != NULL);
+        if (n && b[n - 1] == '\r')
+            n--;
+        x->cell[x->ref[e->var]] = run_str(x, b, n);
+        return 1;
     }
     case E_ARGC:
         return g->narg;
@@ -5498,6 +5602,91 @@ static int run_stmt(X *x, uint32_t si)
         }
         return X_NEXT;
     }
+    case S_RDB:
+    case S_WRB: {
+        /* from the left: the array (nil, dangling), from, count; count <
+           0 a range error, the tract inside the array unless count is 0;
+           then up to count bytes of the input, fewer only at its end,
+           which is final; or the bytes written as they are */
+        unsigned ix = g->ty[g->ty[g->v[s->var].t].elem].index;
+        struct xh *a = heap_at(x, s->var, s->line, s->col);
+        if (!a)
+            return X_RET;
+        uint32_t ah = (uint32_t)(a - x->harr);
+        v128 from = ev(x, s->e);
+        v128 count = x->trap ? 0 : ev(x, s->fld);
+        if (x->trap)
+            return X_RET;
+        a = &x->harr[ah];
+        if (fam(ix) == 'S' && count < 0) {
+            stop(x, 101, s->line, s->col);
+            return X_RET;
+        }
+        if (count > 0 &&
+            !(from >= a->lo && from <= a->hi && count - 1 <= a->hi - from)) {
+            stop(x, 100, s->line, s->col);
+            return X_RET;
+        }
+        v128 *c = count > 0 ? &x->hcell[a->first + (from - a->lo)] : NULL;
+        if (s->k == S_WRB) {
+            for (v128 i = 0; i < count; i++) {
+                char b = (char)(uint8_t)c[i];
+                putn(&x->out, &b, 1);
+            }
+            return X_NEXT;
+        }
+        v128 got = 0;
+        if (count > 0 && !x->in_end) {
+            size_t left = x->inlen - x->inpos;
+            got = (v128)left < count ? (v128)left : count;
+            for (v128 i = 0; i < got; i++)
+                c[i] = (uint8_t)x->in[x->inpos++];
+            x->in_end = got < count;
+        }
+        print_value(g, &x->out, ix, got);
+        put(&x->out, "\n");
+        return X_NEXT;
+    }
+    case S_RDZ: {
+        /* the tract inside zN: up to count bytes of the input, fewer
+           only at its end, which is final; how many, written */
+        v128 count = ev(x, s->fld);
+        if (x->trap)
+            return X_RET;
+        v128 got = 0;
+        if (count > 0 && !x->in_end) {
+            size_t left = x->inlen - x->inpos;
+            got = (v128)left < count ? (v128)left : count;
+            x->inpos += (size_t)got;
+            x->in_end = got < count;
+        }
+        print_value(g, &x->out, T_I32, got);
+        put(&x->out, "\n");
+        return X_NEXT;
+    }
+    case S_WRS: {
+        /* writebytes(s, from, count): from and count Int64, the String
+           from 1 */
+        v128 from = ev(x, s->e);
+        v128 count = x->trap ? 0 : ev(x, s->fld);
+        if (x->trap)
+            return X_RET;
+        /* after: a string made by the run may move the table */
+        const struct xstr *t = &g->str[x->cell[x->ref[s->var]]];
+        v128 len = (v128)t->n;
+        if (count < 0) {
+            stop(x, 101, s->line, s->col);
+            return X_RET;
+        }
+        if (count > 0 &&
+            !(from >= 1 && from <= len && count - 1 <= len - from)) {
+            stop(x, 100, s->line, s->col);
+            return X_RET;
+        }
+        if (count > 0)
+            putn(&x->out, t->b + (from - 1), (size_t)count);
+        return X_NEXT;
+    }
     case S_HFREE: {
         v128 pv = x->cell[x->ref[s->var]];
         if (!pv)
@@ -5512,11 +5701,12 @@ static int run_stmt(X *x, uint32_t si)
         return X_NEXT;
     }
     case S_HALT: {
-        /* 0 or 2..255, checked at the name: 1 is for the errors (§ 9) */
+        /* 0 or 2..255 but 141, checked at the name: 1 is for the
+           errors, 141 for a closed output (§ 9.8) */
         v128 v = ev(x, s->e);
         if (x->trap)
             return X_RET;
-        if (v == 1 || v < 0 || v > 255) {
+        if (v == 1 || v == 141 || v < 0 || v > 255) {
             stop(x, 101, s->line, s->col);
             return X_RET;
         }
@@ -5880,6 +6070,14 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
     for (uint32_t v = 0; v < nglob; v++)
         if (!is_array(&g, g.v[v].t) && !is_record(&g, g.v[v].t))
             x.cell[x.ref[v]] = g.e[g.st[v].e].lit;
+    text in = {NULL, 0, 0, 1, 1};
+    for (uint32_t k = 0; k < g.nline; k++) {
+        putn(&in, g.str[g.line[k]].b, g.str[g.line[k]].n);
+        if (k + 1 < g.nline || g.nl_end)
+            put(&in, "\n");
+    }
+    x.in = in.b;
+    x.inlen = in.n;
     run_block(&x, g.main_blk, g.main_n);
     bool ok = !x.toolong;
     if (ok) {
@@ -5890,14 +6088,9 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
         p->out = x.out.b;
         p->outlen = x.out.n;
         x.out.b = NULL;
-        text in = {NULL, 0, 0, 1, 1};
-        for (uint32_t k = 0; k < g.nline; k++) {
-            putn(&in, g.str[g.line[k]].b, g.str[g.line[k]].n);
-            if (k + 1 < g.nline || g.nl_end)
-                put(&in, "\n");
-        }
         p->in = in.b;
         p->inlen = in.n;
+        in.b = NULL;
         p->argc = (int)g.narg;
         p->argv = limba_xcalloc(g.narg + 1, sizeof(char *));
         for (uint32_t k = 0; k < g.narg; k++) {
@@ -5919,6 +6112,7 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
             snprintf(p->end, sizeof(p->end), "ok");
     }
     free(src.b);
+    free(in.b);
     free(x.out.b);
     free(x.cell);
     free(x.ref);

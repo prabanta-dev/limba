@@ -83,6 +83,7 @@ typedef struct {
     bool armed;
     estr **sconst; /* the string of each sconst, made once: immortal */
     bool checked;  /* the counts checked once, at the end or at a stop */
+    bool in_end;   /* the end of the input met: final (luxia_0.md § 9.2) */
 } E;
 
 /* the run has a thread of its own, with a stack for max_depth calls of
@@ -743,7 +744,13 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_READ_LINE: {
         char *line = NULL;
         size_t cap = 0;
-        ssize_t got = e->lim.in ? getline(&line, &cap, e->lim.in) : -1;
+        ssize_t got =
+            e->lim.in && !e->in_end ? getline(&line, &cap, e->lim.in) : -1;
+        if (got < 0 && e->lim.in && ferror(e->lim.in)) {
+            free(line);
+            return trap(e, LIMBA_TRAP_IO); /* never the end */
+        }
+        e->in_end |= got < 0;
         bool ok = got >= 0;
         size_t len = ok ? (size_t)got : 0;
         if (len && line[len - 1] == '\n')
@@ -754,6 +761,30 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         free(line);
         *r = ok;
         return mem_store(e, a[0], LIMBA_T_STR, s);
+    }
+    case LIMBA_RT_IO_READ:
+    case LIMBA_RT_IO_WRITE: {
+        /* the tract checked before, in the IR; the input is the stream
+           of read_line, the output that of print_* */
+        uint8_t *p = (uint8_t *)(uintptr_t)a[0];
+        int64_t n = (int64_t)a[1];
+        if (n < 0 || (n && !p))
+            return bad_module(e);
+        if (n && e->lim.check_mem && !no_str(e, (uintptr_t)p, (size_t)n))
+            return false;
+        if (rt == LIMBA_RT_IO_WRITE) {
+            limba_w_bytes(&e->out, p, (size_t)n);
+            return true;
+        }
+        size_t got = 0;
+        if (n && e->lim.in && !e->in_end) {
+            got = fread(p, 1, (size_t)n, e->lim.in);
+            if (got < (size_t)n && ferror(e->lim.in))
+                return trap(e, LIMBA_TRAP_IO); /* never the end */
+            e->in_end = got < (size_t)n;
+        }
+        *r = got;
+        return true;
     }
     case LIMBA_RT_STR_TO_I64:
     case LIMBA_RT_STR_TO_U64: {

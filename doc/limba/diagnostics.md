@@ -89,9 +89,11 @@ the quickest way to have a source checked.
 
 This document covers the errors found at compile time. The errors found
 while the program runs (overflow, index, range, `nil`, division by zero,
-conversion, shift count) are a separate matter: they stop the program
-with a message such as `luxia: index out of range at prog.luxia:12:5` and
-exit status 1, and they are described in § 10 of the specification.
+conversion, shift count, an error of input or output) are a separate
+matter: they stop the program with a message such as `luxia: index out
+of range at prog.luxia:12:5` and exit status 1, and they are described in
+§ 10 of the specification. An output closed by its reader ends the
+program without a message and with exit status 141.
 
 ## Lexical errors
 
@@ -986,9 +988,10 @@ prog.luxia:4:3: error[L0046]: only a function returns a value
 
 ### L0055 — HALT CODE
 
-The exit status given to `halt` is 0 or 2..255: 1 is reserved for the
-run-time errors. A constant outside these values is a compile-time error;
-a computed one is checked at run time (§ 9.8).
+The exit status given to `halt` is 0 or 2..255 except 141: 1 is reserved
+for the run-time errors, 141 for an output closed by its reader (§ 10.1).
+A constant outside these values is a compile-time error; a computed one
+is checked at run time (§ 9.8).
 
 ```pascal
 program p;
@@ -998,7 +1001,7 @@ end.
 ```
 
 ```
-prog.luxia:3:8: error[L0055]: an exit status is 0 or 2..255: 1 is kept for the errors at run time
+prog.luxia:3:8: error[L0055]: an exit status is 0 or 2..255 but 141: 1 is kept for the errors at run time, 141 for a closed output
 ```
 
 ## Where a construct is allowed
@@ -1029,9 +1032,10 @@ cannot have it. `range <>` outside the index of an array gives "'range
 reports `new(A)` without the bounds of an open array ("an open array
 needs the bounds of its index: new(A range low..high)") and an array
 made by `new` used as a whole, outside `low`, `high`, `length`,
-`move`, `translate`, `reverse` and `occurrences` ("an array made by new
-is used through its elements, low, high, length, move, translate,
-reverse and occurrences: not as a whole", § 3.10).
+`move`, `translate`, `reverse`, `occurrences`, `readbytes` and
+`writebytes` ("an array made by new is used through its elements, low,
+high, length, move, translate, reverse, occurrences, readbytes and
+writebytes: not as a whole", § 3.10).
 
 ```pascal
 program p;
@@ -1344,7 +1348,7 @@ prog.luxia:3:1: error[L0062]: the convention is C: 'pragma convention(c, R)', R 
 | L0052 | MISSING_RETURN | a path out of a function without `return` |
 | L0053 | UNASSIGNED | a variable read before any assignment |
 | L0054 | UNSUPPORTED | valid, not yet translated |
-| L0055 | HALT_CODE | `halt` with 1 or outside 0..255 |
+| L0055 | HALT_CODE | `halt` with 1, 141 or outside 0..255 |
 | L0056 | OUT_UNASSIGNED | an `out` parameter left without a value |
 | L0057 | PRAGMA_NAME | a pragma that is not `suppress`, `unsuppress`, `convention` or `restrictions` |
 | L0058 | CHECK_NAME | a check that has no such name |

@@ -161,6 +161,8 @@ static const struct {
     {"translate", LXB_TRANSLATE},
     {"reverse", LXB_REVERSE},
     {"occurrences", LXB_OCCURRENCES},
+    {"readbytes", LXB_READBYTES},
+    {"writebytes", LXB_WRITEBYTES},
 };
 
 /* the C types by name, in the order of csym (§ 3.13) */

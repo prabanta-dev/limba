@@ -691,9 +691,9 @@ static limba_ltype arg_of(limba_lxs *S, uint32_t a, uint32_t scope,
     return want ? want : t;
 }
 
-/* an argument of translate or occurrences: an array of Byte (or of what
-   new made), or a String if string_ok; written if write. The base type of
-   its index, 0 if it is none of them */
+/* an argument of translate, occurrences, readbytes or writebytes: an
+   array of Byte (or of what new made), or a String if string_ok; written
+   if write. The base type of its index, 0 if it is none of them */
 static limba_ltype bytes_arg(limba_lxs *S, uint32_t a, uint32_t scope,
                              const char *nm, bool string_ok, bool write)
 {
@@ -1060,6 +1060,20 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         }
         return set(S, node, ib);
     }
+    case LXB_READBYTES:
+    case LXB_WRITEBYTES: {
+        /* readbytes(a, from, count): a of Bytes, written; how many read,
+           of the index base. writebytes(a, from, count): a of Bytes or a
+           String, read (§ 9.1, § 9.2) */
+        bool rd = id == LXB_READBYTES;
+        limba_ltype ib = 0;
+        if (arity(S, node, 3, nm, scope)) {
+            ib = bytes_arg(S, arg_at(S, node, 0), scope, nm, !rd, rd);
+            arg_of(S, arg_at(S, node, 1), scope, ib);
+            arg_of(S, arg_at(S, node, 2), scope, ib);
+        }
+        return set(S, node, rd ? ib : S->ts.void_);
+    }
     case LXB_DISPOSE:
         if (arity(S, node, 1, nm, scope)) {
             uint32_t a = arg_at(S, node, 0);
@@ -1133,13 +1147,15 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         if (arity(S, node, 1, nm, scope)) {
             uint32_t a = arg_at(S, node, 0);
             arg_of(S, a, scope, S->ty_int[2]);
-            /* 1 is the status of the errors at run time (§ 9) */
+            /* 1 is the status of the errors at run time, 141 that of a
+               closed output (§ 9.8, § 10.1) */
             __int128 k;
             if (S->val[a] && lxs_value_to_int(S, S->val[a], &k) &&
-                (k == 1 || k < 0 || k > 255))
+                (k == 1 || k == 141 || k < 0 || k > 255))
                 lxs_error(S, LXE_HALT_CODE, a,
-                          "an exit status is 0 or 2..255: 1 is kept for the "
-                          "errors at run time");
+                          "an exit status is 0 or 2..255 but 141: 1 is kept "
+                          "for the errors at run time, 141 for a closed "
+                          "output");
         }
         return set(S, node, S->ts.void_);
     }
@@ -1287,8 +1303,9 @@ limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
         if (e && kind(S, e) == LIMBA_LTK_OPEN && !S->open_ok) {
             lxs_error(S, LXE_OPEN_ARRAY_PLACE, node,
                       "an array made by new is used through its elements, "
-                      "low, high, length, move, translate, reverse and "
-                      "occurrences: not as a whole");
+                      "low, high, length, move, translate, reverse, "
+                      "occurrences, readbytes and writebytes: not as a "
+                      "whole");
             return set(S, node, 0);
         }
         return set(S, node, e);

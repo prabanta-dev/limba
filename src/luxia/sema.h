@@ -100,6 +100,8 @@ enum {
     LXB_TRANSLATE,
     LXB_REVERSE,
     LXB_OCCURRENCES,
+    LXB_READBYTES,
+    LXB_WRITEBYTES,
 };
 
 /* a constant: every number and discrete value is a rational (integers,

@@ -81,7 +81,12 @@ Some of its rules:
   counted Strings, ranges, enumerations, records, arrays (fixed, with
   computed bounds, open, made by `new`), pointers with `nil` and dangling
   checks, routines with `in`, `var` and `out` parameters, functions
-  returning records and arrays. Every error has a stable code
+  returning records and arrays, integers of arbitrary precision
+  (`BigInt`), calls to C. Its library writes and reads the standard
+  streams by line and in blocks of bytes (`readbytes`, `writebytes`), and
+  works on arrays of bytes as Python does in C (`move`, `translate`,
+  `reverse`, `occurrences`); an error of input or output is never
+  ignored. Every error has a stable code
   ([`doc/limba/diagnostics.md`](doc/limba/diagnostics.md)).
 - **The IR**, its text and binary forms, a verifier, and the optimiser:
   inlining of short functions, CFG simplification, constant folding,
@@ -217,14 +222,14 @@ Done:
 - [x] The nine single-thread benchmarks run with the expected output
 - [x] Random programs for the IR and for Luxia, OPTDIFF on both
 - [x] Optimisation: folding, GVN, LICM, inlining
+- [x] An integer type of arbitrary precision in Luxia
+- [x] A public API of the front end, for a single executable that
+      compiles and runs in memory
 
 Next:
 
-- [ ] An integer type of arbitrary precision in Luxia
 - [ ] More optimisation: promotion of memory to registers, removal of
       checks that range analysis proves useless
-- [ ] A public API of the front end, for a single executable that
-      compiles and runs in memory
 - [ ] **Meri**, the back end: a register-based virtual machine, then AOT
       and JIT compilation
 - [ ] **Luxia 1**: modules, exceptions, types for hardware (bit layouts,

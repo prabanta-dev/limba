@@ -10,12 +10,17 @@
  * A trap of the program is first presented as its language words it (the
  * module's prefix and messages, progetto_ir.md § 4): "luxia: index out of
  * range at prog.luxia:12:5"; a module without a language gets "lir_run".
+ * The output is written at the end: an error there, after a run that did
+ * not stop on its own error, is the trap IO without a position; a closed
+ * output (EPIPE) ends with status 141 and no message (luxia_0.md § 10.1).
  */
 #include "eval/eval.h"
 #include "limba/ir.h"
 #include "limba/opt.h"
 
+#include <errno.h>
 #include <inttypes.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,8 +85,21 @@ int main(int argc, char **argv)
     limba_eval_limits lim = {
         0, 0, argc - first_arg, argv + first_arg, stdin, check_mem, 0};
     limba_eval(m, entry, &lim, &r);
-    fwrite(r.out, 1, r.outlen, stdout);
-    fflush(stdout);
+    signal(SIGPIPE, SIG_IGN); /* a closed output is EPIPE */
+    errno = 0;
+    bool written =
+        fwrite(r.out, 1, r.outlen, stdout) == r.outlen && fflush(stdout) == 0;
+    if (!written &&
+        (r.status == LIMBA_EVAL_OK || r.status == LIMBA_EVAL_HALT)) {
+        if (errno == EPIPE) {
+            limba_eval_result_free(&r);
+            limba_module_free(m);
+            return 141;
+        }
+        r.status = LIMBA_EVAL_TRAP;
+        r.code = LIMBA_TRAP_IO;
+        r.pos = 0;
+    }
     size_t fn = 0;
     const char *file = NULL;
     const limba_pos *where =

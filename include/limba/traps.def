@@ -27,3 +27,6 @@ LIMBA_TRAP(SHIFT, 104, "shift count out of range")
 LIMBA_TRAP(DANGLING, 105, "dangling pointer")
 /* mem_free of what is not a live block of mem_alloc: not a check */
 LIMBA_TRAP(INVALID_FREE, 106, "invalid dispose")
+/* an error of reading or writing the standard streams (not the end of
+   the input); a write error has no position, as the output is buffered */
+LIMBA_TRAP(IO, 107, "input/output error")

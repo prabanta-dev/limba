@@ -131,9 +131,10 @@ static void tract_checks(lxl *L, bool sg, limba_id from, limba_id count,
               LXR_INDEX);
 }
 
-/* node a of translate or occurrences, an array of Bytes or a String: the
-   address of its first byte and its bounds as i64 values (a String from
-   1, its bytes valid while the String has a reference: § 11c) */
+/* node a of translate, occurrences, readbytes or writebytes, an array of
+   Bytes or a String: the address of its first byte and its bounds as i64
+   values (a String from 1, its bytes valid while the String has a
+   reference: § 11c) */
 static void bytes_span(lxl *L, uint32_t a, uint32_t at, limba_id *base,
                        limba_id *lo, limba_id *hi)
 {
@@ -699,6 +700,30 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
             L, lxl_rt(L, LIMBA_RT_MEM_COUNT, LIMBA_T_I64, args, 4), ib);
         return;
     }
+    case LXB_READBYTES:
+    case LXB_WRITEBYTES: {
+        /* readbytes(a, from, count), writebytes(a, from, count): the
+           checks of move, then one read or write of the tract (§ 9.1,
+           § 9.2) */
+        bool rd = id == LXB_READBYTES;
+        bool str = ti(L, t0)->kind == LIMBA_LTK_STRING;
+        limba_ltype ib = str ? S->ty_int[3] : lxs_base(S, ti(L, t0)->index);
+        limba_id b, lo, hi;
+        bytes_span(L, a0, node, &b, &lo, &hi);
+        limba_id from = lxl_to_i64(L, lxl_value(L, arg(L, node, 1)), ib);
+        limba_id count = lxl_to_i64(L, lxl_value(L, arg(L, node, 2)), ib);
+        lxl_at(L, node);
+        tract_checks(L, lxl_signed(L, ib), from, count, lo, hi);
+        limba_id pa = element_at(L, b, lo, from, 1);
+        lxl_live(L, pa);
+        uint32_t args[2] = {pa, count};
+        if (rd)
+            *result = from_i64(
+                L, lxl_rt(L, LIMBA_RT_IO_READ, LIMBA_T_I64, args, 2), ib);
+        else
+            lxl_rt(L, LIMBA_RT_IO_WRITE, LIMBA_T_VOID, args, 2);
+        return;
+    }
     case LXB_NEWCSTRING:
         v = lxl_value(L, a0);
         lxl_at(L, node); /* a 0 inside: the range error, here */
@@ -820,13 +845,16 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
     }
     case LXB_HALT: {
         v = lxl_value(L, a0);
-        /* 0 or 2..255: 1 is the status of the errors at run time */
+        /* 0 or 2..255 but 141: 1 is the status of the errors at run
+           time, 141 that of a closed output */
         limba_id zero = lxl_iconst(L, LIMBA_T_I32, 0);
         limba_id past =
             bin(L, LIMBA_OP_SUB, LIMBA_T_I32, v, lxl_iconst(L, LIMBA_T_I32, 2));
-        limba_id ok =
+        limba_id ok = bin(
+            L, LIMBA_OP_AND, LIMBA_T_I1,
             bin(L, LIMBA_OP_OR, LIMBA_T_I1, icmp(L, LIMBA_CC_EQ, v, zero),
-                icmp(L, LIMBA_CC_ULE, past, lxl_iconst(L, LIMBA_T_I32, 253)));
+                icmp(L, LIMBA_CC_ULE, past, lxl_iconst(L, LIMBA_T_I32, 253))),
+            icmp(L, LIMBA_CC_NE, v, lxl_iconst(L, LIMBA_T_I32, 141)));
         lxl_at(L, node);
         lxl_check(L, ok, LXR_RANGE);
         lxl_rt(L, LIMBA_RT_HALT, LIMBA_T_VOID, &v, 1);

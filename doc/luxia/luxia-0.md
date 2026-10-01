@@ -332,8 +332,9 @@ Records have the C layout.
   and the dangling checks; `low(p^)`, `high(p^)` and `length(p^)` give
   them, in the base type of `I`. As for an open-array parameter, `p^` is
   neither assigned nor read as a whole: the program works on its
-  elements, or copies them with `move` and treats them with `translate`,
-  `reverse` and `occurrences` (§ 9.5).
+  elements, or copies them with `move`, treats them with `translate`,
+  `reverse` and `occurrences` (§ 9.5), and reads and writes them with
+  `readbytes` and `writebytes` (§ 9.1, § 9.2).
 - There is no pointer arithmetic and no way to take the address of a
   variable.
 - A pointer to an object that `dispose` has freed is **dangling**.
@@ -351,9 +352,10 @@ Records have the C layout.
   variable first. A scalar reached through a pointer may be an `in`
   argument (its value) or an `out` one (it goes back through the pointer
   after the call, checked there), not a `var` one (`readline` and `val`
-  included). Only `move`, `translate`, `reverse` and `occurrences` take
-  arrays reached through a pointer: they run no code of the program
-  while they work, and check them themselves (§ 9.5). Ada allows such arguments, and a deallocation during the call
+  included). Only `move`, `translate`, `reverse`, `occurrences`,
+  `readbytes` and `writebytes` take arrays reached through a pointer:
+  they run no code of the program while they work, and check them
+  themselves (§ 9.1, § 9.2, § 9.5). Ada allows such arguments, and a deallocation during the call
   makes the execution erroneous; SPARK allows them without a copy through
   the ownership of pointers. This rule will go with that ownership
   (Appendix A).
@@ -945,6 +947,15 @@ in Luxia 0.
   `0.1`, `0.33333334`, `3.4028235e+38`. Infinities are written `inf` and
   `-inf`; a NaN is always `nan` (IEEE 754 does not fix its sign).
 - `writebyte(b)` writes one byte, for binary output.
+- `writebytes(a, from, count)` writes the tract `from .. from + count -
+  1` of `a`, byte by byte as it is, for binary output in blocks. `a` is
+  an array of `Byte` or a `String` (only read; a `String` is indexed from
+  1 by `Int64`, § 3.8). `from`, `count` and their checks follow the rules
+  of `move` for a tract (§ 9.5), checked before anything is written.
+- Everything is written on one stream, the standard output, in the order
+  of the calls: `write`, `writeln`, `writebyte` and `writebytes` may be
+  mixed. The output may be buffered: an error in writing it is found
+  when the buffer is written, perhaps after the call (§ 10.1).
 
 ### 9.2 Input
 
@@ -952,6 +963,29 @@ in Luxia 0.
 the end of the file. A line ends with `LF` or `CR LF`, which are removed.
 At the end of the file `s` becomes `""`: `s` always has a value, like an
 `out` parameter.
+
+`readbytes(a, from, count)` reads up to `count` bytes of the input into
+the tract `from .. from + count - 1` of `a` and returns how many it read,
+a value of the base type `I` of the index of `a`. It reads fewer than
+`count` only at the end of the input (0 at the end), as C's `fread`, the
+same on a file, a pipe or a terminal: a program never repeats a short
+read. The bytes come as they are, `CR LF` included; the elements of the
+tract past those read keep their values. `a` is a writable array whose
+elements are `Byte` exactly (a narrower element type is a compile-time
+error, so no value out of range enters `a`). `from`, `count` and their
+checks follow the rules of `move` for a tract (§ 9.5), checked before
+anything is read.
+
+- `readline` and `readbytes` read one stream, the standard input, in the
+  order of the calls: a line read after a block starts where the block
+  ended (after a block that ends between `CR` and `LF`, the line is
+  empty).
+- **The end of the input is final.** Once `readline` has returned
+  `false`, or `readbytes` fewer bytes than asked, every later `readline`
+  returns `false` and every later `readbytes` 0, even if a terminal
+  gives more.
+- An error in reading, which is not the end, is a run-time error
+  (§ 10.1).
 
 ### 9.3 Characters
 
@@ -1100,9 +1134,10 @@ return a real of the type of their argument (§ 6.6).
   name; a constant `i` below 1 is a compile-time error (as Ada's
   `Argument`).
 - `halt(code)`: stops the program with `code`, an `Int32`, as its exit
-  status. The code is 0 or 2..255, because **1 is reserved for run-time
-  errors**. A constant `halt(1)` (or a constant outside those limits) is a
-  compile-time error; a computed value outside those limits is a
+  status. The code is 0 or 2..255 except 141, because **1 is reserved
+  for run-time errors** and **141 for a closed output** (§ 10.1). A
+  constant `halt(1)`, `halt(141)` (or a constant outside those limits)
+  is a compile-time error; a computed value outside those limits is a
   range error at run time.
 
 ### 9.9 C strings
@@ -1157,6 +1192,25 @@ is always this error, never a crash. A second `dispose` of the same
 object stops the program with "invalid dispose" (§ 9.7), which is not a
 check either.
 
+An error in reading the standard input or in writing the standard output
+(a device error, a full disk; the end of the input is no error) stops the
+program in the same way with "input/output error" and exit status 1, as
+Ada's `Device_Error`: it is never ignored, and it is not a check either.
+A read error is reported where the read is. The output may be buffered,
+so a write error may be found after the write that caused it, at a later
+output or at the end of the program: it is **always reported without a
+place**:
+
+```
+luxia: input/output error
+```
+
+When the reader of the output has gone (a pipe whose reader ended, as in
+`prog | head`), the program stops where it finds it, without a message,
+with **exit status 141**, the status a Unix shell shows for a program
+ended by a closed pipe: nothing it writes can be read any more, and the
+status says why it stopped.
+
 As in Ada, a program sees no error codes. Internally each check has a
 code, listed here for reference:
 
@@ -1173,6 +1227,7 @@ code, listed here for reference:
 | 104 | shift count out of range | `shift_check` |
 | 105 | dangling pointer | `dangling_check` |
 | 106 | invalid dispose | — |
+| 107 | input/output error | — |
 
 `range_check` includes the validity checks on components without a
 value (§ 3.11).

@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Input and output in blocks (specification § 9.1, § 9.2), with the rules
+  of `move` on the tract: `readbytes(a, from, count)` reads up to `count`
+  bytes of the standard input into an array of `Byte` and returns how
+  many, fewer only at the end of the input, as C's `fread`, the same on a
+  file, a pipe or a terminal; `writebytes(a, from, count)` writes a tract
+  of an array of `Byte` or of a String as it is. One input stream for
+  `readline` and `readbytes`, one output stream for every writing
+  routine, in the order of the calls; the end of the input is final. In
+  the IR: `io_read` and `io_write` at the end of the run-time table. The
+  random programs read their input in blocks and lines alike.
+- Errors of input and output have a rule (specification § 10.1): an
+  error in reading (never the end) or in writing stops the program with
+  "input/output error", the new trap `IO` (107) of `traps.def`, exit
+  status 1, as Ada's `Device_Error`; a write error is reported without a
+  place, as the output is buffered. An output closed by its reader ends
+  the program silently with exit status 141, which `halt` may no longer
+  give. Before, `lir_run` took a read error for the end of the input and
+  lost a write error. `read_line` and the `print_*` functions are
+  `MAY_TRAP`; the fingerprint of the run-time table changes, the version
+  of the IR (6) does not.
 - Three routines of arrays (specification § 9.5), with the rules of
   `move`: `translate(a, from, count, table)` replaces each Byte of a
   tract by its entry in an `array[Byte] of Byte`, read whole first so

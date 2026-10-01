@@ -18,14 +18,21 @@
  * does not know. Add at the end. No graphics and no audio here (R11).
  */
 
-/* console */
-LIMBA_RT(PRINT_I64, "print_i64", "(i64) -> void", LIMBA_RTA_IO)
+/* console. Every function of output may end the program at an error of
+   writing, found when its buffer is written, perhaps later than the
+   write that filled it: the trap IO without a position, or for a closed
+   output (EPIPE) exit status 141 and no message (luxia_0.md § 10.1) */
+LIMBA_RT(PRINT_I64, "print_i64", "(i64) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
 /* the text of a real is limba/fmt.h, byte for byte: limba_fmt_f64 for
    print_f64 and str_from_f64, limba_fmt_f32 for print_f32 and
    str_from_f32, limba_fmt_f64_fixed for str_from_f64_fixed */
-LIMBA_RT(PRINT_F64, "print_f64", "(f64) -> void", LIMBA_RTA_IO)
-LIMBA_RT(PRINT_STR, "print_str", "(str) -> void", LIMBA_RTA_IO)
-LIMBA_RT(PRINT_NL, "print_nl", "() -> void", LIMBA_RTA_IO)
+LIMBA_RT(PRINT_F64, "print_f64", "(f64) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
+LIMBA_RT(PRINT_STR, "print_str", "(str) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
+LIMBA_RT(PRINT_NL, "print_nl", "() -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
 
 /* strings */
 LIMBA_RT(STR_CONCAT, "str_concat", "(str, str) -> str", LIMBA_RTA_ALLOC)
@@ -50,11 +57,16 @@ LIMBA_RT(MATH_COS, "math_cos", "(f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_POW, "math_pow", "(f64, f64) -> f64", LIMBA_RTA_PURE)
 
 /* Luxia 0: output, formatted output, input, the command line */
-LIMBA_RT(PRINT_U64, "print_u64", "(i64) -> void", LIMBA_RTA_IO)
-LIMBA_RT(PRINT_BOOL, "print_bool", "(i1) -> void", LIMBA_RTA_IO)
-LIMBA_RT(PRINT_CHAR, "print_char", "(i32) -> void", LIMBA_RTA_IO)
-LIMBA_RT(PRINT_BYTE, "print_byte", "(i8) -> void", LIMBA_RTA_IO)
-LIMBA_RT(PRINT_STR_W, "print_str_w", "(str, i32) -> void", LIMBA_RTA_IO)
+LIMBA_RT(PRINT_U64, "print_u64", "(i64) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
+LIMBA_RT(PRINT_BOOL, "print_bool", "(i1) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
+LIMBA_RT(PRINT_CHAR, "print_char", "(i32) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
+LIMBA_RT(PRINT_BYTE, "print_byte", "(i8) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
+LIMBA_RT(PRINT_STR_W, "print_str_w", "(str, i32) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
 LIMBA_RT(STR_FROM_U64, "str_from_u64", "(i64) -> str", LIMBA_RTA_ALLOC)
 /* x:width:decimals of a real (a Float32 widened exactly): fixed notation,
    limba_fmt_f64_fixed; the width is print_str_w, in code points */
@@ -63,7 +75,8 @@ LIMBA_RT(STR_FROM_F64_FIXED, "str_from_f64_fixed", "(f64, i32) -> str",
 LIMBA_RT(STR_FROM_CHAR, "str_from_char", "(i32) -> str", LIMBA_RTA_ALLOC)
 LIMBA_RT(STR_FROM_BOOL, "str_from_bool", "(i1) -> str", LIMBA_RTA_ALLOC)
 LIMBA_RT(READ_LINE, "read_line", "(ptr) -> i1",
-         LIMBA_RTA_IO | LIMBA_RTA_ALLOC | LIMBA_RTA_WRITES_MEM)
+         LIMBA_RTA_IO | LIMBA_RTA_ALLOC | LIMBA_RTA_WRITES_MEM |
+             LIMBA_RTA_MAY_TRAP)
 /* val (luxia_0.md § 9): a number of the text, spaces and tabs around, a
    sign, then a literal of Luxia; str_to_i64 takes an integer in lo..hi
    (the last two operands), str_to_f64 an integer or a real rounded once
@@ -99,7 +112,8 @@ LIMBA_RT(STR_TO_U64, "str_to_u64", "(str, ptr, i64, i64) -> i1",
 LIMBA_RT(STR_TO_F32, "str_to_f32", "(str, ptr) -> i1", LIMBA_RTA_WRITES_MEM)
 /* a Float32 in the shortest form that reads back as a Float32
    (limba_fmt_f32) */
-LIMBA_RT(PRINT_F32, "print_f32", "(f32) -> void", LIMBA_RTA_IO)
+LIMBA_RT(PRINT_F32, "print_f32", "(f32) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
 LIMBA_RT(STR_FROM_F32, "str_from_f32", "(f32) -> str", LIMBA_RTA_ALLOC)
 /* is p a live block of mem_alloc (its start, not freed)? The dangling
    check: check ptr_live(p), 105 right before an access through p */
@@ -171,3 +185,14 @@ LIMBA_RT(MEM_TRANSLATE, "mem_translate", "(ptr, i64, ptr) -> void",
 LIMBA_RT(MEM_REVERSE, "mem_reverse", "(ptr, i64, i64) -> void",
          LIMBA_RTA_WRITES_MEM)
 LIMBA_RT(MEM_COUNT, "mem_count", "(ptr, i64, ptr, i64) -> i64", 0)
+/* readbytes and writebytes (luxia_0.md § 9.1, § 9.2), the tract checked
+   before, as for mem_*: with n = 0 no pointer is read. io_read reads up
+   to n bytes of the standard input at a, from the stream of read_line,
+   fewer only at its end, and returns how many; the end is final: after
+   it io_read returns 0 and read_line false. A read error is the trap IO,
+   never the end. io_write writes the n bytes at a on the output of
+   print_*, in order with them */
+LIMBA_RT(IO_READ, "io_read", "(ptr, i64) -> i64",
+         LIMBA_RTA_IO | LIMBA_RTA_WRITES_MEM | LIMBA_RTA_MAY_TRAP)
+LIMBA_RT(IO_WRITE, "io_write", "(ptr, i64) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)

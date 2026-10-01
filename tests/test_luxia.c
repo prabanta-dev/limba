@@ -574,6 +574,25 @@ static const sema_case sema_cases[] = {
      "translate(a, -2, 5, q^); n := occurrences(\"abab\", 1, 4, \"ab\"); m "
      ":= occurrences(a, -2, 5, a); end.",
      ""},
+    /* readbytes and writebytes (§ 9.1, § 9.2): an array of Bytes read
+       into, written; a String only written; the result used; 141 is the
+       status of a closed output */
+    {"program p; var a: array[Int32 range 1..3] of Byte; n: Int32; s: String; begin n := readbytes(s, 1, 1); end.",
+     "L0027@1:94"},
+    {"program p; var a: array[Int32 range 1..3] of Int32; begin writebytes(a, 1, 3); end.",
+     "L0027@1:70"},
+    {"program p; type S = Byte range 0..9; var a: array[Int32 range 1..3] of S; n: Int32; begin n := readbytes(a, 1, 3); end.",
+     "L0027@1:106"},
+    {"program p; type A = array[Int32 range <>] of Byte; procedure f(a: A); var n: Int32; begin n := readbytes(a, low(a), 0); end f; begin end.",
+     "L0034@1:106"},
+    {"program p; var a: array[Int32 range 1..3] of Byte; n: Int32; s: String; begin readbytes(a, 1, 3); end.",
+     "L0037@1:79"},
+    {"program p; var writebytes: Int32; begin end.",
+     "L0023@1:16"},
+    {"program p; type Bs = array[Int32 range <>] of Byte; var q: ^Bs; n: Int64; m: Int32; begin q := new(Bs range 1..4); m := readbytes(q^, 1, 4); writebytes(q^, 1, m); writebytes(\"abc\", 2, 2); n := 1; end.",
+     ""},
+    {"program p; begin halt(141); end.",
+     "L0055@1:23"},
     {"program p; type R = record s: String; end; var q: ^R; b: Boolean; "
      "begin q := new(R); b := readline(q.s); end.",
      "L0059@1:101"},
@@ -1407,13 +1426,18 @@ static const run_case run_cases[] =
          "a1a2a3\n", "ok"},
 };
 
-/* run main on the input in (NULL: none); what it printed (malloc'd, *len
-   bytes) and how it ended */
+/* an input that cannot be read: a directory (EISDIR) */
+static const char unreadable[] = "";
+
+/* run main on the input in (NULL: none; unreadable: an error in reading);
+   what it printed (malloc'd, *len bytes) and how it ended */
 static char *run_module(limba_module *m, const char *in, size_t inlen, int argc,
                         char **argv, char *end, size_t size, size_t *len)
 {
     limba_eval_limits lim = {0, 0, argc, argv, NULL, true, 0};
-    if (in && inlen)
+    if (in == unreadable)
+        lim.in = fopen("tests", "r");
+    else if (in && inlen)
         lim.in = fmemopen((void *)in, inlen, "r");
     limba_eval_result r;
     limba_eval(m, "main", &lim, &r);
@@ -1558,6 +1582,67 @@ static int test_run(void)
                     "test_luxia: run case %zu\n  printed  \"%s\"\n  expected "
                     "\"%s\"\n  ended    %s\n  expected %s\n",
                     i, o, c->out, end, c->end);
+            failures++;
+        }
+        free(out);
+    }
+    return failures;
+}
+
+/* programs that read an input: the source, the input, what they print and
+   how they end, as run_cases. readbytes and writebytes (§ 9.1, § 9.2):
+   one input for readline and readbytes (a block that ends between CR and
+   LF leaves an empty line), read up to its end, which is final; count 0
+   reads nothing and checks no bound; one output; the checks of move; 141
+   kept for a closed output; an error in reading is the trap IO where the
+   read is, never the end */
+static const struct {
+    const char *src, *in, *out, *end;
+} io_cases[] = {
+    {"program t;\nvar a: array[Int32 range 1..8] of Byte;\n  s: String;\n  n: Int32;\n  b: Boolean;\nbegin\n  n := readbytes(a, 1, 3);\n  b := readline(s);\n  writeln(n, \" \", b, \" [\", s, \"]\");\n  writebytes(a, 1, 2);\n  writeln();\n  n := readbytes(a, 99, 0);\n  b := readline(s);\n  writeln(s, \" \", b, \" \", n);\n  n := readbytes(a, 2, 7);\n  write(n, \" \");\n  writebytes(a, 2, n);\n  writeln();\n  n := readbytes(a, 1, 8);\n  b := readline(s);\n  writeln(n, \" \", b, \" [\", s, \"]\");\n  writebytes(\"xyz\", 2, 2);\n  writebytes(s, 5, 0);\n  writeln();\nend t.",
+     "ab\r\ncd\nefgh", "3 true []\nab\ncd true 0\n4 efgh\n0 false []\nyz\n", "ok"},
+    {"program t; var a: array[Int32 range 1..8] of Byte; n: Int32; begin var c: Int32 := -1;\n  n := readbytes(a, 1, c);\nend t.",
+     "x", "", "trap 101 at 2:8"},
+    {"program t; var a: array[Int32 range 1..8] of Byte; n: Int32; begin\n  n := readbytes(a, 6, 4);\nend t.",
+     "x", "", "trap 100 at 2:8"},
+    {"program t; begin var s: String := \"abc\";\n  writebytes(s, 3, 2);\nend t.",
+     "", "", "trap 100 at 2:3"},
+    {"program t; begin var s: String := \"abc\";\n  writebytes(s, 0, 1);\nend t.",
+     "", "", "trap 100 at 2:3"},
+    {"program t; type Bs = array[Int32 range <>] of Byte; begin var p := new(Bs range 1..3); dispose(p);\n  writebytes(p^, 1, 1);\nend t.",
+     "", "", "trap 105 at 2:3"},
+    {"program t; type Bs = array[Int32 range <>] of Byte; var n: Int32; begin var p := new(Bs range 1..3); dispose(p);\n  n := readbytes(p^, 1, 1);\nend t.",
+     "x", "", "trap 105 at 2:8"},
+    {"program t; type Bs = array[Int32 range <>] of Byte; var p: ^Bs; n: Int32; begin\n  n := readbytes(p^, 1, 1);\nend t.",
+     "x", "", "trap 102 at 2:8"},
+    {"program p; var n: Int32 := 141; begin halt(n); end p.",
+     "", "", "trap 101"},
+    {"program t; var s: String; b: Boolean; begin\n  b := readline(s);\nend t.",
+     unreadable, "", "trap 107 at 2:8"},
+    {"program t; var a: array[Int32 range 1..8] of Byte; n: Int32; begin\n  n := readbytes(a, 1, 8);\nend t.",
+     unreadable, "", "trap 107 at 2:8"},
+};
+
+static int test_io(void)
+{
+    int failures = 0;
+    for (size_t i = 0; i < COUNT(io_cases); i++) {
+        char end[256];
+        limba_report dummy;
+        size_t len;
+        char *out = compile_run(io_cases[i].src, io_cases[i].in,
+                                strlen(io_cases[i].in), 0, NULL, end,
+                                sizeof(end), &dummy, &len);
+        char *at = strstr(end, " at ");
+        if (at && !strstr(io_cases[i].end, " at "))
+            *at = 0;
+        if (len != strlen(io_cases[i].out) ||
+            (len && memcmp(out, io_cases[i].out, len)) ||
+            strcmp(end, io_cases[i].end)) {
+            fprintf(stderr,
+                    "test_luxia: input case %zu\n  printed  \"%s\"\n  "
+                    "expected \"%s\"\n  ended    %s\n  expected %s\n",
+                    i, out ? out : "", io_cases[i].out, end, io_cases[i].end);
             failures++;
         }
         free(out);
@@ -1861,11 +1946,13 @@ int main(void)
     unsigned ffi = 0;
     failures += test_ffi(&ffi);
     failures += test_run();
+    failures += test_io();
     failures += test_random();
     printf("test_luxia: %zu lexer, %zu expression, %zu program, %zu "
-           "semantic and %zu run cases, %u valid programs, %u calling C, "
-           "report and limit, %d failures\n",
+           "semantic, %zu run and %zu input cases, %u valid programs, %u "
+           "calling C, report and limit, %d failures\n",
            COUNT(lex_cases), COUNT(expr_cases), COUNT(program_cases),
-           COUNT(sema_cases), COUNT(run_cases), programs, ffi, failures);
+           COUNT(sema_cases), COUNT(run_cases), COUNT(io_cases), programs,
+           ffi, failures);
     return failures ? 1 : 0;
 }

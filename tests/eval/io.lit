@@ -1,0 +1,29 @@
+; output: hi
+; output: 0 0
+; result: 0
+; io_write writes the bytes as they are, in order with print_*; io_read
+; without an input returns 0, and n = 0 reads no pointer
+func @main : fn() -> i64 {
+  slot 8 align 8
+b0:
+  v0 = slot ptr $0
+  v1 = iconst i8 104
+  store v1, v0
+  v2 = iconst i64 1
+  v3 = addr ptr v0, v2, 1, 0
+  v4 = iconst i8 105
+  store v4, v3
+  v5 = iconst i64 2
+  call.rt void io_write(v0, v5)
+  call.rt void print_nl()
+  v6 = call.rt i64 io_read(v0, v5)
+  call.rt void print_i64(v6)
+  v7 = sconst str " "
+  call.rt void print_str(v7)
+  v8 = null ptr
+  v9 = iconst i64 0
+  v10 = call.rt i64 io_read(v8, v9)
+  call.rt void print_i64(v10)
+  call.rt void print_nl()
+  ret v9
+}

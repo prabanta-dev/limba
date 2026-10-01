@@ -19,6 +19,10 @@
  * stays different from any new one. The counts of retain, release and of
  * store str are kept only with check_mem.
  *
+ * read_line and io_read read one stream, in; its end is final, and an
+ * error in reading it is the trap IO. The output stays in memory, in out:
+ * whoever writes it checks the writing (lir_run).
+ *
  * fptosi and fptoui saturate (too large: the maximum, too small: the
  * minimum, NaN: 0), as WebAssembly's trunc_sat: they are pure, and a
  * language that wants an error checks before converting.
@@ -49,7 +53,7 @@ typedef struct {
     uint32_t max_depth; /* nested calls; 0 for 10000 */
     int argc;           /* the command line of the program, for arg() */
     char **argv;
-    FILE *in; /* what read_line reads; NULL: nothing */
+    FILE *in; /* what read_line and io_read read; NULL: nothing */
     /* count the references to strings from memory and check the rules
        of § 11c (LIMBA_EVAL_BADMEM); slower, the output does not change */
     bool check_mem;
