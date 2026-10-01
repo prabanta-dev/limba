@@ -137,7 +137,8 @@ lir_run program.lir          # runs it in the reference interpreter
 The front end is also a library (`include/limba/limba_luxia.h`): a
 program that runs the IR in memory compiles a source and receives each
 function as soon as it is complete, verified and optimised, as `limba`
-does to write its `.lir`.
+does to write its `.lir`
+([`doc/limba/luxia_api.md`](doc/limba/luxia_api.md)).
 
 **The IR** (`include/limba/ir.h`, `src/ir/`) is the contract with Meri and
 does not know Luxia:
