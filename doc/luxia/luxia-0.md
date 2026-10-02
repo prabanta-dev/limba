@@ -1184,11 +1184,10 @@ same type; a constant without a type needs a conversion
 
   `lo` and `hi` are values of the base type of `I`, computed in this
   order; `hi < lo` gives an empty array. If `I` is a subtype, the bounds
-  of a non-empty array must belong to it (range error); if the length
-  does not fit in the base type of `I`, it is a range error (§ 3.7). If
-  the memory for it cannot be had, the program stops with "out of
-  memory" (§ 10.1), also when its size in bytes would not fit in the
-  address space: never a silent overflow. The elements follow § 3.11.
+  of a non-empty array must belong to it (range error). If the memory
+  for it cannot be had, the program stops with "out of memory"
+  (§ 10.1), also when its length would not fit in an `Int64` or its size
+  in bytes in the address space (§ 3.7): never a silent overflow. The elements follow § 3.11.
   `new(A)` without a range, for an open array type, is a compile-time
   error.
 - `dispose(p)` frees the object `p` points to (a whole array created by
@@ -1226,7 +1225,8 @@ As Ada's `Interfaces.C.Strings`, with explicit conversions:
 - `cvalue(a, n)`, `a` an array of `CChar`, `CUChar` or `Byte` that C
   filled as a buffer: its first `n` elements as a `String`, `n` an
   `Int64`, as a count of `move` (§ 9.5), checked against the length of
-  `a`: below 0 or past the length it is an index error.
+  `a`: below 0 it is a range error, as for `move`, past the length an
+  index error.
 - `freecstring(var p: CString)`: frees `p` with the `free` of C and sets
   it to `nil`; on `nil` it does nothing.
 

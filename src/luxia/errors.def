@@ -102,3 +102,5 @@ LX_ERROR(78, HIDES_NOTHING)     /* warning: pragma hides that hides
                                    nothing */
 LX_ERROR(79, LIBRARY_C)         /* a routine of C of the library reached
                                    under restrictions(no_external) */
+LX_ERROR(80, SAME_AS_LIBRARY)   /* note: a unit of the program with the
+                                   name of one of the library */

@@ -22,7 +22,8 @@ prog.luxia:3:11: error[L0003]: string not closed on its line
 
 Columns count characters, not bytes, from 1. Some errors are followed by a
 **note**, which has no code and points at a second place, for example the
-first declaration of a name declared twice:
+first declaration of a name declared twice. A note that stands alone, with
+no error before it, has a code like the others (L0080):
 
 ```
 prog.luxia:3:5: error[L0023]: 'Total' is already declared here
@@ -1629,6 +1630,26 @@ end.
 prog.luxia:5:15: error[L0079]: pragma restrictions(no_external) forbids the boundary with C, which the library crosses here: the routine of C 'Connect', called by Open, reached from the program
 ```
 
+### L0080 — UNIT OF THE PROGRAM WITH A NAME OF THE LIBRARY
+
+A note, not an error: a unit of the program has the name of a unit of the
+standard library. The program and its units reach their own unit; the
+library keeps its own (§ 11.4). They are two units, with two names in the
+IR, and nothing changes in the meaning of the program. To use the unit of
+the library too, the program renames its own.
+
+```pascal
+program p;
+uses Strings;    // strings.luxia in the program's directory, and in the library
+begin
+  writeln(Name());
+end.
+```
+
+```
+prog.luxia:2:6: note[L0080]: 'Strings' is a unit of the program; the library has one of the same name, which it keeps for itself
+```
+
 ## All the codes
 
 | Code | Name | Meaning |
@@ -1712,3 +1733,4 @@ prog.luxia:5:15: error[L0079]: pragma restrictions(no_external) forbids the boun
 | L0077 | UNIT_UNUSED | warning: a unit used and never named |
 | L0078 | HIDES_NOTHING | warning: `pragma hides` that hides nothing |
 | L0079 | LIBRARY_C | a routine of C of the library reached under `restrictions(no_external)` |
+| L0080 | SAME_AS_LIBRARY | note: a unit of the program with the name of one of the library |

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- In the IR the file of the program is its name alone, as its units
+  are: the same `.lir` from any directory, and a run-time error says
+  `t.luxia:4:4` whatever path was given to `limba` (diagnostics keep the
+  real path). A unit of the program with the name of one of the library
+  gets a note with a code, L0080, as every diagnosis that stands alone.
+  `cvalue(a, n)` with a negative `n` is a range error, as a count of
+  `move`, no longer an index error; the specification says so, and no
+  longer gives `new` a range error for a length outside the index type
+  (§ 9.7, § 9.9). Two more fixed cases of units: a used unit that
+  exports a name equal to another used unit, and a unit of the library
+  that uses one the program does not.
+
 - The random programs come in two files too: `lx_gen -d DIR SEED`
   writes the program and the unit `Lib`, which holds the routines that
   name nothing of the program (the generator now makes some routines

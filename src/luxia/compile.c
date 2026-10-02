@@ -371,8 +371,8 @@ static uint32_t resolve_use(loader *ld, uint32_t u, uint32_t ref)
                library keeps its own (§ 11.4) */
             uint32_t nw;
             const char *want = written(ld, ld->ast->node[ref].loc, &nw);
-            limba_report_add(ld->rep, LIMBA_NOTE, 0, ld->ast->node[ref].loc,
-                             (uint32_t)n,
+            limba_report_add(ld->rep, LIMBA_NOTE, LXE_SAME_AS_LIBRARY,
+                             ld->ast->node[ref].loc, (uint32_t)n,
                              "'%.*s' is a unit of the program; the library "
                              "has one of the same name, which it keeps for "
                              "itself",
@@ -479,6 +479,10 @@ static int compile(const char *path, const char *text, size_t len,
         ld.dir = limba_xmalloc(dn + 1);
         memcpy(ld.dir, path, dn);
         ld.dir[dn] = 0;
+        /* in the IR the program is its name alone, as its units are
+           (§ 11.4): the same .lir from any directory */
+        if (dn)
+            set_irname(&src, file, path + dn);
     }
     add_file(&ld, file, false);
     ast.root = ld.units[0].root;

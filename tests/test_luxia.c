@@ -1442,6 +1442,8 @@ static const run_case run_cases[] =
          "", "trap 101 at 1:80"},
         {"program p; var buf: array[Int32 range 1..4] of Byte; n: Int64 := 5; begin writeln(cvalue(buf, n)); end.",
          "", "trap 100 at 1:83"},
+        {"program p; var buf: array[Int32 range 1..4] of Byte; n: Int64 := -1; begin writeln(cvalue(buf, n)); end.",
+         "", "trap 101 at 1:84"},
         /* a width counts characters, not bytes */
         {"program p; var s: String := \"\xc3\xa8\xe2\x82\xac\"; begin writeln(s:5, "
          "\"|\", 'x':3, \"|\"); end.",
@@ -2148,7 +2150,7 @@ static const unit_case unit_cases[] = {
        "C.H(a); end;\nend C."}},
      "",
      "errors",
-     "L0069@c.luxia:9:10 n@c.luxia:4:1 L0068@c.luxia:6:11"},
+     "L0069@c.luxia:9:10 n:@c.luxia:4:1 L0068@c.luxia:6:11"},
     /* interfaces that use each other: an error; through an
        implementation: allowed, the order computed from what the
        initialisations read and write (here N reads M.v, so M first,
@@ -2235,7 +2237,24 @@ static const unit_case unit_cases[] = {
                             "begin return \"library's\"; end; end Strings."}},
      "mine library's program\n",
      "ok",
-     "n@p.luxia:1:17 w:L0071@p.luxia:3:43"},
+     "n:L0080@p.luxia:1:17 w:L0071@p.luxia:3:43"},
+    /* a used unit exports a name equal to another used unit: the
+       qualifier is the unit, the name alone the variable (§ 11.3); a
+       unit of the library uses one the program does not */
+    {{{"p.luxia", "program P;\nuses Strings, Text;\nbegin\n  "
+                  "writeln(Text.Upper(), \" \", Text, \" \", "
+                  "Strings.Text);\nend."},
+      {"strings.luxia", "unit Strings; interface var Text: Int64 := 5; "
+                        "implementation end Strings."},
+      {"std/text.luxia", "unit Text; interface function Upper(): String; "
+                         "implementation uses Base; function Upper(): "
+                         "String; begin return Base.Word(); end; end Text."},
+      {"std/base.luxia", "unit Base; interface function Word(): String; "
+                         "implementation function Word(): String; begin "
+                         "return \"base\"; end; end Base."}},
+     "base 5 5\n",
+     "ok",
+     ""},
     /* under the program's restrictions(no_external) the library may
        declare routines of C, but none may be reached */
     {{{"p.luxia",
@@ -2290,7 +2309,7 @@ static void case_diag(void *ctx, const limba_luxia_diag *d)
     t->n += (size_t)snprintf(t->buf + t->n, sizeof(t->buf) - t->n,
                              "%s%s%s@%s:%u:%u", t->n ? " " : "",
                              d->severity == LIMBA_LUXIA_WARNING ? "w:"
-                             : d->severity == LIMBA_LUXIA_NOTE  ? "n"
+                             : d->severity == LIMBA_LUXIA_NOTE  ? "n:"
                                                                 : "",
                              d->code, d->file ? d->file : "", d->line, d->col);
 }

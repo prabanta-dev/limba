@@ -737,9 +737,10 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
                                lxl_iconst(L, LIMBA_T_I64, 1));
             limba_id n = lxl_value(L, arg(L, node, 1));
             lxl_at(L, node);
-            /* 0 <= n <= length, without a sign: an empty array has
-               length 0 or less */
+            /* a negative count is a range error, as for move (§ 9.5);
+               then n <= length, an empty array having length 0 or less */
             limba_id zero = lxl_iconst(L, LIMBA_T_I64, 0);
+            lxl_check(L, icmp(L, LIMBA_CC_SGE, n, zero), LXR_RANGE);
             limba_id pos = icmp(L, LIMBA_CC_SGT, len, zero);
             uint32_t so[3] = {pos, len, zero};
             len = lxl_emit(L, LIMBA_OP_SELECT, LIMBA_T_I64, 0, 0, 0, so, 3);
