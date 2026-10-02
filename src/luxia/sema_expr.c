@@ -409,6 +409,31 @@ static limba_ltype unary(limba_lxs *S, uint32_t node, uint32_t scope)
     return res;
 }
 
+/* the symbol a REF or TNAME names, without a word: 0 if none (Unit.Name
+   too, § 11.3) */
+static limba_sym peek(limba_lxs *S, uint32_t scope, uint32_t node)
+{
+    limba_lx_node *x = lxs_node(S, node);
+    if (x->kind == LXN_REF && (x->flags & LXN_F_QUAL)) {
+        const limba_lxs_unit *u = &S->units[x->b - 1];
+        limba_sym s = u->intf ? limba_sym_local(&S->st, u->intf, x->a) : 0;
+        return s ? s : limba_sym_local(&S->st, u->impl, x->a);
+    }
+    if (x->kind == LXN_TNAME && x->d) {
+        /* Unit.Name as a type: lxs_lookup reports what is wrong */
+        uint32_t name = lxs_node(S, x->d)->a;
+        for (uint32_t v = 0; v < S->nunits; v++)
+            if (S->units[v].name == name) {
+                const limba_lxs_unit *u = &S->units[v];
+                limba_sym s =
+                    u->intf ? limba_sym_local(&S->st, u->intf, x->a) : 0;
+                return s ? s : limba_sym_local(&S->st, u->impl, x->a);
+            }
+        return 0;
+    }
+    return lxs_find(S, scope, x->a, 0);
+}
+
 static limba_ltype reference(limba_lxs *S, uint32_t node, uint32_t scope)
 {
     limba_sym s = lxs_lookup(S, scope, node);
@@ -423,6 +448,8 @@ static limba_ltype reference(limba_lxs *S, uint32_t node, uint32_t scope)
         S->val[node] = y->value;
         return set(S, node, y->type);
     case LIMBA_LSYM_VAR:
+        lxs_use(S, s, node, false);
+        return set(S, node, y->type);
     case LIMBA_LSYM_PARAM:
         return set(S, node, y->type);
     case LIMBA_LSYM_TYPE:
@@ -441,8 +468,7 @@ static limba_ltype reference(limba_lxs *S, uint32_t node, uint32_t scope)
 }
 
 /* p^.x and p^[i]: one form for each thing, p.x and p[i] (§ 3.10) */
-static uint32_t no_deref(limba_lxs *S, uint32_t node, uint32_t base,
-                         bool field)
+static uint32_t no_deref(limba_lxs *S, uint32_t node, uint32_t base, bool field)
 {
     if (lxs_node(S, base)->kind != LXN_DEREF)
         return base;
@@ -827,8 +853,7 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         /* low(T), high(T) of a discrete type: its first and last value,
            a constant of T (Ada's T'First, T'Last) */
         limba_lx_node *ax = lxs_node(S, a);
-        limba_sym ts =
-            ax->kind == LXN_REF ? limba_sym_lookup(&S->st, scope, ax->a) : 0;
+        limba_sym ts = ax->kind == LXN_REF ? peek(S, scope, a) : 0;
         if (ts && S->st.sym[ts].kind == LIMBA_LSYM_TYPE && id != LXB_LENGTH) {
             if (!lxs_lookup(S, scope, a))
                 return set(S, node, 0);
@@ -1205,6 +1230,7 @@ static limba_ltype call(limba_lxs *S, uint32_t node, uint32_t scope,
     case LIMBA_LSYM_TYPE:
         return conversion(S, node, scope, S->st.sym[s].type);
     case LIMBA_LSYM_ROUTINE:
+        lxs_use(S, s, callee, false);
         return routine_call(S, node, scope, s);
     case LIMBA_LSYM_BUILTIN:
         return builtin(S, node, scope, s, expected);
@@ -1228,7 +1254,7 @@ static limba_ltype membership(limba_lxs *S, uint32_t node, uint32_t scope)
     /* x in T: the range of a type */
     limba_lx_node *lx_ = lxs_node(S, lo);
     if (!hi && lx_->kind == LXN_REF) {
-        limba_sym s = limba_sym_lookup(&S->st, scope, lx_->a);
+        limba_sym s = peek(S, scope, lo);
         if (s && S->st.sym[s].kind == LIMBA_LSYM_TYPE) {
             lxs_lookup(S, scope, lo); /* the spelling */
             lxs_force(S, s);
@@ -1344,8 +1370,7 @@ limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
         /* new(A range lo..hi), A an open array: range gives the bounds
            of the index, not a constraint on a value (§ 9.7) */
         limba_lx_node *tn = lxs_node(S, x->a);
-        limba_sym ts =
-            tn->kind == LXN_TNAME ? limba_sym_lookup(&S->st, scope, tn->a) : 0;
+        limba_sym ts = tn->kind == LXN_TNAME ? peek(S, scope, x->a) : 0;
         limba_ltype ot = ts && S->st.sym[ts].kind == LIMBA_LSYM_TYPE
                              ? (lxs_force(S, ts), S->st.sym[ts].type)
                              : 0;
@@ -1396,8 +1421,28 @@ bool lxs_writable(limba_lxs *S, uint32_t node, bool report)
         if (!s)
             return true; /* reported */
         limba_symbol *y = &S->st.sym[s];
-        if (y->kind == LIMBA_LSYM_VAR && !(y->flags & LXS_LOOPVAR))
+        if (y->kind == LIMBA_LSYM_VAR && !(y->flags & LXS_LOOPVAR)) {
+            /* a variable of an interface is read-only outside its unit
+               (§ 11.3) */
+            if (S->nunits) {
+                bool impl;
+                uint32_t u = lxs_unit_of(S, y->scope, &impl);
+                if (y->scope == S->units[u].intf && lxs_unit_at(S, node) != u) {
+                    if (report) {
+                        size_t n;
+                        const char *sp = lxs_spell(S, s, &n);
+                        lxs_error(S, LXE_READ_ONLY, node,
+                                  "'%.*s' is a variable of an interface: "
+                                  "outside its unit it is read only; "
+                                  "change it with a routine of the unit",
+                                  (int)n, sp);
+                    }
+                    return false;
+                }
+            }
+            lxs_use(S, s, node, true);
             return true;
+        }
         if (y->kind == LIMBA_LSYM_PARAM && y->mode != LXS_IN)
             return true;
         why = y->kind == LIMBA_LSYM_VAR ? "the variable of a for is constant "

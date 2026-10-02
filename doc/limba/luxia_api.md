@@ -32,6 +32,13 @@ not `NULL`, `*out` is the module, freed by the caller with
 function bodies only if the consumer keeps them. Otherwise `*out` is
 `NULL`.
 
+The units the source uses (specification § 11) are read with it, and the
+module holds them all, as one program: their names in the IR follow the
+unit (`Geometry.Distance`; a unit of the standard library after
+`$std.`), and only what an initialisation reaches is in it. A source
+that is a unit is checked, with the units it uses: nothing is given to
+the consumer, and `*out` is `NULL`.
+
 | Result | Meaning |
 |---|---|
 | `LIMBA_LUXIA_OK` (0) | compiled |
@@ -55,6 +62,24 @@ The numbers 0 to 3 are also the exit statuses of `limba`.
 | `max_errors` | errors reported before giving up, 0 for 20 | |
 | `diag_out` | where the diagnostics are printed, as `limba` prints them; `NULL` for nowhere | standard error |
 | `no_free` | leave the memory of the compilation unfreed, for a process that ends right after (freeing piece by piece costs 3 %) | always in a release build |
+| `unit_path` | the directories where the units of the program are looked for after the directory of the program, in order, a list ended by `NULL` | `-I DIR` |
+| `stdlib_path` | the directory of the units of the standard library, `NULL` for none | `--stdlib=DIR` |
+| `read_unit`, `read_ctx` | a reader of units held in memory, below | |
+
+`read_unit(ctx, space, name, &text, &len, &path)` is asked for a unit
+before the directories of its space: `space` is
+`LIMBA_LUXIA_PROGRAM_UNIT` or `LIMBA_LUXIA_STDLIB_UNIT` (the same name may
+be a unit of the program and one of the library), `name` the name of the
+file without `.luxia`, in lowercase. It answers `LIMBA_LUXIA_UNIT_FOUND`,
+with `text` and `len` read during the call and `path` the name of the
+file in the diagnostics and in the positions of the IR, used as it is
+(`geometry.luxia`, `<std>/geometry.luxia`); `LIMBA_LUXIA_UNIT_ABSENT`,
+and the directories of that space are tried; or
+`LIMBA_LUXIA_UNIT_UNREADABLE`, an error. A program that embeds the
+standard library serves it with the reader and leaves the units of the
+program on disk. The three fields are at the end of
+`limba_luxia_options`: a caller that fills the structure by position
+adds them.
 
 An option that is not valid gives a diagnostic of no place and
 `LIMBA_LUXIA_OPTIONS`, with the message `limba` gives.

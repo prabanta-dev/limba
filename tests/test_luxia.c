@@ -12,6 +12,7 @@
 #include "luxia/lex.h"
 #include "luxia/parse.h"
 #include "eval/eval.h"
+#include "limba/limba_luxia.h"
 #include "limba/opt.h"
 #include "opt/pass.h"
 #include "luxia/lower.h"
@@ -1974,6 +1975,337 @@ static int test_ffi(unsigned *count)
     return failures;
 }
 
+/* ---- units (specification § 11) ---- */
+
+/* the files of a program: the first is compiled, the others read by the
+   reader of the front end; a name std/x.luxia is in the space of the
+   standard library */
+typedef struct {
+    const char *name, *text;
+} unit_src;
+
+typedef struct {
+    unit_src f[6];
+    const char *out;   /* what it prints */
+    const char *end;   /* how it ends, as run_cases; "errors" if none */
+    const char *diags; /* the errors and warnings (w:), code@file:line:col */
+} unit_case;
+
+static const unit_case unit_cases[] = {
+    /* the unit of Delphi: an interface, an implementation, an
+       initialisation; names direct or qualified, in types too; the units
+       a unit uses initialised before it */
+    {{{"orbits.luxia",
+       "program Orbits;\nuses Geometry;\nvar a, b: Vector; c: "
+       "Geometry.Vector;\nbegin\n  a.x := 0.0; a.y := 0.0; a.z := 0.0;\n  "
+       "b.x := 3.0; b.y := 4.0; b.z := 0.0; c := b;\n  writeln(Distance(a, "
+       "b), \" \", Geometry.Distance(c, a), \" \", Geometry.calls);\nend "
+       "Orbits."},
+      {"geometry.luxia",
+       "unit Geometry;\ninterface\nuses Text;\ntype\n  Vector = record x, y, "
+       "z: Float64; end;\nvar\n  calls: Int64 := 0;\nfunction Distance(a, b: "
+       "Vector): Float64;\nimplementation\nfunction Square(x: Float64): "
+       "Float64;\nbegin\n  return x * x;\nend;\nfunction Distance(a, b: "
+       "Vector): Float64;\nbegin\n  Geometry.calls := calls + 1;\n  return "
+       "sqrt(Square(a.x - b.x) + Square(a.y - b.y) + Square(a.z - "
+       "b.z));\nend Distance;\nbegin\n  writeln(Text.Banner(\"geometry\"));\nend "
+       "Geometry."},
+      {"text.luxia",
+       "unit Text;\ninterface\nfunction Banner(s: String): "
+       "String;\nimplementation\nfunction Banner(s: String): String;\nbegin\n  "
+       "return \"[\" & s & \"]\";\nend Banner;\nbegin\n  writeln(\"text\");\nend "
+       "Text."}},
+     "text\n[geometry]\n5.0 5.0 2\n",
+     "ok",
+     ""},
+    /* a name two units give, written directly: an error where it is used,
+       never decided by the order of the uses */
+    {{{"p.luxia", "program P;\nuses A, B;\nbegin\n  writeln(Twice(3), \" \", "
+                  "A.Twice(1));\nend."},
+      {"a.luxia", "unit A;\ninterface\nfunction Twice(n: Int64): "
+                  "Int64;\nimplementation\nfunction Twice(n: Int64): Int64; "
+                  "begin return 2 * n; end;\nend A."},
+      {"b.luxia", "unit B;\ninterface\nfunction Twice(n: Int64): "
+                  "Int64;\nimplementation\nfunction Twice(n: Int64): Int64; "
+                  "begin return n + n; end;\nend B."}},
+     "",
+     "errors",
+     "L0070@p.luxia:4:11"},
+    /* the file hides a unit, with a warning; pragma hides(Unit.Name)
+       says it is meant, one that hides nothing is a warning; a variable
+       of an interface is read only outside its unit */
+    {{{"p.luxia",
+       "program P;\nuses A;\nvar shared: Int32 := 5;\nvar "
+       "seen: Int32 := 1;\npragma hides(A.seen);\npragma "
+       "hides(A.Twice);\nbegin\n  writeln(shared, A.shared, seen);\n  "
+       "A.shared := 4;\nend."},
+      {"a.luxia",
+       "unit A;\ninterface\nvar shared, seen: Int64 := "
+       "1;\nfunction Twice(n: Int64): Int64;\nimplementation\nfunction "
+       "Twice(n: Int64): Int64; begin return 2 * n; end;\nend A."}},
+     "",
+     "errors",
+     "L0074@p.luxia:9:5 w:L0071@p.luxia:3:5 w:L0078@p.luxia:6:16"},
+    /* the heading of a body conforms to the interface: names textual,
+       types semantic (Geometry.Vector is Vector); a heading without its
+       body */
+    {{{"p.luxia", "program P; uses C; var z: Int64 := 0; begin writeln(F(1, "
+                  "z)); end."},
+      {"c.luxia",
+       "unit C;\ninterface\ntype T = Int32 range 1..9;\nfunction F(a: T; var "
+       "b: Int64): Int32;\nfunction H(a: T): Int32;\nprocedure "
+       "G();\nimplementation\ntype U = T;\nfunction F(x: T; var b: Int64): "
+       "Int32; begin return x; end;\nfunction H(a: U): Int32; begin return "
+       "C.H(a); end;\nend C."}},
+     "",
+     "errors",
+     "L0069@c.luxia:9:10 n@c.luxia:4:1 L0068@c.luxia:6:11"},
+    /* interfaces that use each other: an error; through an
+       implementation: allowed, the order computed from what the
+       initialisations read and write (here N reads M.v, so M first,
+       whatever the order of the uses) */
+    {{{"p.luxia", "program P; uses X; begin writeln(FX()); end."},
+      {"x.luxia", "unit X;\ninterface\nuses Y;\nfunction FX(): "
+                  "Int64;\nimplementation\nfunction FX(): Int64; begin return "
+                  "Y.k; end;\nend X."},
+      {"y.luxia", "unit Y;\ninterface\nuses X;\nconst k = "
+                  "1;\nimplementation\nend Y."}},
+     "",
+     "errors",
+     "L0066@y.luxia:3:6"},
+    {{{"p.luxia", "program P; uses N, M; begin writeln(M.v, \" \", N.w); end."},
+      {"m.luxia", "unit M;\ninterface\nvar v: Int64;\nfunction Twice(): "
+                  "Int64;\nimplementation\nuses N;\nfunction Twice(): Int64; "
+                  "begin return 2 * N.w; end;\nbegin\n  v := 20;\nend M."},
+      {"n.luxia", "unit N;\ninterface\nvar w: Int64;\nimplementation\nuses "
+                  "M;\nbegin\n  w := M.v + 1;\nend N."}},
+     "20 21\n",
+     "ok",
+     ""},
+    /* initialisations that need each other, through a branch that never
+       runs: an error that shows the chain */
+    {{{"p.luxia", "program P; uses M, N; begin writeln(M.v, \" \", N.w); "
+                  "end."},
+      {"m.luxia", "unit M;\ninterface\nvar v: Int64;\nimplementation\nuses "
+                  "N;\nbegin\n  if N.w > 100 then v := 0; end;\n  v := 1;\nend "
+                  "M."},
+      {"n.luxia", "unit N;\ninterface\nvar w: Int64;\nimplementation\nuses "
+                  "M;\nbegin\n  w := M.v + 1;\nend N."}},
+     "",
+     "errors",
+     "L0076@m.luxia:1:6"},
+    /* a variable ready at once (a constant scalar, not written by its
+       unit) orders nothing: R reads S.k before S is initialised */
+    {{{"p.luxia", "program P; uses R; begin writeln(R.rv); end."},
+      {"r.luxia", "unit R;\ninterface\nvar rv: Int64;\nimplementation\nuses "
+                  "S;\nbegin\n  rv := S.k + 1;\nend R."},
+      {"s.luxia", "unit S;\ninterface\nvar k: Int64 := 41;\nvar t: "
+                  "Int64;\nimplementation\nuses R;\nbegin\n  t := R.rv;\nend "
+                  "S."}},
+     "42\n",
+     "ok",
+     ""},
+    /* files: not found, named as another unit, a program */
+    {{{"p.luxia", "program P; uses Nowhere, Wrong, Q; begin end."},
+      {"wrong.luxia", "unit Other; interface implementation end Other."},
+      {"q.luxia", "program Q; begin end."}},
+     "",
+     "errors",
+     "L0064@p.luxia:1:17 L0065@wrong.luxia:1:1 L0065@p.luxia:1:33"},
+    /* the case rule for units; the name of a unit used is not declared
+       in the file; no return in an initialisation; a unit used and never
+       named */
+    {{{"p.luxia", "program P; uses q, B; var Q: Int32; begin writeln(q.qa); "
+                  "end."},
+      {"q.luxia", "unit Q;\ninterface\nvar qa: Int64;\nimplementation\nuses "
+                  "B;\nvar B: Int32;\nbegin\n  return;\nend Q."},
+      {"b.luxia", "unit B; interface implementation end B."}},
+     "",
+     "errors",
+     "L0022@p.luxia:1:17 L0022@p.luxia:1:51 L0072@p.luxia:1:27 "
+     "L0072@q.luxia:6:5 L0075@q.luxia:8:3 w:L0077@p.luxia:1:20 "
+     "w:L0077@q.luxia:5:6"},
+    /* two spaces: the program's Strings and the library's are two units;
+       a library unit sees only the library; a name of a unit of the
+       program hides one of the library, with a warning on the direct use
+       */
+    {{{"p.luxia", "program P; uses Strings, Text;\nbegin\n  writeln(Name(), "
+                  "\" \", Text.Upper(), \" \", Kind());\nend."},
+      {"strings.luxia", "unit Strings; interface function Name(): String; "
+                        "function Kind(): String; implementation function "
+                        "Name(): String; begin return \"mine\"; end; function "
+                        "Kind(): String; begin return \"program\"; end; end "
+                        "Strings."},
+      {"std/text.luxia", "unit Text; interface function Upper(): String; "
+                         "function Kind(): String; implementation uses "
+                         "Strings; function Upper(): String; begin return "
+                         "Strings.Name(); end; function Kind(): String; begin "
+                         "return \"library\"; end; end Text."},
+      {"std/strings.luxia", "unit Strings; interface function Name(): "
+                            "String; implementation function Name(): String; "
+                            "begin return \"library's\"; end; end Strings."}},
+     "mine library's program\n",
+     "ok",
+     "n@p.luxia:1:17 w:L0071@p.luxia:3:43"},
+    /* under the program's restrictions(no_external) the library may
+       declare routines of C, but none may be reached */
+    {{{"p.luxia",
+       "program P;\nuses Net;\npragma "
+       "restrictions(no_external);\nbegin\n  writeln(Net.Open());\nend."},
+      {"std/net.luxia",
+       "unit Net;\ninterface\nfunction Open(): Int64;\nfunction Quiet(): "
+       "Int64;\nimplementation\nfunction Connect(n: CInt): CInt; external "
+       "\"c\" name \"abs\";\nfunction Open(): Int64; begin return "
+       "Int64(Connect(CInt(-3))); end;\nfunction Quiet(): Int64; begin return "
+       "0; end;\nend Net."}},
+     "",
+     "errors",
+     "L0079@p.luxia:5:15"},
+    /* the variables of a unit have bounds known in advance (§ 3.7) */
+    {{{"p.luxia", "program P; uses V; begin end."},
+      {"v.luxia", "unit V;\ninterface\nvar n: Int32 := 3;\nvar a: "
+                  "array[Int32 range 1..n] of Int32;\nimplementation\nend V."}},
+     "",
+     "errors",
+     "L0051@v.luxia:4:14 w:L0077@p.luxia:1:17"},
+};
+
+/* the reader of the files of a case */
+static int case_reader(void *ctx, int space, const char *name,
+                       const char **text, size_t *len, const char **path)
+{
+    const unit_case *c = ctx;
+    char want[96];
+    snprintf(want, sizeof(want), "%s%s.luxia",
+             space == LIMBA_LUXIA_STDLIB_UNIT ? "std/" : "", name);
+    for (int i = 1; i < 6 && c->f[i].name; i++)
+        if (!strcmp(c->f[i].name, want)) {
+            *text = c->f[i].text;
+            *len = strlen(c->f[i].text);
+            *path = c->f[i].name;
+            return LIMBA_LUXIA_UNIT_FOUND;
+        }
+    return LIMBA_LUXIA_UNIT_ABSENT;
+}
+
+typedef struct {
+    char buf[1024];
+    size_t n;
+} diag_text;
+
+static void case_diag(void *ctx, const limba_luxia_diag *d)
+{
+    diag_text *t = ctx;
+    if (t->n >= sizeof(t->buf) - 64)
+        return;
+    t->n += (size_t)snprintf(t->buf + t->n, sizeof(t->buf) - t->n,
+                             "%s%s%s@%s:%u:%u", t->n ? " " : "",
+                             d->severity == LIMBA_LUXIA_WARNING ? "w:"
+                             : d->severity == LIMBA_LUXIA_NOTE  ? "n"
+                                                                : "",
+                             d->code, d->file ? d->file : "", d->line, d->col);
+}
+
+/* what the module of a program with units holds: only what is reached
+   (no routine of C that no call reaches, § 8.5), names after the unit;
+   a unit compiled alone gives nothing */
+static int test_unit_module(void)
+{
+    static const unit_case c = {
+        {{"p.luxia", "program P; uses U; begin writeln(U.Used()); end."},
+         {"u.luxia",
+          "unit U;\ninterface\nfunction Used(): Int64;\nfunction "
+          "Unused(): Int64;\nimplementation\nfunction Len(s: CString): "
+          "CSizeT; external \"c\" name \"strlen\";\nfunction Used(): Int64; "
+          "begin return 7; end;\nfunction Unused(): Int64; begin return "
+          "Int64(Len(nil)); end;\nend U."}},
+        "7\n",
+        "ok",
+        ""};
+    int failures = 0;
+    limba_luxia_options o = {0};
+    o.read_unit = case_reader;
+    o.read_ctx = (void *)&c;
+    limba_luxia_consumer k = {0};
+    k.keep_bodies = true;
+    limba_module *m = NULL;
+    int st = limba_luxia_compile_text(c.f[0].name, c.f[0].text,
+                                      strlen(c.f[0].text), &o, &k, &m);
+    bool ok =
+        st == LIMBA_LUXIA_OK && m && m->nexterns == 0 && m->nfuncs == 2 &&
+        limba_func_find(m, limba_str_intern(m, "U.Used", 6)) != LIMBA_NONE;
+    if (!ok) {
+        fprintf(stderr,
+                "test_luxia: unit module: status %d, %u functions, "
+                "%u externs: only main and U.Used are expected\n",
+                st, m ? m->nfuncs : 0, m ? m->nexterns : 0);
+        failures++;
+    }
+    limba_module_free(m);
+    m = NULL;
+    st = limba_luxia_compile_text(c.f[1].name, c.f[1].text, strlen(c.f[1].text),
+                                  &o, &k, &m);
+    if (st != LIMBA_LUXIA_OK || m) {
+        fprintf(stderr, "test_luxia: a unit alone: status %d, %s\n", st,
+                m ? "a module" : "no module");
+        failures++;
+    }
+    limba_module_free(m);
+    return failures;
+}
+
+static int test_units(void)
+{
+    int failures = test_unit_module();
+    for (size_t i = 0; i < COUNT(unit_cases); i++) {
+        const unit_case *c = &unit_cases[i];
+        char out_end[2][256] = {"errors", "errors"};
+        char *out[2] = {NULL, NULL};
+        size_t len[2] = {0, 0};
+        diag_text dt = {{0}, 0};
+        for (int level = 0; level < 2; level++) {
+            limba_luxia_options o = {0};
+            o.level = level;
+            o.read_unit = case_reader;
+            o.read_ctx = (void *)c;
+            diag_text mine = {{0}, 0};
+            limba_luxia_consumer k = {0};
+            k.ctx = &mine;
+            k.diag = case_diag;
+            k.keep_bodies = true;
+            limba_module *m = NULL;
+            limba_luxia_compile_text(c->f[0].name, c->f[0].text,
+                                     strlen(c->f[0].text), &o, &k, &m);
+            if (level == 0)
+                dt = mine;
+            if (m) {
+                out[level] = run_module(m, NULL, 0, 0, NULL, out_end[level],
+                                        sizeof(out_end[level]), &len[level]);
+                limba_module_free(m);
+            }
+        }
+        const char *o = out[0] ? out[0] : "";
+        char *at = strstr(out_end[0], " at ");
+        if (at && !strstr(c->end, " at "))
+            *at = 0;
+        bool optdiff =
+            len[0] != len[1] || (len[0] && memcmp(out[0], out[1], len[0]));
+        if (strcmp(o, c->out) || strcmp(out_end[0], c->end) ||
+            strcmp(dt.buf, c->diags) || optdiff) {
+            fprintf(stderr,
+                    "test_luxia: unit case %zu\n  printed  \"%s\"\n  expected "
+                    "\"%s\"\n  ended    %s\n  expected %s\n  diags    %s\n  "
+                    "expected %s%s\n",
+                    i, o, c->out, out_end[0], c->end, dt.buf, c->diags,
+                    optdiff ? "\n  -O1 printed something else" : "");
+            failures++;
+        }
+        free(out[0]);
+        free(out[1]);
+    }
+    return failures;
+}
+
 int main(void)
 {
     int failures = test_lexer() + test_report() + test_limit();
@@ -1986,13 +2318,14 @@ int main(void)
     unsigned ffi = 0;
     failures += test_ffi(&ffi);
     failures += test_run();
+    failures += test_units();
     failures += test_io();
     failures += test_random();
     printf("test_luxia: %zu lexer, %zu expression, %zu program, %zu "
-           "semantic, %zu run and %zu input cases, %u valid programs, %u "
-           "calling C, report and limit, %d failures\n",
+           "semantic, %zu run, %zu unit and %zu input cases, %u valid "
+           "programs, %u calling C, report and limit, %d failures\n",
            COUNT(lex_cases), COUNT(expr_cases), COUNT(program_cases),
-           COUNT(sema_cases), COUNT(run_cases), COUNT(io_cases), programs, ffi,
-           failures);
+           COUNT(sema_cases), COUNT(run_cases), COUNT(unit_cases),
+           COUNT(io_cases), programs, ffi, failures);
     return failures ? 1 : 0;
 }

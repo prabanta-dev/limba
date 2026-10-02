@@ -113,6 +113,32 @@ typedef struct {
     limba_rat num;
 } limba_lxs_value;
 
+/* a file of the program (§ 11): the program, or a unit. The driver
+   lists them, parsed into one tree, and sets b of each REF of a USES
+   node to the unit it names, + 1 (0: not found, reported) */
+typedef struct {
+    uint32_t root;        /* its PROGRAM or UNIT node */
+    uint32_t first, last; /* its nodes: from first to before last */
+    uint32_t name;        /* the name id of a unit; 0 for the program */
+    uint32_t intf, impl;  /* its scopes; the program has only impl */
+    bool library;         /* a unit of the standard library */
+    bool restricted;      /* its own pragma restrictions(no_external) */
+    uint32_t order;       /* its place in the initialisation, from 0 */
+} limba_lxs_unit;
+
+/* what a routine or an initialisation does that the order of the
+   initialisations and the routines kept depend on (§ 11.5, § 7 of the
+   proposal): a call of a routine, a read or a write of a variable of a
+   unit; who is a routine symbol, or LXS_INIT | unit for the
+   initialisation of a unit (the program's too) */
+#define LXS_INIT 0x80000000u
+typedef struct {
+    uint32_t who;
+    limba_sym what; /* a routine, or a variable of a unit or program */
+    uint32_t node;  /* where */
+    bool write;
+} limba_lxs_use;
+
 typedef struct {
     limba_lx_ast *t;
     limba_lx *lx;
@@ -154,6 +180,33 @@ typedef struct {
     bool c_bound;
     limba_ltype ty_cpointer, ty_cstring, ty_cbool;
     limba_sym csym[LXS_NCTYPES];
+    /* units (§ 11): the files, the one compiled (the program, or a unit
+       only checked), per scope its file + 1 and in bit 31 whether it is
+       an implementation (or the program), per pair of files whether the
+       first names the second, per symbol the heading in the interface
+       of a routine whose body is in the implementation */
+    limba_lxs_unit *units;
+    uint32_t nunits, capunits, main;
+    uint32_t *sunit;
+    uint32_t nsunit;
+    uint8_t *named;
+    uint32_t *heading;
+    uint32_t nheading;
+    /* the initialisation of a unit being checked: return is an error */
+    bool in_init;
+    /* what is being checked, for the uses: a routine symbol or
+       LXS_INIT | unit; the uses found */
+    uint32_t who;
+    limba_lxs_use *uses;
+    uint32_t nuses, capuses;
+    /* pragma hides(Unit.Name) of the files: REF nodes (qualified), and
+       whether each hid something */
+    uint32_t *hides;
+    uint8_t *hid;
+    uint32_t nhides, caphides;
+    /* per symbol: a routine or a variable some initialisation reaches,
+       through the calls (§ 7 of the proposal: only that goes in the IR) */
+    uint8_t *reached;
 } limba_lxs;
 
 void limba_lxs_init(limba_lxs *S, limba_lx_ast *t, limba_lx *lx,
@@ -162,7 +215,47 @@ void limba_lxs_free(limba_lxs *S);
 /* the whole program at t->root */
 void limba_lxs_check(limba_lxs *S);
 
+/* a file of the program, for the driver before limba_lxs_check: its
+   index (the first one added is units[0]) */
+uint32_t limba_lxs_unit_add(limba_lxs *S, uint32_t root, uint32_t first,
+                            uint32_t last, bool library);
+
 /* ---- inside the semantic phase ---- */
+
+/* the text at a place, the length of the name that starts there */
+const char *lxs_text_at(const limba_lxs *S, limba_loc loc);
+uint32_t lxs_ident_len(const char *s);
+
+/* units (sema_unit.c) */
+/* a new scope, in the file and part of its parent */
+uint32_t lxs_scope_new(limba_lxs *S, uint32_t parent, unsigned kind);
+/* the file of a scope, of a node; is the scope an implementation */
+uint32_t lxs_unit_of(const limba_lxs *S, uint32_t scope, bool *impl);
+uint32_t lxs_unit_at(const limba_lxs *S, uint32_t node);
+/* the name in scope, through the units it uses (§ 11.3): 0 if none;
+   node, if not 0, is where the errors and warnings go */
+limba_sym lxs_find(limba_lxs *S, uint32_t scope, uint32_t name, uint32_t node);
+/* Unit.Name: the symbol, 0 (reported) if none */
+limba_sym lxs_qualified(limba_lxs *S, uint32_t scope, uint32_t unit,
+                        uint32_t name, uint32_t node);
+/* is there a restriction no_external where node is (§ 10.4, § 11.6) */
+bool lxs_restricted(const limba_lxs *S, uint32_t node);
+/* a declaration at the level of a file: the names of units it may not
+   take, the names of units it hides (§ 11.3) */
+bool lxs_unit_declare(limba_lxs *S, uint32_t scope, uint32_t name_node);
+/* record what is being checked uses: a routine called, a variable of a
+   file read or written */
+void lxs_use(limba_lxs *S, limba_sym what, uint32_t node, bool write);
+/* the units: their scopes, names and declarations, bodies and
+   initialisations; then the order of the initialisations */
+void lxs_check_units(limba_lxs *S);
+/* after the bodies: pragmas hides that hid nothing, units never named,
+   what is reached, the order of the initialisations */
+void lxs_unit_warnings(limba_lxs *S);
+void lxs_unit_free(limba_lxs *S);
+/* the heading of a routine whose body is in the implementation, 0 if
+   none */
+uint32_t lxs_heading(const limba_lxs *S, limba_sym s);
 
 void lxs_error(limba_lxs *S, unsigned code, uint32_t node, const char *fmt, ...)
     __attribute__((format(printf, 4, 5)));

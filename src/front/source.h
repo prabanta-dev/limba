@@ -20,6 +20,7 @@ typedef uint32_t limba_loc;
 
 typedef struct {
     char *path;     /* as given */
+    char *irname;   /* the name in the positions of the IR, NULL: path */
     char *text;     /* the bytes, followed by a NUL */
     uint32_t len;   /* without the NUL */
     limba_loc base; /* the position of text[0]; text[len] is base + len */

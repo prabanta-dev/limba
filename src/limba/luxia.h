@@ -19,6 +19,7 @@
 int limba_luxia_main(const char *in, const char *emit, const char *outpath,
                      bool check, int level, const limba_opt_options *opt,
                      const char *suppress, const char *target,
-                     const char *restrict_);
+                     const char *restrict_, const char *const *unit_path,
+                     const char *stdlib);
 
 #endif

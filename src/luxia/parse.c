@@ -203,17 +203,25 @@ uint32_t limba_lxp_type(limba_lxp *P)
     limba_loc loc = lxp_loc(P);
     switch (lxp_kind(P)) {
     case LX_IDENT: {
-        uint32_t name = P->lx->tok[P->pos].val, lo = 0, hi = 0;
+        uint32_t name = P->lx->tok[P->pos].val, lo = 0, hi = 0, unit = 0;
         limba_lxp_next(P);
+        if (lxp_kind(P) == LX_DOT && P->lx->tok[P->pos + 1].kind == LX_IDENT) {
+            /* Unit.Name (§ 11.3): the unit a REF, the place the name's */
+            unit = lxp_node(P, LXN_REF, loc, name, 0, 0, 0);
+            limba_lxp_next(P);
+            loc = lxp_loc(P);
+            name = P->lx->tok[P->pos].val;
+            limba_lxp_next(P);
+        }
         if (limba_lxp_accept(P, LX_KW_RANGE)) {
             /* I range <>: the bounds come with the argument (Ada's box) */
             if (limba_lxp_accept(P, LX_NE))
-                return lxp_node(P, LXN_TBOX, loc, name, 0, 0, 0);
+                return lxp_node(P, LXN_TBOX, loc, name, unit, 0, 0);
             lo = limba_lxp_expr(P, LXP_SIMPLE);
             limba_lxp_expect(P, LX_DOTDOT, "between the bounds of a range");
             hi = limba_lxp_expr(P, LXP_SIMPLE);
         }
-        return lxp_node(P, LXN_TNAME, loc, name, lo, hi, 0);
+        return lxp_node(P, LXN_TNAME, loc, name, lo, hi, unit);
     }
     case LX_KW_NEW:
         limba_lxp_next(P);
@@ -360,9 +368,15 @@ static void end_name(limba_lxp *P, uint32_t name)
     limba_lxp_next(P);
 }
 
-static uint32_t decls(limba_lxp *P, bool top);
+/* where a declaration list is: in a routine, at the level of a program
+   or of the implementation of a unit, in the interface of a unit */
+enum { LXP_LOCAL, LXP_TOP, LXP_INTERFACE };
 
-static uint32_t routine(limba_lxp *P)
+static uint32_t decls(limba_lxp *P, unsigned where, uint32_t first);
+
+/* a routine; in an interface only its heading (no body: d is 0), or a
+   whole external one */
+static uint32_t routine(limba_lxp *P, bool heading)
 {
     limba_loc loc = lxp_loc(P);
     unsigned kind = lxp_kind(P);
@@ -413,7 +427,12 @@ static uint32_t routine(limba_lxp *P)
         P->t->node[r].op = (uint8_t)kind;
         return r;
     }
-    uint32_t locals = decls(P, false);
+    if (heading) {
+        uint32_t r = lxp_node(P, LXN_ROUTINE, loc, name, ps, result, 0);
+        P->t->node[r].op = (uint8_t)kind;
+        return r;
+    }
+    uint32_t locals = decls(P, LXP_LOCAL, 0);
     uint32_t begin = P->pos;
     limba_loc bloc = lxp_loc(P);
     limba_lxp_expect(P, LX_KW_BEGIN, NULL);
@@ -437,16 +456,62 @@ uint32_t limba_lxp_pragma(limba_lxp *P)
     else
         limba_lxp_expected(P, "the name of the pragma");
     if (limba_lxp_expect(P, LX_LPAREN, "after the name of the pragma")) {
-        checks = limba_lxp_names(P);
+        /* names, or Unit.Name: a SEL of a REF (pragma hides, § 11.3) */
+        limba_loc lloc = lxp_loc(P);
+        uint32_t mark = limba_lx_list_begin(P->t);
+        do {
+            limba_loc nloc = lxp_loc(P);
+            uint32_t n = limba_lxp_name(P);
+            if (lxp_kind(P) == LX_DOT &&
+                P->lx->tok[P->pos + 1].kind == LX_IDENT) {
+                uint32_t u =
+                    lxp_node(P, LXN_REF, nloc, P->t->node[n].a, 0, 0, 0);
+                limba_loc dot = lxp_loc(P);
+                limba_lxp_next(P);
+                limba_loc floc = lxp_loc(P);
+                n = lxp_node(P, LXN_SEL, dot, u, P->lx->tok[P->pos].val, floc,
+                             0);
+                limba_lxp_next(P);
+            }
+            limba_lx_list_push(P->t, n);
+        } while (limba_lxp_accept(P, LX_COMMA));
+        checks = limba_lx_list_end(P->t, mark, lloc);
         limba_lxp_expect(P, LX_RPAREN, "after the names of the checks");
     }
     return lxp_node(P, LXN_PRAGMA, loc, name, checks, 0, 0);
 }
 
-static uint32_t decls(limba_lxp *P, bool top)
+/* a uses clause, if there is one: a USES node, else 0 */
+static uint32_t uses(limba_lxp *P)
+{
+    if (lxp_kind(P) != LX_KW_USES)
+        return 0;
+    limba_loc loc = lxp_loc(P);
+    limba_lxp_next(P);
+    uint32_t mark = limba_lx_list_begin(P->t);
+    do {
+        limba_loc nloc = lxp_loc(P);
+        if (lxp_kind(P) != LX_IDENT) {
+            limba_lxp_expected(P, "the name of a unit");
+            break;
+        }
+        limba_lx_list_push(
+            P->t, lxp_node(P, LXN_REF, nloc, P->lx->tok[P->pos].val, 0, 0, 0));
+        limba_lxp_next(P);
+    } while (limba_lxp_accept(P, LX_COMMA));
+    limba_lxp_expect(P, LX_SEMI, "after the units used");
+    uint32_t list = limba_lx_list_end(P->t, mark, loc);
+    return lxp_node(P, LXN_USES, loc, list, 0, 0, 0);
+}
+
+/* the declarations of a part, first (a USES node, or 0) at their head */
+static uint32_t decls(limba_lxp *P, unsigned where, uint32_t first)
 {
     limba_loc loc = lxp_loc(P);
     uint32_t mark = limba_lx_list_begin(P->t);
+    bool top = where != LXP_LOCAL;
+    if (first)
+        limba_lx_list_push(P->t, first);
     for (;;) {
         unsigned k = lxp_kind(P);
         switch (k) {
@@ -474,13 +539,35 @@ static uint32_t decls(limba_lxp *P, bool top)
                 limba_lxp_error(P, LXE_NESTED_ROUTINE, P->pos,
                                 "a routine cannot be declared inside "
                                 "another one in Luxia 0");
-            limba_lx_list_push(P->t, routine(P));
+            limba_lx_list_push(P->t, routine(P, where == LXP_INTERFACE));
+            break;
+        case LX_KW_USES:
+            limba_lxp_error(P, LXE_EXPECTED, P->pos,
+                            "a uses clause goes at the head of the "
+                            "program, of the interface or of the "
+                            "implementation, before any declaration");
+            uses(P);
+            break;
+        case LX_KW_IMPLEMENTATION:
+            if (where == LXP_INTERFACE)
+                return limba_lx_list_end(P->t, mark, loc);
+            limba_lxp_expected(P, "a declaration or 'begin'");
+            limba_lxp_next(P);
+            break;
+        case LX_KW_END:
+            if (where == LXP_TOP && P->unit)
+                return limba_lx_list_end(P->t, mark, loc);
+            limba_lxp_expected(P, "a declaration or 'begin'");
+            limba_lxp_next(P);
+            sync_decl(P);
             break;
         case LX_KW_BEGIN:
         case LX_EOF:
             return limba_lx_list_end(P->t, mark, loc);
         default:
-            limba_lxp_expected(P, "a declaration or 'begin'");
+            limba_lxp_expected(P, where == LXP_INTERFACE
+                                      ? "a declaration or 'implementation'"
+                                      : "a declaration or 'begin'");
             limba_lxp_next(P);
             sync_decl(P);
         }
@@ -497,7 +584,8 @@ static void program(limba_lxp *P)
         name = limba_lxp_name(P);
         limba_lxp_expect(P, LX_SEMI, "after the name of the program");
     }
-    uint32_t ds = decls(P, true);
+    uint32_t u = uses(P);
+    uint32_t ds = decls(P, LXP_TOP, u);
     uint32_t begin = P->pos;
     if (limba_lxp_expect(P, LX_KW_BEGIN, "and the statements of the program")) {
         body = limba_lxp_stmts(P);
@@ -513,12 +601,48 @@ static void program(limba_lxp *P)
     P->t->root = lxp_node(P, LXN_PROGRAM, loc, name, ds, body, 0);
 }
 
-void limba_lx_parse(limba_lx_ast *t, const limba_lx *lx,
-                    const limba_source *src, limba_report *rep)
+/* unit Name; interface [uses] ... implementation [uses] ... [begin ...]
+   end [Name]. (§ 11.2) */
+static void unit(limba_lxp *P)
 {
-    limba_lxp P = {lx, t, rep, src, 0, UINT32_MAX};
+    limba_loc loc = lxp_loc(P);
+    limba_lxp_next(P);
+    P->unit = true;
+    uint32_t name = 0, body = 0;
+    if (lxp_kind(P) == LX_IDENT) {
+        name = limba_lxp_name(P);
+        limba_lxp_expect(P, LX_SEMI, "after the name of the unit");
+    } else {
+        limba_lxp_expected(P, "the name of the unit");
+    }
+    limba_lxp_expect(P, LX_KW_INTERFACE, "after 'unit Name;'");
+    uint32_t iu = uses(P);
+    uint32_t intf = decls(P, LXP_INTERFACE, iu);
+    limba_lxp_expect(P, LX_KW_IMPLEMENTATION, "after the interface");
+    uint32_t mu = uses(P);
+    uint32_t impl = decls(P, LXP_TOP, mu);
+    uint32_t begin = P->pos;
+    if (limba_lxp_accept(P, LX_KW_BEGIN)) {
+        body = limba_lxp_stmts(P);
+        limba_lxp_end(P, begin);
+    } else {
+        limba_lxp_expect(P, LX_KW_END, "at the end of the unit");
+    }
+    end_name(P, name);
+    limba_lxp_expect(P, LX_DOT, "after the end of the unit");
+    if (lxp_kind(P) != LX_EOF)
+        limba_lxp_error(P, LXE_AFTER_END, P->pos,
+                        "nothing may follow the end of the unit");
+    P->t->root = lxp_node(P, LXN_UNIT, loc, name, intf, impl, body);
+}
+
+uint32_t limba_lx_parse_at(limba_lx_ast *t, const limba_lx *lx,
+                           const limba_source *src, limba_report *rep,
+                           uint32_t first)
+{
+    limba_lxp P = {lx, t, rep, src, first, UINT32_MAX, false};
     if (lx->unread)
-        return; /* reported by the lexer: an error per token would echo it */
+        return 0; /* reported by the lexer: an error per token would echo */
     /* room for a node a token and as many list members: no copies as the
        tree grows */
     if (t->capnode < lx->ntok + 16) {
@@ -529,13 +653,23 @@ void limba_lx_parse(limba_lx_ast *t, const limba_lx *lx,
         t->cappool = lx->ntok + 16;
         t->pool = limba_xrealloc(t->pool, t->cappool, sizeof(*t->pool));
     }
-    program(&P);
+    if (lxp_kind(&P) == LX_KW_UNIT)
+        unit(&P);
+    else
+        program(&P);
+    return t->root;
+}
+
+void limba_lx_parse(limba_lx_ast *t, const limba_lx *lx,
+                    const limba_source *src, limba_report *rep)
+{
+    limba_lx_parse_at(t, lx, src, rep, 0);
 }
 
 void limba_lx_parse_expr(limba_lx_ast *t, const limba_lx *lx,
                          const limba_source *src, limba_report *rep)
 {
-    limba_lxp P = {lx, t, rep, src, 0, UINT32_MAX};
+    limba_lxp P = {lx, t, rep, src, 0, UINT32_MAX, false};
     t->root = limba_lxp_expr(&P, LXP_EXPR);
     if (lxp_kind(&P) != LX_EOF)
         limba_lxp_expected(&P, "the end of the expression");

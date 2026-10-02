@@ -53,6 +53,26 @@ bool lxl_scalar(const lxl *L, limba_ltype t)
     return false;
 }
 
+/* the name in the IR of a symbol: a unit's after its name, one of the
+   library after $std. too (§ 7 of the proposal), then suffix */
+static void sym_text(lxl *L, limba_sym s, const char *suffix, char *buf,
+                     size_t cap)
+{
+    limba_lxs *S = L->S;
+    size_t n;
+    const char *sp = lxs_spell(S, s, &n);
+    bool impl;
+    uint32_t u = S->nunits ? lxs_unit_of(S, S->st.sym[s].scope, &impl) : 0;
+    const limba_lx_node *r = S->nunits ? &S->t->node[S->units[u].root] : NULL;
+    if (r && r->kind == LXN_UNIT && r->a) {
+        const char *un = lxs_text_at(S, S->t->node[r->a].loc);
+        snprintf(buf, cap, "%s%.*s.%.*s%s", S->units[u].library ? "$std." : "",
+                 (int)lxs_ident_len(un), un, (int)n, sp, suffix);
+    } else {
+        snprintf(buf, cap, "%.*s%s", (int)n, sp, suffix);
+    }
+}
+
 limba_id lxl_type(lxl *L, limba_ltype t)
 {
     if (L->tmap[t])
@@ -108,13 +128,10 @@ limba_id lxl_type(lxl *L, limba_ltype t)
             mem[i].type = lxl_type(L, f->type);
             mem[i].offset = (uint32_t)f->offset;
         }
-        char name[64];
+        char name[320];
         snprintf(name, sizeof(name), "record.%u", t);
-        if (x->name != UINT32_MAX) {
-            size_t n;
-            const char *s = lxs_spell(L->S, x->name, &n);
-            snprintf(name, sizeof(name), "%.*s", (int)n, s);
-        }
+        if (x->name != UINT32_MAX)
+            sym_text(L, x->name, "", name, sizeof(name));
         limba_id sn = limba_str_intern(L->m, name, strlen(name));
         r = limba_type_struct(L->m, sn, mem, x->count, (uint32_t)x->size,
                               x->align);
@@ -299,7 +316,9 @@ void lxl_at(lxl *L, uint32_t node)
             return;
         /* the name of the file, interned once while it does not change */
         if (w.file + 1 != L->pos_file) {
-            const char *path = src->file[w.file].path;
+            const char *path = src->file[w.file].irname
+                                   ? src->file[w.file].irname
+                                   : src->file[w.file].path;
             L->pos_file = w.file + 1;
             L->pos_name = limba_str_intern(L->m, path, strlen(path));
         }
@@ -1148,10 +1167,15 @@ static void end_function(lxl *L, uint32_t node, bool function)
     limba_ssa_finish_edit(L->ssa, undefined, L, &e);
     limba_ssa_free(L->ssa);
     L->ssa = NULL;
-    if (L->done && !L->S->rep->errors)
-        L->stopped = !L->done(L->ctx, L->m, L->fid, &e);
-    else
+    if (L->dry) {
+        /* a routine no initialisation reaches: made for its errors */
         limba_edit_end(&e);
+        limba_func_clear(&L->m->funcs[L->fid]);
+    } else if (L->done && !L->S->rep->errors) {
+        L->stopped = !L->done(L->ctx, L->m, L->fid, &e);
+    } else {
+        limba_edit_end(&e);
+    }
 }
 
 static void routine_body(lxl *L, limba_sym s)
@@ -1230,6 +1254,127 @@ static void routine_body(lxl *L, limba_sym s)
 
 /* ---- the program ---- */
 
+/* the declarations of a part of a file: the interface of a unit (0 for
+   the program), its implementation or the program's (§ 11) */
+static uint32_t file_decls(lxl *L, uint32_t u, bool impl)
+{
+    const limba_lx_node *r = nd(L, L->S->units[u].root);
+    if (r->kind == LXN_UNIT)
+        return impl ? r->c : r->b;
+    return impl ? r->b : 0;
+}
+
+/* a symbol reached by an initialisation (all are, without units) */
+static bool reached(const lxl *L, limba_sym s)
+{
+    return !L->S->reached || L->S->reached[s];
+}
+
+/* a var declaration whose names are ready before any code runs: an
+   initial value constant, of a scalar type or a String (§ 11.5) */
+static bool ready_decl(lxl *L, uint32_t d)
+{
+    const limba_lx_node *x = nd(L, d);
+    if (!x->c || !L->S->val[x->c] || !list_n(L, x->a))
+        return false;
+    limba_sym s = L->S->sym[list_at(L, x->a, 0)];
+    limba_ltype t = s ? L->S->st.sym[s].type : 0;
+    if (!t)
+        return false;
+    unsigned k = ti(L, t)->kind;
+    return k != LIMBA_LTK_RECORD && k != LIMBA_LTK_ARRAY &&
+           k != LIMBA_LTK_BIGINT;
+}
+
+/* the name in the IR of a symbol, interned */
+static limba_id ir_name(lxl *L, limba_sym s, const char *suffix)
+{
+    char buf[320];
+    sym_text(L, s, suffix, buf, sizeof(buf));
+    return limba_str_intern(L->m, buf, strlen(buf));
+}
+
+/* the routines (those reached, or not) and the globals (the first time)
+   of a declaration list */
+static void declare(lxl *L, uint32_t decls, bool unreached)
+{
+    limba_lxs *S = L->S;
+    for (uint32_t i = 0; decls && i < list_n(L, decls); i++) {
+        uint32_t d = list_at(L, decls, i);
+        const limba_lx_node *x = nd(L, d);
+        if (x->kind == LXN_ROUTINE && S->sym[x->a] && x->d) {
+            limba_sym s = S->sym[x->a];
+            if (reached(L, s) == unreached)
+                continue;
+            limba_id name = ir_name(L, s, "");
+            if (lxl_external(L, s)) {
+                /* a routine of C: an extern of the module, its symbol
+                   the name as written unless name gives it */
+                const limba_lx_node *e = nd(L, x->d);
+                size_t ln, sn;
+                const char *lib =
+                    limba_strtab_get(L->S->lx->strings, e->a, &ln);
+                const char *sym =
+                    e->c ? limba_strtab_get(L->S->lx->strings, e->b, &sn)
+                         : lxs_spell(S, s, &sn);
+                limba_id eid = limba_extern_add(
+                    L->m, name, ext_type(L, s), limba_str_intern(L->m, sym, sn),
+                    limba_str_intern(L->m, lib, ln));
+                if (eid == LIMBA_NONE) {
+                    name = ir_name(L, s, ".external");
+                    eid = limba_extern_add(L->m, name, ext_type(L, s),
+                                           limba_str_intern(L->m, sym, sn),
+                                           limba_str_intern(L->m, lib, ln));
+                }
+                L->func_of[s] = eid;
+                continue;
+            }
+            limba_id fid = limba_func_add(L->m, name, func_type(L, s), 0);
+            if (fid == LIMBA_NONE) {
+                name = ir_name(L, s, ".routine");
+                fid = limba_func_add(L->m, name, func_type(L, s), 0);
+            }
+            L->func_of[s] = fid;
+        } else if (x->kind == LXN_VAR && !unreached) {
+            uint32_t names = x->a;
+            for (uint32_t k = 0; k < list_n(L, names); k++) {
+                limba_sym s = S->sym[list_at(L, names, k)];
+                if (!s || !S->st.sym[s].type)
+                    continue;
+                limba_id name = ir_name(L, s, "");
+                limba_id g = limba_global_add(
+                    L->m, name, lxl_type(L, S->st.sym[s].type), 0);
+                if (g == LIMBA_NONE) {
+                    name = ir_name(L, s, ".var");
+                    g = limba_global_add(L->m, name,
+                                         lxl_type(L, S->st.sym[s].type), 0);
+                }
+                L->store[s].kind = LXL_GLOBAL;
+                L->store[s].global = g;
+            }
+        }
+    }
+}
+
+/* the bodies of the routines of a declaration list of file u, reached
+   or not */
+static void bodies(lxl *L, uint32_t u, uint32_t decls, const unsigned *off,
+                   bool reach)
+{
+    limba_lxs *S = L->S;
+    for (uint32_t i = 0; decls && i < list_n(L, decls) && !L->stopped; i++) {
+        uint32_t d = list_at(L, decls, i);
+        const limba_lx_node *x = nd(L, d);
+        if (x->kind != LXN_ROUTINE || !S->sym[x->a] || !x->d)
+            continue;
+        limba_sym s = S->sym[x->a];
+        if (lxl_external(L, s) || reached(L, s) != reach)
+            continue;
+        L->suppress = off[u];
+        routine_body(L, s);
+    }
+}
+
 limba_module *limba_lxl_program(limba_lxs *S)
 {
     return limba_lxl_program_each(S, NULL, NULL);
@@ -1261,112 +1406,99 @@ limba_module *limba_lxl_program_each(limba_lxs *S,
     L->tmap = limba_xcalloc(S->ts.n + 1, sizeof(*L->tmap));
     L->node_pos = limba_xcalloc(S->t->nnode + 1, sizeof(*L->node_pos));
     scan_taken(L);
-    L->suppress = S->suppress;
-    pragmas(L, nd(L, S->t->root)->b); /* for the whole file */
-
-    limba_lx_node *p = nd(L, S->t->root);
-    uint32_t decls = p->b, body = p->c;
+    /* the files in the order of their initialisations, the program last
+       (§ 11.5); the checks each file turns off for the whole of it */
+    uint32_t nu = S->nunits;
+    uint32_t *files = limba_xcalloc(nu, sizeof(*files));
+    unsigned *off = limba_xcalloc(nu, sizeof(*off));
+    for (uint32_t u = 0; u < nu; u++)
+        files[S->units[u].order < nu ? S->units[u].order : u] = u;
+    for (uint32_t u = 0; u < nu; u++) {
+        L->suppress = S->suppress;
+        for (int part = 0; part < 2; part++)
+            pragmas(L, file_decls(L, u, part == 1));
+        off[u] = L->suppress;
+    }
     limba_id main_name = limba_str_intern(L->m, "main", 4);
     limba_id main_type = limba_type_func(L->m, LIMBA_T_VOID, NULL, 0, false);
     limba_id main_fid =
         limba_func_add(L->m, main_name, main_type, LIMBA_SYM_EXPORT);
-    /* the routines and the globals, named as declared */
-    for (uint32_t i = 0; i < list_n(L, decls); i++) {
-        uint32_t d = list_at(L, decls, i);
-        const limba_lx_node *x = nd(L, d);
-        if (x->kind == LXN_ROUTINE && S->sym[x->a]) {
-            limba_sym s = S->sym[x->a];
-            size_t n;
-            const char *sp = lxs_spell(S, s, &n);
-            limba_id name = limba_str_intern(L->m, sp, n);
-            if (lxl_external(L, s)) {
-                /* a routine of C: an extern of the module, its symbol
-                   the name as written unless name gives it */
-                const limba_lx_node *e = nd(L, x->d);
-                size_t ln, sn;
-                const char *lib =
-                    limba_strtab_get(L->S->lx->strings, e->a, &ln);
-                const char *sym =
-                    e->c ? limba_strtab_get(L->S->lx->strings, e->b, &sn)
-                         : lxs_spell(S, s, &sn);
-                limba_id eid = limba_extern_add(
-                    L->m, name, ext_type(L, s), limba_str_intern(L->m, sym, sn),
-                    limba_str_intern(L->m, lib, ln));
-                if (eid == LIMBA_NONE) {
-                    char buf[160];
-                    snprintf(buf, sizeof(buf), "%.*s.external", (int)n, sp);
-                    name = limba_str_intern(L->m, buf, strlen(buf));
-                    eid = limba_extern_add(L->m, name, ext_type(L, s),
-                                           limba_str_intern(L->m, sym, sn),
-                                           limba_str_intern(L->m, lib, ln));
-                }
-                L->func_of[s] = eid;
-                continue;
-            }
-            limba_id fid = limba_func_add(L->m, name, func_type(L, s), 0);
-            if (fid == LIMBA_NONE) {
-                char buf[160];
-                snprintf(buf, sizeof(buf), "%.*s.routine", (int)n, sp);
-                name = limba_str_intern(L->m, buf, strlen(buf));
-                fid = limba_func_add(L->m, name, func_type(L, s), 0);
-            }
-            L->func_of[s] = fid;
-        } else if (x->kind == LXN_VAR) {
-            uint32_t names = x->a;
-            for (uint32_t k = 0; k < list_n(L, names); k++) {
-                limba_sym s = S->sym[list_at(L, names, k)];
-                if (!s || !S->st.sym[s].type)
-                    continue;
-                size_t n;
-                const char *sp = lxs_spell(S, s, &n);
-                limba_id name = limba_str_intern(L->m, sp, n);
-                limba_id g = limba_global_add(
-                    L->m, name, lxl_type(L, S->st.sym[s].type), 0);
-                if (g == LIMBA_NONE) {
-                    char buf[160];
-                    snprintf(buf, sizeof(buf), "%.*s.var", (int)n, sp);
-                    name = limba_str_intern(L->m, buf, strlen(buf));
-                    g = limba_global_add(L->m, name,
-                                         lxl_type(L, S->st.sym[s].type), 0);
-                }
-                L->store[s].kind = LXL_GLOBAL;
-                L->store[s].global = g;
-            }
+    /* the routines and the globals, named as declared, a unit's after its
+       name: the routines reached first, those no initialisation reaches
+       after, to be dropped once their errors are known (§ 7 of the
+       proposal: only what is reached goes in the IR) */
+    for (int pass = 0; pass < 2; pass++) {
+        for (uint32_t k = 0; k < nu; k++)
+            for (int part = 0; part < 2; part++)
+                declare(L, file_decls(L, files[k], part == 1), pass == 1);
+        if (pass == 0) {
+            L->kept_funcs = L->m->nfuncs;
+            L->kept_externs = L->m->nexterns;
         }
     }
-    for (uint32_t i = 0; i < list_n(L, decls) && !L->stopped; i++) {
-        uint32_t d = list_at(L, decls, i);
-        const limba_lx_node *x = nd(L, d);
-        if (x->kind == LXN_ROUTINE && S->sym[x->a] &&
-            !lxl_external(L, S->sym[x->a]))
-            routine_body(L, S->sym[x->a]);
-    }
+    /* the routines not reached: their errors (a missing return, a
+       variable read before a value), then they go */
+    L->dry = true;
+    for (uint32_t k = 0; k < nu && !L->stopped; k++)
+        for (int part = 0; part < 2; part++)
+            bodies(L, files[k], file_decls(L, files[k], part == 1), off, false);
+    L->dry = false;
+    limba_module_truncate(L->m, L->kept_funcs, L->kept_externs);
+    for (uint32_t k = 0; k < nu && !L->stopped; k++)
+        for (int part = 0; part < 2; part++)
+            bodies(L, files[k], file_decls(L, files[k], part == 1), off, true);
     if (L->stopped)
         goto done;
-    /* main: the records and arrays without a value (§ 4.5), the initial
-       values of the globals, then the body */
+    /* main: the records and arrays without a value (§ 4.5) and the
+       variables ready at once, of every file; then each initialisation:
+       the initial values computed, the begin ... end of a unit; the
+       program's body last */
     L->result = 0;
     begin_function(L, main_fid);
-    for (uint32_t i = 0; i < list_n(L, decls); i++) {
-        uint32_t d = list_at(L, decls, i);
-        const limba_lx_node *x = nd(L, d);
-        if (x->kind != LXN_VAR || x->c)
-            continue;
-        for (uint32_t k = 0; k < list_n(L, x->a); k++) {
-            limba_sym s = S->sym[list_at(L, x->a, k)];
-            limba_ltype t = s ? S->st.sym[s].type : 0;
-            if (t && !lxl_scalar(L, t) && lxl_has_narrow(L, t))
-                lxl_invalidate(L, lxl_var_addr(L, s), 0, t);
+    for (uint32_t k = 0; k < nu; k++) {
+        uint32_t u = files[k];
+        L->suppress = off[u];
+        for (int part = 0; part < 2; part++) {
+            uint32_t decls = file_decls(L, u, part == 1);
+            for (uint32_t i = 0; decls && i < list_n(L, decls); i++) {
+                uint32_t d = list_at(L, decls, i);
+                const limba_lx_node *x = nd(L, d);
+                if (x->kind != LXN_VAR)
+                    continue;
+                if (x->c) {
+                    if (ready_decl(L, d))
+                        var_decl(L, d);
+                    continue;
+                }
+                for (uint32_t m = 0; m < list_n(L, x->a); m++) {
+                    limba_sym s = S->sym[list_at(L, x->a, m)];
+                    limba_ltype t = s ? S->st.sym[s].type : 0;
+                    if (t && !lxl_scalar(L, t) && lxl_has_narrow(L, t))
+                        lxl_invalidate(L, lxl_var_addr(L, s), 0, t);
+                }
+            }
         }
     }
-    for (uint32_t i = 0; i < list_n(L, decls); i++) {
-        uint32_t d = list_at(L, decls, i);
-        const limba_lx_node *x = nd(L, d);
-        if (x->kind == LXN_VAR && x->c)
-            var_decl(L, d);
+    uint32_t last = 0;
+    for (uint32_t k = 0; k < nu; k++) {
+        uint32_t u = files[k];
+        L->suppress = off[u];
+        for (int part = 0; part < 2; part++) {
+            uint32_t decls = file_decls(L, u, part == 1);
+            for (uint32_t i = 0; decls && i < list_n(L, decls); i++) {
+                uint32_t d = list_at(L, decls, i);
+                const limba_lx_node *x = nd(L, d);
+                if (x->kind == LXN_VAR && x->c && !ready_decl(L, d))
+                    var_decl(L, d);
+            }
+        }
+        const limba_lx_node *r = nd(L, S->units[u].root);
+        uint32_t body = r->kind == LXN_UNIT ? r->d : r->c;
+        if (body)
+            stmts(L, body);
+        last = S->units[u].root;
     }
-    stmts(L, body);
-    end_function(L, S->t->root, false);
+    end_function(L, last, false);
 
 done:
     free(L->store);
@@ -1381,6 +1513,8 @@ done:
     free(L->node_pos);
     free(L->lvn);
     free(L->via);
+    free(files);
+    free(off);
     if (S->rep->errors) {
         limba_module_free(L->m);
         return NULL;

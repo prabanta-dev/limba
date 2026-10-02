@@ -1312,6 +1312,322 @@ end.
 prog.luxia:6:5: error[L0063]: a field is reached through a pointer without '^': write p.x, not p^.x
 ```
 
+### L0064 — UNIT NOT FOUND
+
+A unit used is in the file of its name in lowercase, looked for in the
+directory of the program, then in the directories of `-I`, then in the
+standard library (§ 11.4).
+
+```pascal
+program p;
+uses Shapes;
+begin
+end.
+```
+
+```
+prog.luxia:2:6: error[L0064]: the unit 'Shapes' is not found: no shapes.luxia in the directory of the program
+```
+
+### L0065 — FILE OF ANOTHER UNIT
+
+The file `shapes.luxia` holds the unit `Shapes`, in any spelling; a
+program is not a unit (§ 11.4).
+
+```pascal
+// prog.luxia
+program p;
+uses Shapes;
+begin
+end.
+
+// shapes.luxia
+unit Forms;
+interface
+implementation
+end Forms.
+```
+
+```
+shapes.luxia:1:1: error[L0065]: shapes.luxia holds the unit 'Forms', not 'Shapes': a unit is in the file of its name, in lowercase
+```
+
+### L0066 — INTERFACES THAT USE EACH OTHER
+
+Two units may use each other only if one of the two `uses` is in an
+implementation; a unit does not use itself (§ 11.3).
+
+```pascal
+// left.luxia
+unit Left;
+interface
+uses Right;
+implementation
+end Left.
+
+// right.luxia
+unit Right;
+interface
+uses Left;
+implementation
+end Right.
+```
+
+```
+right.luxia:3:6: error[L0066]: the interfaces use each other: Left -> Right -> Left; one of the uses goes in an implementation
+```
+
+### L0067 — UNIT USED TWICE
+
+A unit is named once in the `uses` of a file, the two parts of a unit
+together (§ 11.3).
+
+```pascal
+program p;
+uses Shapes, Shapes;
+begin
+end.
+```
+
+```
+prog.luxia:2:14: error[L0067]: 'Shapes' is already used here
+```
+
+### L0068 — ROUTINE WITHOUT BODY
+
+Every routine of an interface has its body in the implementation, unless
+it is external (§ 11.2).
+
+```pascal
+unit Shapes;
+interface
+procedure Draw();
+implementation
+end Shapes.
+```
+
+```
+shapes.luxia:3:11: error[L0068]: 'Draw' has no body in the implementation
+```
+
+### L0069 — HEADING NOT CONFORMING
+
+The heading of a body conforms to the one of the interface: the same
+kind, names, spelling, order and modes; the same types, however written
+(§ 11.2).
+
+```pascal
+unit Shapes;
+interface
+function Area(side: Int64): Int64;
+implementation
+function Area(s: Int64): Int64;
+begin
+  return s * s;
+end;
+end Shapes.
+```
+
+```
+shapes.luxia:5:10: error[L0069]: the heading is not the one of the interface: the parameter 's' is 'side' in the interface
+shapes.luxia:3:1: note: the heading in the interface
+```
+
+### L0070 — AMBIGUOUS NAME
+
+A name written directly that two units of the same level give is an
+error where it is used; the qualified form says which (§ 11.3).
+
+```pascal
+// prog.luxia
+program p;
+uses Shapes, Solids;
+begin
+  writeln(Volume(2));
+end.
+```
+
+Both `Shapes` and `Solids` declare `Volume` in their interface.
+
+```
+prog.luxia:4:11: error[L0070]: 'Volume' is given by 'Shapes' and by 'Solids': write Shapes.Volume or Solids.Volume
+```
+
+### L0071 — NAME THAT HIDES ONE OF A UNIT
+
+A warning. A declaration of the file hides a name of a unit it uses,
+unless `pragma hides(Unit.Name)` says it is meant; a name of a unit of
+the program written directly hides one of the library (§ 11.3).
+
+```pascal
+program p;
+uses Shapes;     // Shapes declares Sides
+var Sides: Int64 := 3;
+begin
+  writeln(Sides, Shapes.Sides);
+end.
+```
+
+```
+prog.luxia:3:5: warning[L0071]: 'Sides' hides 'Shapes.Sides': if it is meant, say it with pragma hides(Shapes.Sides)
+```
+
+### L0072 — NAME OF A UNIT DECLARED
+
+The name of a unit the file uses, or of the unit itself, is not declared
+in the file, at any level but the fields of a record; a unit is not named
+as a name of the language (§ 11.3).
+
+```pascal
+program p;
+uses Shapes;
+var Shapes: Int64;
+begin
+end.
+```
+
+```
+prog.luxia:3:5: error[L0072]: 'Shapes' is the name of a unit used here: it cannot be declared in this file
+```
+
+### L0073 — NOT IN THE INTERFACE
+
+`Unit.Name` names what the interface of the unit declares (§ 11.3).
+
+```pascal
+program p;
+uses Shapes;     // Hidden is declared in its implementation
+begin
+  writeln(Shapes.Hidden);
+end.
+```
+
+```
+prog.luxia:4:18: error[L0073]: 'Hidden' is not in the interface of 'Shapes'
+```
+
+### L0074 — VARIABLE OF AN INTERFACE WRITTEN
+
+Outside its unit a variable of an interface is read only: it is not
+assigned, nor passed as `var` or `out`, nor are its fields and elements
+(§ 11.3).
+
+```pascal
+program p;
+uses Counter;    // its interface declares var count: Int64
+begin
+  Counter.count := 0;
+end.
+```
+
+```
+prog.luxia:4:11: error[L0074]: 'count' is a variable of an interface: outside its unit it is read only; change it with a routine of the unit
+```
+
+### L0075 — RETURN IN AN INITIALISATION
+
+The initialisation of a unit ends at its end (§ 11.5).
+
+```pascal
+unit Counter;
+interface
+var count: Int64;
+implementation
+begin
+  count := 1;
+  return;
+end Counter.
+```
+
+```
+counter.luxia:7:3: error[L0075]: the initialisation of a unit has no return: it ends at its end
+```
+
+### L0076 — INITIALISATIONS THAT NEED EACH OTHER
+
+The order of the initialisations is computed from what they can read and
+write; when the constraints form a circle there is no order. The
+constraint comes from the text, a branch that never runs included
+(§ 11.5).
+
+```pascal
+// left.luxia
+unit Left;
+interface
+var a: Int64;
+implementation
+uses Right;
+begin
+  a := Right.b + 1;
+end Left.
+
+// right.luxia
+unit Right;
+interface
+var b: Int64;
+implementation
+uses Left;
+begin
+  b := Left.a + 1;
+end Right.
+```
+
+```
+left.luxia:1:6: error[L0076]: the initialisations need each other: Left after Right (the initialisation of Left can reach Right.b at left.luxia:7:14); Right after Left (the initialisation of Right can reach Left.a at right.luxia:7:13); the constraint comes from the text, also from a branch that never runs: move the code
+```
+
+### L0077 — UNIT NEVER NAMED
+
+A warning: a unit used and never named in the file (§ 11.3).
+
+```pascal
+program p;
+uses Shapes;
+begin
+end.
+```
+
+```
+prog.luxia:2:6: warning[L0077]: 'Shapes' is used but never named
+```
+
+### L0078 — PRAGMA HIDES THAT HIDES NOTHING
+
+A warning: `pragma hides(Unit.Name)` and no declaration of the file
+hides that name (§ 11.3).
+
+```pascal
+program p;
+uses Shapes;
+pragma hides(Shapes.Corners);
+begin
+  writeln(Shapes.Corners);
+end.
+```
+
+```
+prog.luxia:3:21: warning[L0078]: pragma hides: no declaration of the file hides 'Corners'
+```
+
+### L0079 — ROUTINE OF C OF THE LIBRARY REACHED
+
+Under the program's `pragma restrictions(no_external)` (or `limba
+--restrict=no_external`) the standard library may declare external
+routines, but the program may reach none of them (§ 10.4).
+
+```pascal
+program p;
+uses Net;        // of the library: Open calls a routine of C
+pragma restrictions(no_external);
+begin
+  writeln(Net.Open());
+end.
+```
+
+```
+prog.luxia:5:15: error[L0079]: pragma restrictions(no_external) forbids the boundary with C, which the library crosses here: the routine of C 'Connect', called by Open, reached from the program
+```
+
 ## All the codes
 
 | Code | Name | Meaning |
@@ -1379,3 +1695,19 @@ prog.luxia:6:5: error[L0063]: a field is reached through a pointer without '^': 
 | L0061 | RESTRICTED | the boundary with C where `pragma restrictions(no_external)` forbids it |
 | L0062 | C_PRAGMA | `pragma convention` or `restrictions` written wrong |
 | L0063 | DEREF_SELECT | a field or an element after `^` (`p^.x`, `p^[i]`) |
+| L0064 | UNIT_NOT_FOUND | a unit used that no file holds |
+| L0065 | UNIT_FILE | a file named not as its unit, or a program used as a unit |
+| L0066 | UNIT_CYCLE | interfaces that use each other |
+| L0067 | UNIT_TWICE | a unit named twice in the uses |
+| L0068 | NO_BODY | a routine of the interface without its body |
+| L0069 | NOT_CONFORMING | a body whose heading is not the one of the interface |
+| L0070 | AMBIGUOUS | a name written directly that two units give |
+| L0071 | HIDES | warning: a name that hides one of a unit used |
+| L0072 | UNIT_NAME | the name of a unit used declared in the file |
+| L0073 | NOT_IN_INTERFACE | `Unit.Name`, Name not in its interface |
+| L0074 | READ_ONLY | a variable of an interface written outside its unit |
+| L0075 | INIT_RETURN | `return` in the initialisation of a unit |
+| L0076 | INIT_ORDER | initialisations that need each other |
+| L0077 | UNIT_UNUSED | warning: a unit used and never named |
+| L0078 | HIDES_NOTHING | warning: `pragma hides` that hides nothing |
+| L0079 | LIBRARY_C | a routine of C of the library reached under `restrictions(no_external)` |

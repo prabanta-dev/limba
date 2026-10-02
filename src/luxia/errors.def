@@ -76,3 +76,29 @@ LX_ERROR(62, C_PRAGMA)          /* pragma convention or restrictions
                                    written wrong (§ 3.13, § 10.4) */
 LX_ERROR(63, DEREF_SELECT)      /* p^.x or p^[i]: one form, p.x and p[i]
                                    (§ 3.10) */
+/* units (§ 11) */
+LX_ERROR(64, UNIT_NOT_FOUND)    /* a unit used that no file holds */
+LX_ERROR(65, UNIT_FILE)         /* a file named not as its unit, or a
+                                   program where a unit is used */
+LX_ERROR(66, UNIT_CYCLE)        /* interfaces that use each other */
+LX_ERROR(67, UNIT_TWICE)        /* a unit named twice in the uses */
+LX_ERROR(68, NO_BODY)           /* a routine of the interface without its
+                                   body in the implementation */
+LX_ERROR(69, NOT_CONFORMING)    /* a body whose heading is not the one of
+                                   the interface */
+LX_ERROR(70, AMBIGUOUS)         /* a name written directly that two units
+                                   give */
+LX_ERROR(71, HIDES)             /* warning: a name that hides one of a
+                                   unit used */
+LX_ERROR(72, UNIT_NAME)         /* the name of a unit used declared in the
+                                   file, or a unit named as the language */
+LX_ERROR(73, NOT_IN_INTERFACE)  /* Unit.Name, Name not in its interface */
+LX_ERROR(74, READ_ONLY)         /* a variable of an interface written
+                                   outside its unit */
+LX_ERROR(75, INIT_RETURN)       /* return in the initialisation of a unit */
+LX_ERROR(76, INIT_ORDER)        /* initialisations that need each other */
+LX_ERROR(77, UNIT_UNUSED)       /* warning: a unit used and never named */
+LX_ERROR(78, HIDES_NOTHING)     /* warning: pragma hides that hides
+                                   nothing */
+LX_ERROR(79, LIBRARY_C)         /* a routine of C of the library reached
+                                   under restrictions(no_external) */

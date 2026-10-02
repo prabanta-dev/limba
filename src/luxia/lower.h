@@ -137,6 +137,10 @@ typedef struct {
     bool (*done)(void *ctx, limba_module *m, limba_id fid, limba_edit *e);
     void *ctx;
     bool stopped; /* done said to stop */
+    /* a routine made only for its errors: not given, then dropped; the
+       functions and externs kept, those reached (§ 7 of the proposal) */
+    bool dry;
+    uint32_t kept_funcs, kept_externs;
 } lxl;
 
 /* IR types */

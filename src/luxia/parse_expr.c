@@ -187,7 +187,8 @@ uint32_t limba_lxp_designator(limba_lxp *P)
                 limba_lxp_expected(P, "the name of a field after '.'");
                 return d;
             }
-            d = lxp_node(P, LXN_SEL, loc, d, P->lx->tok[P->pos].val, 0, 0);
+            d = lxp_node(P, LXN_SEL, loc, d, P->lx->tok[P->pos].val,
+                         P->lx->tok[P->pos].loc, 0);
             limba_lxp_next(P);
             break;
         case LX_LBRACK:

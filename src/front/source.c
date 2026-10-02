@@ -22,6 +22,7 @@ void limba_source_free(limba_source *s)
 {
     for (uint32_t i = 0; i < s->count; i++) {
         free(s->file[i].path);
+        free(s->file[i].irname);
         free(s->file[i].text);
         free(s->file[i].line);
         free(s->file[i].ascii);
@@ -44,6 +45,7 @@ static uint32_t adopt(limba_source *s, const char *path, char *text, size_t len)
     size_t plen = strlen(path);
     f->path = limba_xmalloc(plen + 1);
     memcpy(f->path, path, plen + 1);
+    f->irname = NULL;
     f->text = text;
     f->len = (uint32_t)len;
     f->base = s->next;

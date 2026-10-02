@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- Units (specification § 11), in the compiler. `limba prog.luxia` reads
+  the program and every unit it uses and writes one `.lir`: `unit Name;
+  interface ... implementation ... [begin ... end] end Name.`, one `uses`
+  clause in each part, names written directly or qualified (in types
+  too), an ambiguous name an error where it is used, a declaration that
+  hides a name of a unit a warning unless `pragma hides(Unit.Name)` says
+  it is meant, bodies whose headings conform to the interface, variables
+  of an interface read only outside their unit, cycles of interfaces an
+  error and cycles through implementations allowed. The initialisations
+  run before the program in an order the compiler computes from what
+  they can read and write, through the calls (an error with the chain
+  when there is none); a variable ready at once orders nothing. Units are
+  found in the directory of the program, then with `-I DIR`; those of
+  the standard library (`--stdlib=DIR`) form a space of their own, which
+  the program never redirects. In the IR a unit's names follow it
+  (`Geometry.Distance`, `$std.` before the library's) and positions name
+  its file stably (`geometry.luxia`, `<I1>/...`, `<std>/...`). Only what
+  an initialisation reaches goes in the IR: a routine no call reaches is
+  still checked, then dropped with the routines of C only it called
+  (`limba_module_truncate`). Under `restrictions(no_external)` a routine
+  of C of the library reached is an error. The front end library takes
+  the directories and a reader of units in memory (three fields at the
+  end of `limba_luxia_options`); a unit compiled alone is checked and
+  gives nothing. Diagnostics L0064-L0079; keywords `unit`, `uses`,
+  `interface`, `implementation`.
+
 - The compiler follows the reviewed specification. `length(a)` is an
   `Int64` whatever the index, and so are the counts of `move`,
   `translate`, `reverse`, `occurrences`, `readbytes` and `writebytes`

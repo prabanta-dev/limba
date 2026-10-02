@@ -17,7 +17,7 @@
 /* ---- messages ---- */
 
 /* the source text at loc */
-static const char *text_at(const limba_lxs *S, limba_loc loc)
+const char *lxs_text_at(const limba_lxs *S, limba_loc loc)
 {
     for (uint32_t i = 0; i < S->src->count; i++) {
         const limba_srcfile *f = &S->src->file[i];
@@ -27,7 +27,7 @@ static const char *text_at(const limba_lxs *S, limba_loc loc)
     return "";
 }
 
-static uint32_t ident_len(const char *s)
+uint32_t lxs_ident_len(const char *s)
 {
     uint32_t n = 0;
     while ((s[n] >= 'a' && s[n] <= 'z') || (s[n] >= 'A' && s[n] <= 'Z') ||
@@ -35,6 +35,9 @@ static uint32_t ident_len(const char *s)
         n++;
     return n;
 }
+
+#define text_at lxs_text_at
+#define ident_len lxs_ident_len
 
 /* the bytes a node spans for the mark under a message */
 static uint32_t node_len(const limba_lxs *S, uint32_t node)
@@ -312,6 +315,7 @@ void limba_lxs_free(limba_lxs *S)
     free(S->sym);
     free(S->val);
     free(S->spelling);
+    lxs_unit_free(S);
     limba_types_free(&S->ts);
     limba_symtab_free(&S->st);
     memset(S, 0, sizeof(*S));
@@ -319,12 +323,44 @@ void limba_lxs_free(limba_lxs *S)
 
 /* ---- names ---- */
 
+/* the unit that qualifies a name: Unit.Name in an expression (a REF
+   rewritten, b the unit + 1) or in a type (TNAME d, TBOX b: a REF of the
+   unit); UINT32_MAX if none, UINT32_MAX - 1 if not a unit (reported) */
+static uint32_t qualifier(limba_lxs *S, uint32_t scope, uint32_t node)
+{
+    limba_lx_node *x = lxs_node(S, node);
+    if (x->kind == LXN_REF && (x->flags & LXN_F_QUAL))
+        return x->b - 1;
+    uint32_t q = x->kind == LXN_TNAME ? x->d : x->kind == LXN_TBOX ? x->b : 0;
+    if (!q)
+        return UINT32_MAX;
+    uint32_t name = lxs_node(S, q)->a;
+    bool impl;
+    uint32_t u = lxs_unit_of(S, scope, &impl);
+    if (S->units[u].name == name)
+        return u;
+    for (uint32_t v = 0; v < S->nunits; v++)
+        if (S->units[v].name == name && v != u)
+            return v; /* visibility is checked by lxs_qualified */
+    const char *use = text_at(S, lxs_node(S, q)->loc);
+    lxs_error(S, LXE_UNKNOWN_NAME, q, "'%.*s' is not a unit used here",
+              (int)ident_len(use), use);
+    return UINT32_MAX - 1;
+}
+
 limba_sym lxs_lookup(limba_lxs *S, uint32_t scope, uint32_t node)
 {
     limba_lx_node *x = lxs_node(S, node);
-    limba_sym s = limba_sym_lookup(&S->st, scope, x->a);
+    uint32_t q = S->nunits ? qualifier(S, scope, node) : UINT32_MAX;
+    if (q == UINT32_MAX - 1)
+        return 0;
+    limba_sym s = q != UINT32_MAX ? lxs_qualified(S, scope, q, x->a, node)
+                                  : lxs_find(S, scope, x->a, node);
+    x = lxs_node(S, node);
     const char *use = text_at(S, x->loc);
     uint32_t n = ident_len(use);
+    if (!s && q != UINT32_MAX)
+        return 0; /* reported */
     if (!s) {
         lxs_error(S, LXE_UNKNOWN_NAME, node, "'%.*s' is not declared", (int)n,
                   use);
@@ -343,7 +379,12 @@ limba_sym lxs_lookup(limba_lxs *S, uint32_t scope, uint32_t node)
         return 0;
     }
     limba_symbol *y = &S->st.sym[s];
-    if ((y->kind == LIMBA_LSYM_CONST || y->kind == LIMBA_LSYM_VAR) &&
+    bool impl;
+    /* before its declaration: in the same file (another file's names
+       are all visible, § 11.3) */
+    bool here =
+        !S->nunits || lxs_unit_of(S, y->scope, &impl) == lxs_unit_at(S, node);
+    if ((y->kind == LIMBA_LSYM_CONST || y->kind == LIMBA_LSYM_VAR) && here &&
         y->loc != LIMBA_NOLOC && y->loc > x->loc && y->node &&
         lxs_node(S, y->node)->kind != LXN_TYPEDECL) {
         lxs_error(S, LXE_BEFORE_DECL, node,
@@ -352,7 +393,7 @@ limba_sym lxs_lookup(limba_lxs *S, uint32_t scope, uint32_t node)
     }
     if (y->flags & LXS_CBORDER) {
         /* a name of the boundary with C (§ 10.4) */
-        if (S->no_external)
+        if (lxs_restricted(S, node))
             lxs_error(S, LXE_RESTRICTED, node,
                       "'%.*s' is of the boundary with C, which pragma "
                       "restrictions(no_external) forbids",
@@ -377,6 +418,8 @@ limba_sym lxs_declare(limba_lxs *S, uint32_t scope, uint32_t name_node,
                   "'%.*s' is a name of the language", (int)n, text);
         return 0;
     }
+    if (!lxs_unit_declare(S, scope, name_node))
+        return 0;
     limba_sym s = limba_sym_declare(&S->st, scope, x->a, kind, x->loc, n, &dup);
     if (!s) {
         lxs_error(S, LXE_DUPLICATE, name_node,
@@ -396,6 +439,36 @@ static void mark(limba_lxs *S, limba_sym s, bool top)
 {
     if (s)
         S->st.sym[s].flags |= LXS_UNRESOLVED | (top ? LXS_TOP : 0);
+}
+
+/* a routine of the implementation of a unit whose heading is in the
+   interface: the body takes the symbol of the heading (§ 11.2) */
+static bool bind_body(limba_lxs *S, uint32_t scope, uint32_t d)
+{
+    if (!S->nunits)
+        return false;
+    bool impl;
+    uint32_t u = lxs_unit_of(S, scope, &impl);
+    limba_lxs_unit *f = &S->units[u];
+    limba_lx_node *x = lxs_node(S, d);
+    if (!f->intf || scope != f->impl || !x->d ||
+        lxs_node(S, x->a)->kind != LXN_NAME)
+        return false;
+    limba_sym s = limba_sym_local(&S->st, f->intf, lxs_node(S, x->a)->a);
+    if (!s || S->st.sym[s].kind != LIMBA_LSYM_ROUTINE || lxs_heading(S, s) ||
+        lxs_node(S, S->st.sym[s].node)->d)
+        return false;
+    if (s >= S->nheading) {
+        uint32_t n = s + 64;
+        S->heading = limba_xrealloc(S->heading, n, sizeof(*S->heading));
+        memset(S->heading + S->nheading, 0,
+               (n - S->nheading) * sizeof(*S->heading));
+        S->nheading = n;
+    }
+    S->heading[s] = S->st.sym[s].node;
+    S->st.sym[s].node = d;
+    S->sym[x->a] = s;
+    return true;
 }
 
 void lxs_declare_all(limba_lxs *S, uint32_t list, uint32_t scope, bool top)
@@ -431,7 +504,9 @@ void lxs_declare_all(limba_lxs *S, uint32_t list, uint32_t scope, bool top)
             break;
         }
         case LXN_ROUTINE:
-            mark(S, lxs_declare(S, scope, x->a, LIMBA_LSYM_ROUTINE, d), top);
+            if (!bind_body(S, scope, d))
+                mark(S, lxs_declare(S, scope, x->a, LIMBA_LSYM_ROUTINE, d),
+                     top);
             break;
         }
     }
@@ -464,7 +539,22 @@ static void resolve_const(limba_lxs *S, limba_sym s)
 }
 
 /* the names of a var declaration, together */
+static void resolve_var_in(limba_lxs *S, uint32_t d, uint32_t scope, bool top);
+
 static void resolve_var(limba_lxs *S, uint32_t d, uint32_t scope, bool top)
+{
+    /* the initial value of a variable of a file is part of its
+       initialisation (§ 11.5) */
+    uint32_t who = S->who;
+    if (top && S->nunits) {
+        bool impl;
+        S->who = LXS_INIT | lxs_unit_of(S, scope, &impl);
+    }
+    resolve_var_in(S, d, scope, top);
+    S->who = who;
+}
+
+static void resolve_var_in(limba_lxs *S, uint32_t d, uint32_t scope, bool top)
 {
     limba_lx_node *x = lxs_node(S, d);
     limba_ltype t = x->b ? lxs_type(S, x->b, scope, top ? 0 : LXT_VAR) : 0;
@@ -505,11 +595,18 @@ static void resolve_typedecl(limba_lxs *S, limba_sym s)
     limba_types_set_name(&S->ts, t, s);
 }
 
+static void conform(limba_lxs *S, limba_sym s);
+
 static void resolve_routine(limba_lxs *S, limba_sym s)
 {
     limba_symbol *y = &S->st.sym[s];
     uint32_t outer = y->scope, d = y->node;
-    uint32_t scope = limba_scope_new(&S->st, outer, LXS_ROUTINE);
+    if (lxs_heading(S, s)) {
+        /* the body is in the implementation: its names are there */
+        bool impl;
+        outer = S->units[lxs_unit_of(S, outer, &impl)].impl;
+    }
+    uint32_t scope = lxs_scope_new(S, outer, LXS_ROUTINE);
     S->st.sym[s].value = scope;
     limba_lx_node *x = lxs_node(S, d);
     uint32_t plist = x->b;
@@ -541,6 +638,108 @@ static void resolve_routine(limba_lxs *S, limba_sym s)
     }
     S->st.sym[s].type = limba_types_routine(&S->ts, ps, np, result);
     free(ps);
+    if (lxs_heading(S, s))
+        conform(S, s);
+}
+
+/* two types written in a heading and in its body: the same type, or
+   ranges of the same base with the same bounds (§ 11.2) */
+static bool same_type(limba_lxs *S, limba_ltype a, limba_ltype b)
+{
+    if (a == b || !a || !b)
+        return true;
+    const limba_typeinfo *x = lxs_ty(S, a), *y = lxs_ty(S, b);
+    if ((x->flags & LIMBA_TF_RANGE) && (y->flags & LIMBA_TF_RANGE))
+        return x->lo == y->lo && x->hi == y->hi &&
+               same_type(S, x->base, y->base);
+    if ((x->flags | y->flags) & LIMBA_TF_RANGE)
+        return false;
+    return limba_types_same(&S->ts, a, b);
+}
+
+/* the heading of the body conforms to that of the interface: textual for
+   the names (kind, names, spelling, order, modes), semantic for the
+   types */
+static void conform(limba_lxs *S, limba_sym s)
+{
+    uint32_t h = lxs_heading(S, s), b = S->st.sym[s].node;
+    limba_lx_node *hx = lxs_node(S, h), *bx = lxs_node(S, b);
+    const char *why = NULL;
+    char tb[128], tc[128], buf[400];
+    if (hx->op != bx->op)
+        why = "it is a procedure in one, a function in the other";
+    /* the parameters, name by name */
+    uint32_t hl = hx->b, bl = bx->b, hi = 0, hk = 0, bi = 0, bk = 0;
+    uint32_t intf = S->st.sym[s].scope;
+    bool impl;
+    uint32_t implscope = S->units[lxs_unit_of(S, intf, &impl)].impl;
+    while (!why) {
+        while (hi < lxs_node(S, hl)->b &&
+               hk >= lxs_node(S, lxs_node(S, limba_lx_list_at(S->t, hl, hi))->a)
+                         ->b) {
+            hi++;
+            hk = 0;
+        }
+        while (bi < lxs_node(S, bl)->b &&
+               bk >= lxs_node(S, lxs_node(S, limba_lx_list_at(S->t, bl, bi))->a)
+                         ->b) {
+            bi++;
+            bk = 0;
+        }
+        bool hend = hi >= lxs_node(S, hl)->b, bend = bi >= lxs_node(S, bl)->b;
+        if (hend || bend) {
+            if (hend != bend)
+                why = "the number of the parameters differs";
+            break;
+        }
+        uint32_t hp = limba_lx_list_at(S->t, hl, hi);
+        uint32_t bp = limba_lx_list_at(S->t, bl, bi);
+        uint32_t hn = limba_lx_list_at(S->t, lxs_node(S, hp)->a, hk);
+        uint32_t bn = limba_lx_list_at(S->t, lxs_node(S, bp)->a, bk);
+        const char *ht = text_at(S, lxs_node(S, hn)->loc);
+        const char *bt = text_at(S, lxs_node(S, bn)->loc);
+        uint32_t hlen = ident_len(ht), blen = ident_len(bt);
+        if (hlen != blen || memcmp(ht, bt, hlen)) {
+            snprintf(buf, sizeof(buf),
+                     "the parameter '%.*s' is '%.*s' in the interface",
+                     (int)blen, bt, (int)hlen, ht);
+            why = buf;
+        } else if (lxs_node(S, hp)->op != lxs_node(S, bp)->op) {
+            snprintf(buf, sizeof(buf),
+                     "the parameter '%.*s' has another mode in the interface",
+                     (int)blen, bt);
+            why = buf;
+        } else {
+            limba_ltype t1 = lxs_type(S, lxs_node(S, hp)->b, intf, LXT_PARAM);
+            limba_ltype t2 =
+                lxs_type(S, lxs_node(S, bp)->b, implscope, LXT_PARAM);
+            if (!same_type(S, t1, t2)) {
+                snprintf(buf, sizeof(buf),
+                         "the parameter '%.*s' is %s in the interface, %s "
+                         "here",
+                         (int)blen, bt, lxs_tname(S, t1, tb),
+                         lxs_tname(S, t2, tc));
+                why = buf;
+            }
+        }
+        hk++;
+        bk++;
+    }
+    if (!why && hx->c && bx->c) {
+        limba_ltype t1 = lxs_type(S, hx->c, intf, 0);
+        limba_ltype t2 = lxs_type(S, bx->c, implscope, 0);
+        if (!same_type(S, t1, t2)) {
+            snprintf(buf, sizeof(buf),
+                     "the result is %s in the interface, %s here",
+                     lxs_tname(S, t1, tb), lxs_tname(S, t2, tc));
+            why = buf;
+        }
+    }
+    if (why) {
+        lxs_error(S, LXE_NOT_CONFORMING, bx->a,
+                  "the heading is not the one of the interface: %s", why);
+        lxs_note(S, hx->loc, 0, "the heading in the interface");
+    }
 }
 
 void lxs_force(limba_lxs *S, limba_sym s)
@@ -857,44 +1056,116 @@ limba_ltype lxs_type(limba_lxs *S, uint32_t node, uint32_t scope,
 
 /* ---- the program ---- */
 
+/* the declarations of the parts of a file: the interface (0 for the
+   program) and the implementation or the program's */
+static uint32_t part_decls(limba_lxs *S, uint32_t u, bool impl)
+{
+    limba_lx_node *r = lxs_node(S, S->units[u].root);
+    if (r->kind == LXN_UNIT)
+        return impl ? r->c : r->b;
+    return impl ? r->b : 0;
+}
+
+static void pragmas_of(limba_lxs *S, uint32_t list, uint32_t scope,
+                       const char *only)
+{
+    for (uint32_t i = 0; list && i < lxs_node(S, list)->b; i++) {
+        uint32_t d = limba_lx_list_at(S->t, list, i);
+        if (lxs_node(S, d)->kind != LXN_PRAGMA)
+            continue;
+        if (only ? lxs_pragma_is(S, d, only)
+                 : !lxs_pragma_is(S, d, "convention") &&
+                       !lxs_pragma_is(S, d, "restrictions") &&
+                       !lxs_pragma_is(S, d, "hides")) {
+            if (only)
+                lxs_c_pragma(S, d, scope);
+            else
+                lxs_pragma(S, d);
+        }
+    }
+}
+
 void limba_lxs_check(limba_lxs *S)
 {
-    limba_lx_node *p = lxs_node(S, S->t->root);
-    if (p->kind != LXN_PROGRAM)
-        return;
-    uint32_t decls = p->b, body = p->c;
-    c_types(S);
-    /* pragma restrictions first: it governs every name of the file */
-    for (uint32_t i = 0; i < lxs_node(S, decls)->b; i++) {
-        uint32_t d = limba_lx_list_at(S->t, decls, i);
-        if (lxs_node(S, d)->kind == LXN_PRAGMA &&
-            lxs_pragma_is(S, d, "restrictions"))
-            lxs_c_pragma(S, d, 0);
+    if (!S->nunits) {
+        /* one file, as the tests give it */
+        if (!S->t->root)
+            return;
+        limba_lxs_unit_add(S, S->t->root, 0, S->t->nnode, false);
     }
-    S->program = limba_scope_new(&S->st, S->universe, LXS_PROGRAM);
-    lxs_declare_all(S, decls, S->program, true);
-    lxs_resolve_all(S, decls);
+    uint32_t nu = S->nunits;
+    c_types(S);
+    lxs_check_units(S);
+    /* pragma restrictions first: it governs every name of its file, and
+       the program's every file (§ 11.6) */
+    for (uint32_t u = 0; u < nu; u++)
+        for (int part = 0; part < 2; part++)
+            pragmas_of(S, part_decls(S, u, part == 1), 0, "restrictions");
+    S->program = S->units[S->main].impl;
+    for (uint32_t u = 0; u < nu; u++)
+        if (lxs_node(S, S->units[u].root)->kind == LXN_PROGRAM)
+            S->program = S->units[u].impl;
+    for (uint32_t u = 0; u < nu; u++) {
+        if (S->units[u].intf)
+            lxs_declare_all(S, part_decls(S, u, false), S->units[u].intf, true);
+        lxs_declare_all(S, part_decls(S, u, true), S->units[u].impl, true);
+    }
+    for (uint32_t u = 0; u < nu; u++)
+        for (int part = 0; part < 2; part++)
+            if (part_decls(S, u, part == 1))
+                lxs_resolve_all(S, part_decls(S, u, part == 1));
+    /* every heading of an interface has its body (§ 11.2) */
+    for (uint32_t u = 0; u < nu; u++) {
+        uint32_t l = part_decls(S, u, false);
+        for (uint32_t i = 0; l && i < lxs_node(S, l)->b; i++) {
+            uint32_t d = limba_lx_list_at(S->t, l, i);
+            limba_lx_node *x = lxs_node(S, d);
+            if (x->kind != LXN_ROUTINE || x->d || !S->sym[x->a] ||
+                lxs_heading(S, S->sym[x->a]))
+                continue;
+            size_t n;
+            const char *sp = lxs_spell(S, S->sym[x->a], &n);
+            lxs_error(S, LXE_NO_BODY, x->a,
+                      "'%.*s' has no body in the implementation", (int)n, sp);
+        }
+    }
     /* then the records with the C convention, before the routines of C
        that take them */
-    for (uint32_t i = 0; i < lxs_node(S, decls)->b; i++) {
-        uint32_t d = limba_lx_list_at(S->t, decls, i);
-        if (lxs_node(S, d)->kind == LXN_PRAGMA &&
-            lxs_pragma_is(S, d, "convention"))
-            lxs_c_pragma(S, d, S->program);
+    for (uint32_t u = 0; u < nu; u++) {
+        if (S->units[u].intf)
+            pragmas_of(S, part_decls(S, u, false), S->units[u].intf,
+                       "convention");
+        pragmas_of(S, part_decls(S, u, true), S->units[u].impl, "convention");
     }
-    for (uint32_t i = 0; i < lxs_node(S, decls)->b; i++) {
-        uint32_t d = limba_lx_list_at(S->t, decls, i);
-        limba_lx_node *x = lxs_node(S, d);
-        if (x->kind == LXN_ROUTINE && S->sym[x->a])
-            lxs_routine_body(S, S->sym[x->a]);
-        else if (x->kind == LXN_PRAGMA && !lxs_pragma_is(S, d, "convention") &&
-                 !lxs_pragma_is(S, d, "restrictions"))
-            lxs_pragma(S, d);
+    for (uint32_t u = 0; u < nu; u++)
+        for (int part = 0; part < 2; part++) {
+            uint32_t l = part_decls(S, u, part == 1);
+            for (uint32_t i = 0; l && i < lxs_node(S, l)->b; i++) {
+                uint32_t d = limba_lx_list_at(S->t, l, i);
+                limba_lx_node *x = lxs_node(S, d);
+                if (x->kind == LXN_ROUTINE && x->d && S->sym[x->a]) {
+                    S->who = S->sym[x->a];
+                    lxs_routine_body(S, S->sym[x->a]);
+                }
+            }
+            pragmas_of(S, l, 0, NULL);
+        }
+    /* the initialisations of the units, then the body of the program */
+    for (uint32_t u = 0; u < nu; u++) {
+        limba_lx_node *r = lxs_node(S, S->units[u].root);
+        uint32_t body = r->kind == LXN_UNIT ? r->d : r->c;
+        if (!body)
+            continue;
+        S->who = LXS_INIT | u;
+        S->result = 0;
+        S->in_routine = false;
+        S->in_init = r->kind == LXN_UNIT;
+        S->loops = 0;
+        lxs_stmts(S, body, lxs_scope_new(S, S->units[u].impl, LXS_BLOCK));
     }
-    S->result = 0;
-    S->in_routine = false;
-    S->loops = 0;
-    lxs_stmts(S, body, limba_scope_new(&S->st, S->program, LXS_BLOCK));
+    S->in_init = false;
+    S->who = 0;
+    lxs_unit_warnings(S);
 }
 
 /* ---- the boundary with C (§ 3.13, § 8.5, § 10.4) ---- */
@@ -974,13 +1245,17 @@ void lxs_c_pragma(limba_lxs *S, uint32_t node, uint32_t scope)
         if (scope) {
             lxs_error(S, LXE_C_PRAGMA, node,
                       "pragma restrictions goes among the declarations of "
-                      "the program");
+                      "the program or of a unit");
         } else if (n != 1 || len != 11 || memcmp(a0, "no_external", 11)) {
             lxs_error(S, LXE_C_PRAGMA, node,
                       "the restriction is no_external: "
                       "'pragma restrictions(no_external)'");
+        } else if (!S->nunits ||
+                   lxs_node(S, S->units[lxs_unit_at(S, node)].root)->kind ==
+                       LXN_PROGRAM) {
+            S->no_external = true; /* the whole program (§ 11.6) */
         } else {
-            S->no_external = true;
+            S->units[lxs_unit_at(S, node)].restricted = true;
         }
         return;
     }
@@ -991,7 +1266,7 @@ void lxs_c_pragma(limba_lxs *S, uint32_t node, uint32_t scope)
                   "record type declared here");
         return;
     }
-    if (S->no_external)
+    if (lxs_restricted(S, node))
         lxs_error(S, LXE_RESTRICTED, node,
                   "pragma convention is of the boundary with C, which "
                   "pragma restrictions(no_external) forbids");
@@ -1026,7 +1301,7 @@ void lxs_c_routine(limba_lxs *S, limba_sym s)
 {
     limba_symbol *y = &S->st.sym[s];
     limba_lx_node *x = lxs_node(S, y->node);
-    if (S->no_external) {
+    if (lxs_restricted(S, y->node)) {
         size_t n;
         const char *sp = lxs_spell(S, s, &n);
         lxs_error(S, LXE_RESTRICTED, x->a,

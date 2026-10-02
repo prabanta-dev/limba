@@ -410,6 +410,24 @@ limba_id limba_func_add(limba_module *m, limba_id name, limba_id type,
     return id;
 }
 
+void limba_module_truncate(limba_module *m, uint32_t nfuncs, uint32_t nexterns)
+{
+    if (nfuncs > m->nfuncs || nexterns > m->nexterns)
+        return;
+    for (uint32_t i = nfuncs; i < m->nfuncs; i++)
+        limba_func_clear(&m->funcs[i]);
+    m->nfuncs = nfuncs;
+    m->nexterns = nexterns;
+    limba_hash_free(m->symidx);
+    m->symidx = limba_hash_new();
+    for (uint32_t i = 0; i < m->nfuncs; i++)
+        limba_hash_put(m->symidx, sym_hash(m->funcs[i].name, SYM_FUNC), i);
+    for (uint32_t i = 0; i < m->nglobals; i++)
+        limba_hash_put(m->symidx, sym_hash(m->globals[i].name, SYM_GLOBAL), i);
+    for (uint32_t i = 0; i < m->nexterns; i++)
+        limba_hash_put(m->symidx, sym_hash(m->externs[i].name, SYM_EXTERN), i);
+}
+
 /* ---- inside a function ---- */
 
 limba_id limba_block_add(limba_func *f)

@@ -21,7 +21,7 @@ static void condition(limba_lxs *S, uint32_t node, uint32_t scope)
 static void block(limba_lxs *S, uint32_t list, uint32_t scope)
 {
     if (list)
-        lxs_stmts(S, list, limba_scope_new(&S->st, scope, LXS_BLOCK));
+        lxs_stmts(S, list, lxs_scope_new(S, scope, LXS_BLOCK));
 }
 
 static void loop_body(limba_lxs *S, uint32_t list, uint32_t scope)
@@ -199,7 +199,7 @@ static void for_stmt(limba_lxs *S, uint32_t node, uint32_t scope)
         lxs_assign_to(S, from, t, "the loop");
         lxs_assign_to(S, to, t, "the loop");
     }
-    uint32_t inner = limba_scope_new(&S->st, scope, LXS_BLOCK);
+    uint32_t inner = lxs_scope_new(S, scope, LXS_BLOCK);
     limba_sym s = lxs_declare(S, inner, name, LIMBA_LSYM_VAR, node);
     if (s) {
         S->st.sym[s].type = t;
@@ -245,7 +245,7 @@ static void stmt(limba_lxs *S, uint32_t node, uint32_t scope)
         break;
     case LXN_REPEAT: {
         /* the condition sees the declarations of the body */
-        uint32_t inner = limba_scope_new(&S->st, scope, LXS_BLOCK);
+        uint32_t inner = lxs_scope_new(S, scope, LXS_BLOCK);
         S->loops++;
         lxs_stmts(S, x->a, inner);
         S->loops--;
@@ -268,6 +268,12 @@ static void stmt(limba_lxs *S, uint32_t node, uint32_t scope)
             condition(S, x->a, scope);
         break;
     case LXN_RETURN: {
+        if (S->in_init) {
+            lxs_error(S, LXE_INIT_RETURN, node,
+                      "the initialisation of a unit has no return: it ends "
+                      "at its end");
+            break;
+        }
         bool function = S->in_routine && S->result != S->ts.void_;
         if (x->a && !function) {
             lxs_expr(S, x->a, scope, 0);
@@ -332,10 +338,15 @@ void lxs_pragma(limba_lxs *S, uint32_t node)
                       "the statements",
                       (int)n, s);
             return;
+        } else if (n == 5 && !memcmp(s, "hides", 5)) {
+            lxs_error(S, LXE_C_PRAGMA, x->a,
+                      "pragma hides goes among the declarations of a file, "
+                      "not among the statements");
+            return;
         } else if (!(n == 8 && !memcmp(s, "suppress", 8))) {
             lxs_error(S, LXE_PRAGMA_NAME, x->a,
-                      "the pragmas are suppress, unsuppress, convention and "
-                      "restrictions, not '%.*s'",
+                      "the pragmas are suppress, unsuppress, convention, "
+                      "restrictions and hides, not '%.*s'",
                       (int)n, s);
         }
     }

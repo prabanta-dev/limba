@@ -118,7 +118,8 @@ static int show(const char *in, bool tokens, bool check, const char *outpath)
 int limba_luxia_main(const char *in, const char *emit, const char *outpath,
                      bool check, int level, const limba_opt_options *opt,
                      const char *suppress, const char *target,
-                     const char *restrict_)
+                     const char *restrict_, const char *const *unit_path,
+                     const char *stdlib)
 {
     if (restrict_ && strcmp(restrict_, "no_external")) {
         fprintf(stderr, "limba: --restrict: the restriction is no_external\n");
@@ -138,7 +139,8 @@ int limba_luxia_main(const char *in, const char *emit, const char *outpath,
 #else
                              false
 #endif
-    };
+                             ,
+                             unit_path, stdlib, NULL, NULL};
     /* into a .lir, a function at a time; a .lit at the end, of the whole
        module */
     limba_writer *w = !check && !lit ? limba_writer_new() : NULL;

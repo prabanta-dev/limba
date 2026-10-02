@@ -402,6 +402,10 @@ limba_id limba_extern_add(limba_module *m, limba_id name, limba_id type,
                           limba_id symbol, limba_id library);
 limba_id limba_func_add(limba_module *m, limba_id name, limba_id type,
                         uint32_t flags);
+/* keep the first nfuncs functions and nexterns externs, dropping the
+   others (for a front end that declared last what no kept function
+   calls) */
+void limba_module_truncate(limba_module *m, uint32_t nfuncs, uint32_t nexterns);
 /* the function, global or extern named so, LIMBA_NONE if none */
 limba_id limba_func_find(const limba_module *m, limba_id name);
 limba_id limba_global_find(const limba_module *m, limba_id name);

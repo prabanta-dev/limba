@@ -21,6 +21,12 @@
 /* a whole file: the tokens of lx become the tree t, rooted at t->root */
 void limba_lx_parse(limba_lx_ast *t, const limba_lx *lx,
                     const limba_source *src, limba_report *rep);
+/* the file whose tokens start at first (several files lexed one after
+   the other into lx, each ending with its EOF): its PROGRAM or UNIT node,
+   added to t, also left in t->root; 0 if the lexer could not read it */
+uint32_t limba_lx_parse_at(limba_lx_ast *t, const limba_lx *lx,
+                           const limba_source *src, limba_report *rep,
+                           uint32_t first);
 /* one expression and the end of the file, for the tests */
 void limba_lx_parse_expr(limba_lx_ast *t, const limba_lx *lx,
                          const limba_source *src, limba_report *rep);
@@ -34,6 +40,7 @@ typedef struct {
     const limba_source *src;
     uint32_t pos;        /* the current token */
     uint32_t last_error; /* the token of the last error, or UINT32_MAX */
+    bool unit;           /* the file is a unit */
 } limba_lxp;
 
 static inline unsigned lxp_kind(const limba_lxp *P)

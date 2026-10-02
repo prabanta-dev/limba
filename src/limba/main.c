@@ -48,6 +48,11 @@ static void usage(FILE *out)
           "  --target=P      the platform whose C the C types by name\n"
           "                  follow: x86_64-linux, aarch64-linux,\n"
           "                  x86_64-windows (by default this one)\n"
+          "  -I DIR          where the units of the program are looked for\n"
+          "                  after the directory of the program (repeat\n"
+          "                  it for more, in order)\n"
+          "  --stdlib=DIR    the directory of the units of the standard\n"
+          "                  library\n"
           "  --restrict=no_external  no boundary with C: an external\n"
           "                  routine or a C type is an error\n"
           "  -h, --help      this text\n",
@@ -105,7 +110,10 @@ int main(int argc, char **argv)
     mallopt(M_TRIM_THRESHOLD, 1 << 30);
 #endif
     const char *in = NULL, *outpath = NULL, *emit = NULL, *suppress = NULL;
-    const char *target = NULL, *restrict_ = NULL;
+    const char *target = NULL, *restrict_ = NULL, *stdlib = NULL;
+    /* the directories of -I, ended by NULL */
+    const char **dirs = calloc((size_t)argc + 1, sizeof(*dirs));
+    int ndirs = 0;
     bool check = false;
     int level = 0;
     limba_opt_options opt = {false, NULL, NULL, NULL};
@@ -130,6 +138,12 @@ int main(int argc, char **argv)
             target = a + 9;
         } else if (!strncmp(a, "--restrict=", 11)) {
             restrict_ = a + 11;
+        } else if (!strcmp(a, "-I") && i + 1 < argc) {
+            dirs[ndirs++] = argv[++i];
+        } else if (!strncmp(a, "-I", 2) && a[2]) {
+            dirs[ndirs++] = a + 2;
+        } else if (!strncmp(a, "--stdlib=", 9)) {
+            stdlib = a + 9;
         } else if (!strncmp(a, "--emit=", 7)) {
             emit = a + 7;
             if (strcmp(emit, "lir") && strcmp(emit, "lit") &&
@@ -156,7 +170,7 @@ int main(int argc, char **argv)
     }
     if (ends_with(in, ".luxia"))
         return limba_luxia_main(in, emit, outpath, check, level, &opt, suppress,
-                                target, restrict_);
+                                target, restrict_, dirs, stdlib);
     bool binary_in = ends_with(in, ".lir");
     if (!binary_in && !ends_with(in, ".lit")) {
         fprintf(stderr, "limba: %s: a .lit, .lir or .luxia file is expected\n",

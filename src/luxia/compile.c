@@ -7,6 +7,7 @@
  */
 #include "limba/limba_luxia.h"
 
+#include "common/xalloc.h"
 #include "front/diag.h"
 #include "front/source.h"
 #include "luxia/lex.h"
@@ -18,6 +19,7 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* errors reported before giving up, by default */
@@ -163,6 +165,262 @@ static bool suppress_bits(const char *list, unsigned *bits,
 }
 
 /* text NULL: the file at path */
+/* ---- the units (specification § 11) ---- */
+
+typedef struct {
+    uint32_t root, first, last;
+    bool library;
+} unit_file;
+
+typedef struct {
+    const limba_luxia_options *o;
+    limba_source *src;
+    limba_report *rep;
+    limba_lx *lx;
+    limba_lx_ast *ast;
+    char *dir; /* the directory of the program, "" for the current one */
+    unit_file *units;
+    uint32_t nunits, cap;
+} loader;
+
+/* lex and parse file f, a new file of the program */
+static uint32_t add_file(loader *ld, uint32_t f, bool library)
+{
+    uint32_t tok = ld->lx->ntok;
+    limba_lx_run(ld->lx, ld->src, f, ld->rep);
+    uint32_t first = ld->ast->nnode;
+    uint32_t root = limba_lx_parse_at(ld->ast, ld->lx, ld->src, ld->rep, tok);
+    LIMBA_GROW(ld->units, ld->nunits, ld->cap);
+    ld->units[ld->nunits] = (unit_file){root, first, ld->ast->nnode, library};
+    return ld->nunits++;
+}
+
+static void set_irname(limba_source *src, uint32_t f, const char *name)
+{
+    size_t n = strlen(name);
+    src->file[f].irname = limba_xmalloc(n + 1);
+    memcpy(src->file[f].irname, name, n + 1);
+}
+
+/* the file of unit name in one space: the reader, then the directories;
+   the index of the file in the source, UINT32_MAX if absent (unreadable:
+   reported at ref, *bad set) */
+static uint32_t find_file(loader *ld, bool library, const char *name,
+                          uint32_t ref, bool *bad)
+{
+    const limba_luxia_options *o = ld->o;
+    if (o->read_unit) {
+        const char *text = NULL, *fpath = NULL;
+        size_t n = 0;
+        int r = o->read_unit(o->read_ctx,
+                             library ? LIMBA_LUXIA_STDLIB_UNIT
+                                     : LIMBA_LUXIA_PROGRAM_UNIT,
+                             name, &text, &n, &fpath);
+        if (r == LIMBA_LUXIA_UNIT_FOUND) {
+            uint32_t f = limba_source_add(ld->src, fpath ? fpath : name,
+                                          text ? text : "", text ? n : 0);
+            if (f != UINT32_MAX)
+                return f;
+        }
+        if (r != LIMBA_LUXIA_UNIT_ABSENT) {
+            limba_report_add(ld->rep, LIMBA_ERROR, LXE_UNIT_NOT_FOUND,
+                             ld->ast->node[ref].loc, (uint32_t)strlen(name),
+                             "the unit '%s' cannot be read", name);
+            *bad = true;
+            return UINT32_MAX;
+        }
+    }
+    /* the directories: the program's then -I, or the library's */
+    uint32_t ndirs = 0;
+    if (library) {
+        ndirs = o->stdlib_path ? 1 : 0;
+    } else {
+        ndirs = 1;
+        while (o->unit_path && o->unit_path[ndirs - 1])
+            ndirs++;
+    }
+    for (uint32_t k = 0; k < ndirs; k++) {
+        const char *dir = library  ? o->stdlib_path
+                          : k == 0 ? ld->dir
+                                   : o->unit_path[k - 1];
+        char fpath[4096];
+        int n = snprintf(fpath, sizeof(fpath), "%s%s%s.luxia", dir,
+                         *dir && dir[strlen(dir) - 1] != '/' ? "/" : "", name);
+        if (n < 0 || (size_t)n >= sizeof(fpath))
+            continue;
+        uint32_t f = limba_source_load(ld->src, fpath);
+        if (f == UINT32_MAX) {
+            if (errno == ENOENT || errno == ENOTDIR)
+                continue;
+            int err = errno;
+            char why[128];
+            if (strerror_r(err, why, sizeof(why)) != 0)
+                snprintf(why, sizeof(why), "error %d", err);
+            limba_report_add(ld->rep, LIMBA_ERROR, LXE_UNIT_NOT_FOUND,
+                             ld->ast->node[ref].loc, (uint32_t)strlen(name),
+                             "%s: %s", fpath, why);
+            *bad = true;
+            return UINT32_MAX;
+        }
+        /* its name in the IR: stable, wherever the program is (§ 7 of
+           the proposal) */
+        char irn[512];
+        if (library)
+            snprintf(irn, sizeof(irn), "<std>/%s.luxia", name);
+        else if (k == 0)
+            snprintf(irn, sizeof(irn), "%s.luxia", name);
+        else
+            snprintf(irn, sizeof(irn), "<I%u>/%s.luxia", k, name);
+        set_irname(ld->src, f, irn);
+        return f;
+    }
+    return UINT32_MAX;
+}
+
+/* the name at a place, as written */
+static const char *written(loader *ld, limba_loc loc, uint32_t *n)
+{
+    limba_where w;
+    *n = 0;
+    if (!limba_source_where(ld->src, loc, &w))
+        return "";
+    const limba_srcfile *f = &ld->src->file[w.file];
+    const char *s = f->text + (loc - f->base);
+    while (s + *n < f->text + f->len &&
+           ((s[*n] >= 'a' && s[*n] <= 'z') || (s[*n] >= 'A' && s[*n] <= 'Z') ||
+            (s[*n] >= '0' && s[*n] <= '9') || s[*n] == '_'))
+        (*n)++;
+    return s;
+}
+
+/* does the library have a unit of this name (read nothing more) */
+static bool library_has(loader *ld, const char *name)
+{
+    const limba_luxia_options *o = ld->o;
+    if (o->read_unit) {
+        const char *text = NULL, *fpath = NULL;
+        size_t n = 0;
+        if (o->read_unit(o->read_ctx, LIMBA_LUXIA_STDLIB_UNIT, name, &text, &n,
+                         &fpath) == LIMBA_LUXIA_UNIT_FOUND)
+            return true;
+    }
+    if (!o->stdlib_path)
+        return false;
+    char fpath[4096];
+    size_t dl = strlen(o->stdlib_path);
+    int k = snprintf(fpath, sizeof(fpath), "%s%s%s.luxia", o->stdlib_path,
+                     dl && o->stdlib_path[dl - 1] != '/' ? "/" : "", name);
+    if (k < 0 || (size_t)k >= sizeof(fpath))
+        return false;
+    FILE *f = fopen(fpath, "rb");
+    if (f)
+        fclose(f);
+    return f != NULL;
+}
+
+/* the unit a REF of a uses names, from file u: loaded if it is not yet;
+   its index + 1, 0 if not found (reported) */
+static uint32_t resolve_use(loader *ld, uint32_t u, uint32_t ref)
+{
+    size_t n;
+    const char *name =
+        limba_strtab_get(ld->lx->names, ld->ast->node[ref].a, &n);
+    bool library = ld->units[u].library;
+    for (int space = library ? 1 : 0; space < 2; space++) {
+        /* a unit of this space already there */
+        for (uint32_t v = 0; v < ld->nunits; v++) {
+            const limba_lx_node *r = &ld->ast->node[ld->units[v].root];
+            if (ld->units[v].root && r->kind == LXN_UNIT && r->a &&
+                ld->ast->node[r->a].a == ld->ast->node[ref].a &&
+                ld->units[v].library == (space == 1))
+                return v + 1;
+        }
+        bool bad = false;
+        uint32_t f = find_file(ld, space == 1, name, ref, &bad);
+        if (bad)
+            return 0;
+        if (f == UINT32_MAX)
+            continue;
+        uint32_t v = add_file(ld, f, space == 1);
+        const limba_lx_node *r = &ld->ast->node[ld->units[v].root];
+        if (!ld->units[v].root)
+            return 0; /* not read: the lexer said why */
+        if (r->kind != LXN_UNIT) {
+            limba_report_add(ld->rep, LIMBA_ERROR, LXE_UNIT_FILE,
+                             ld->ast->node[ref].loc, (uint32_t)n,
+                             "%s is a program, not a unit",
+                             ld->src->file[f].path);
+            ld->units[v].root = 0;
+            return 0;
+        }
+        if (!r->a || ld->ast->node[r->a].a != ld->ast->node[ref].a) {
+            uint32_t nh = 0, nw;
+            const char *held =
+                r->a ? written(ld, ld->ast->node[r->a].loc, &nh) : "";
+            const char *want = written(ld, ld->ast->node[ref].loc, &nw);
+            limba_report_add(ld->rep, LIMBA_ERROR, LXE_UNIT_FILE, r->loc, 4,
+                             "%s holds the unit '%.*s', not '%.*s': a unit "
+                             "is in the file of its name, in lowercase",
+                             ld->src->file[f].path, (int)nh, held, (int)nw,
+                             want);
+            ld->units[v].root = 0;
+            return 0;
+        }
+        if (space == 0 && library_has(ld, name)) {
+            /* the program's, a unit the library has too: two units, the
+               library keeps its own (§ 11.4) */
+            uint32_t nw;
+            const char *want = written(ld, ld->ast->node[ref].loc, &nw);
+            limba_report_add(ld->rep, LIMBA_NOTE, 0, ld->ast->node[ref].loc,
+                             (uint32_t)n,
+                             "'%.*s' is a unit of the program; the library "
+                             "has one of the same name, which it keeps for "
+                             "itself",
+                             (int)nw, want);
+        }
+        return v + 1;
+    }
+    uint32_t nw;
+    const char *want = written(ld, ld->ast->node[ref].loc, &nw);
+    limba_report_add(ld->rep, LIMBA_ERROR, LXE_UNIT_NOT_FOUND,
+                     ld->ast->node[ref].loc, (uint32_t)n,
+                     "the unit '%.*s' is not found: no %s.luxia in the "
+                     "directory of the program%s%s",
+                     (int)nw, want, name,
+                     ld->o->unit_path && ld->o->unit_path[0]
+                         ? ", in the directories of -I"
+                         : "",
+                     ld->o->stdlib_path ? " nor in the library" : "");
+    return 0;
+}
+
+/* the units the files use, loaded one after the other (§ 11.4) */
+static void load_units(loader *ld)
+{
+    for (uint32_t u = 0; u < ld->nunits; u++) {
+        if (!ld->units[u].root)
+            continue;
+        const limba_lx_node *r = &ld->ast->node[ld->units[u].root];
+        uint32_t lists[2] = {r->b, r->kind == LXN_UNIT ? r->c : 0};
+        for (int k = 0; k < 2; k++) {
+            uint32_t l = lists[k];
+            if (!l || !ld->ast->node[l].b)
+                continue;
+            uint32_t first = limba_lx_list_at(ld->ast, l, 0);
+            if (ld->ast->node[first].kind != LXN_USES)
+                continue;
+            uint32_t names = ld->ast->node[first].a;
+            for (uint32_t i = 0; i < ld->ast->node[names].b; i++) {
+                uint32_t ref = limba_lx_list_at(ld->ast, names, i);
+                uint32_t v = resolve_use(ld, u, ref);
+                ld->ast->node[ref].b = v;
+                /* the table of the tree may have moved */
+                r = &ld->ast->node[ld->units[u].root];
+            }
+        }
+    }
+}
+
 static int compile(const char *path, const char *text, size_t len,
                    const limba_luxia_options *o, const limba_luxia_consumer *c,
                    limba_module **out)
@@ -211,16 +469,33 @@ static int compile(const char *path, const char *text, size_t len,
                       o->max_errors ? o->max_errors : MAX_ERRORS);
     limba_lx lx;
     limba_lx_init(&lx);
-    limba_lx_run(&lx, &src, file, &rep);
     limba_lx_ast ast;
     limba_lx_ast_init(&ast);
-    limba_lx_parse(&ast, &lx, &src, &rep);
+    /* the program, then the units it uses, into one tree */
+    loader ld = {o, &src, &rep, &lx, &ast, NULL, NULL, 0, 0};
+    {
+        const char *slash = strrchr(path, '/');
+        size_t dn = slash ? (size_t)(slash - path) + 1 : 0;
+        ld.dir = limba_xmalloc(dn + 1);
+        memcpy(ld.dir, path, dn);
+        ld.dir[dn] = 0;
+    }
+    add_file(&ld, file, false);
+    ast.root = ld.units[0].root;
+    if (rep.errors == 0)
+        load_units(&ld);
+    ast.root = ld.units[0].root; /* the file compiled, not the last read */
+    bool is_unit = ast.root && ast.node[ast.root].kind == LXN_UNIT;
     limba_lxs sema;
     bool checked = false;
     /* the tree of a program with syntax errors would give errors that
        are only their echo */
     if (rep.errors == 0) {
         limba_lxs_init(&sema, &ast, &lx, &src, &rep);
+        for (uint32_t u = 0; u < ld.nunits; u++)
+            limba_lxs_unit_add(&sema, ld.units[u].root, ld.units[u].first,
+                               ld.units[u].last, ld.units[u].library);
+        sema.main = 0;
         sema.suppress = off;
         if (platform >= 0)
             sema.target = (unsigned)platform;
@@ -231,6 +506,15 @@ static int compile(const char *path, const char *text, size_t len,
     flush(&rep, o, c);
 
     int status = rep.errors ? LIMBA_LUXIA_ERRORS : LIMBA_LUXIA_OK;
+    /* a unit alone: its errors that the IR finds, nothing given */
+    limba_luxia_consumer quiet = *c;
+    if (is_unit) {
+        quiet.begin = NULL;
+        quiet.func = NULL;
+        quiet.end = NULL;
+        c = &quiet;
+        out = NULL;
+    }
     if (status == LIMBA_LUXIA_OK) {
         /* what was told is not told again */
         limba_report_free(&rep);
@@ -286,6 +570,8 @@ static int compile(const char *path, const char *text, size_t len,
     limba_lx_ast_free(&ast);
     limba_lx_free(&lx);
     limba_source_free(&src);
+    free(ld.units);
+    free(ld.dir);
     return status;
 }
 

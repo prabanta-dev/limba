@@ -23,6 +23,9 @@ enum {
 
 #define LXN_F_BIG 1u  /* INT: past 64 bits, read the text again */
 #define LXN_F_HEAP 2u /* NEW: new(A range lo..hi), an open array A */
+#define LXN_F_QUAL                                                             \
+    4u /* REF: Unit.Name, b the unit + 1 (§ 11.3); USES:                       \
+          b of each REF the unit + 1, 0 if not found */
 
 typedef struct {
     uint8_t kind;

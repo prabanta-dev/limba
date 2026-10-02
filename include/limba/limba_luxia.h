@@ -58,7 +58,33 @@ typedef struct {
        too, if not asked for): only for a process that ends right after,
        where freeing piece by piece costs 3 % */
     bool no_free;
+    /* units (specification § 11). Those of the program are looked for in
+       the directory of the program, then in these directories, in order
+       (limba -I), a list ended by NULL; NULL for none */
+    const char *const *unit_path;
+    /* the directory of the units of the standard library (limba
+       --stdlib); NULL: none */
+    const char *stdlib_path;
+    /* a unit from memory, tried in each space before its directories:
+       space LIMBA_LUXIA_PROGRAM_UNIT or LIMBA_LUXIA_STDLIB_UNIT (the same
+       name may be two units), name the name of the file without .luxia,
+       in lowercase ("geometry"). It answers LIMBA_LUXIA_UNIT_FOUND with
+       *text, *len (read during the call) and *path, the name of the file
+       in the diagnoses and in the positions of the IR, used as it is
+       ("geometry.luxia", "<std>/geometry.luxia"); LIMBA_LUXIA_UNIT_ABSENT
+       to look in the directories; LIMBA_LUXIA_UNIT_UNREADABLE, an error.
+       NULL: the directories only */
+    int (*read_unit)(void *ctx, int space, const char *name, const char **text,
+                     size_t *len, const char **path);
+    void *read_ctx;
 } limba_luxia_options;
+
+enum { LIMBA_LUXIA_PROGRAM_UNIT, LIMBA_LUXIA_STDLIB_UNIT };
+enum {
+    LIMBA_LUXIA_UNIT_FOUND,
+    LIMBA_LUXIA_UNIT_ABSENT,
+    LIMBA_LUXIA_UNIT_UNREADABLE
+};
 
 enum { LIMBA_LUXIA_ERROR, LIMBA_LUXIA_WARNING, LIMBA_LUXIA_NOTE };
 
@@ -99,10 +125,12 @@ enum {
     LIMBA_LUXIA_STOPPED = 4,  /* func asked to stop */
 };
 
-/* compile the Luxia source at path; with LIMBA_LUXIA_OK and out not NULL,
-   *out is the module (its declarations, strings and types; the bodies
-   only with keep_bodies), freed with limba_module_free; *out is NULL
-   otherwise. o and c may be NULL: the defaults, no consumer */
+/* compile the Luxia source at path, with the units it uses; with
+   LIMBA_LUXIA_OK and out not NULL, *out is the module (its declarations,
+   strings and types; the bodies only with keep_bodies), freed with
+   limba_module_free; *out is NULL otherwise. A unit compiled alone is
+   checked, with the units it uses: nothing is given to the consumer, and
+   *out is NULL. o and c may be NULL: the defaults, no consumer */
 int limba_luxia_compile_file(const char *path, const limba_luxia_options *o,
                              const limba_luxia_consumer *c, limba_module **out);
 /* the same on the len bytes at text (copied), named name in the

@@ -185,14 +185,16 @@ void limba_lx_ast_show(FILE *out, const limba_lx_ast *t, const limba_lx *lx,
     const char *f = node_info[x->kind].fields;
     uint32_t v[4] = {x->a, x->b, x->c, x->d};
     int used = 4;
-    while (used > 0 && f[used - 1] == '-')
+    while (used > 0 &&
+           (f[used - 1] == '-' || (f[used - 1] == 'q' && !v[used - 1])))
         used--;
     /* one line when every child is a single word */
     bool flat = indent < 0;
     if (!flat) {
         flat = true;
         for (int i = 0; i < used; i++)
-            if ((f[i] == 'n' || f[i] == 'l') && !is_leaf(t, v[i]))
+            if ((f[i] == 'n' || f[i] == 'l' || f[i] == 'q') &&
+                !is_leaf(t, v[i]))
                 flat = false;
     }
     fprintf(out, "(%s", node_info[x->kind].text);
@@ -206,6 +208,7 @@ void limba_lx_ast_show(FILE *out, const limba_lx_ast *t, const limba_lx *lx,
         switch (f[i]) {
         case 'n':
         case 'l':
+        case 'q':
             limba_lx_ast_show(out, t, lx, v[i], flat ? -1 : inner);
             break;
         case 'i': {
