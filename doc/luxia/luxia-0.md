@@ -1,4 +1,4 @@
-# The Luxia 0 Language — Reference Specification (draft)
+# The Luxia Language — Reference Specification (draft)
 
 ## 1. Introduction
 
@@ -11,9 +11,10 @@ Luxia keeps it whole; the redundant syntax goes.
 "Extended Pascal" describes the idea, not the ISO standard of the same
 name (ISO 10206), which Luxia does not follow.
 
-Luxia 0 is the **minimal core** of the language. Modules, exceptions with
-handlers, objects, generics and threads belong to later versions
-(Luxia 1 and beyond). Luxia 0 is enough to write the single-threaded
+This document describes **Luxia 0**, the minimal core of the language,
+together with **units** (§ 11), the first step of Luxia 1; "Luxia 0" in
+the text means this whole language. Exceptions with handlers, objects, generics and
+threads belong to later versions (Luxia 1 and beyond). Luxia 0 is enough to write the single-threaded
 programs of the Computer Language Benchmarks Game: binary-trees,
 fannkuch-redux, fasta, k-nucleotide (with a hand-written hash table),
 mandelbrot, n-body, pidigits (multiple-precision arithmetic on arrays),
@@ -73,22 +74,26 @@ library, § 9) cannot be declared again.
 Keywords are reserved, English, and **lowercase only**. By the case rule
 above, `BEGIN` is an error, not an identifier.
 
-The 50 keywords are:
+The 51 keywords are:
 
 ```
-abs       and       array     begin     case      const     continue
-div       do        downto    else      elsif     end       exit
-export    external  false     for       function  if        import
-in        loop      mod       module    new       nil       not
-of        or        out       pragma    procedure program   range
-record    rem       repeat    return    shl       shr       then
-to        true      type      until     var       when      while
+abs            and            array          begin          case
+const          continue       div            do             downto
+else           elsif          end            exit           external
+false          for            function       if             implementation
+in             interface      loop           mod            new
+nil            not            of             or             out
+pragma         procedure      program        range          record
+rem            repeat         return         shl            shr
+then           to             true           type           unit
+until          uses           var            when           while
 xor
 ```
 
 `true`, `false` and `nil` are keywords (literals), not predefined names.
-`abs` is an operator (§ 6), not a library function. `module`, `import`
-and `export` are reserved for later versions and have no use in Luxia 0.
+`abs` is an operator (§ 6), not a library function. `unit`, `uses`,
+`interface` and `implementation` are those of Delphi and Free Pascal
+(§ 11).
 
 ### 2.4 Numbers
 
@@ -103,7 +108,9 @@ and `export` are reserved for later versions and have no use in Luxia 0.
 - A real number has digits on both sides of the point: `1.0`, not `1.`
   nor `.5`. Thus `1..10` is always a range.
 - A letter attached to a number (`12abc`) is an error.
-- A real literal that does not fit in `Float64` is an error.
+- A real literal is an exact value of any size, as an integer literal
+  is: `1e400 / 1e390` is the constant `1e10` (§ 4.2). Only when it takes
+  a type must it fit that type.
 - There are no type suffixes: a number takes its type from the context or
   from a conversion (§ 4).
 
@@ -148,8 +155,8 @@ adding or removing a `;`.
 
 ### 3.1 Design
 
-Luxia has only types whose size is in their name; there is no `Integer`
-nor `Real`. Compared with C:
+The integer and real types of Luxia have their size in their name;
+there is no `Integer` nor `Real`. Compared with C:
 
 - there are **no integer promotions**: an operation is computed in the
   type of its operands, and a result that does not fit is an error;
@@ -247,17 +254,24 @@ array[Colour] of T
   prove unnecessary).
 - **Computed bounds**: the bounds may be computed at run time, as in
   Ada: `var a: array[Int32 range 1..n] of Float64`. Computed bounds are
-  allowed only in the variables of routines and of the program body, not
-  in types declared with `type` nor in record fields.
+  allowed only in the variables of routines and the `var` statements of
+  the body of the program, not in the variables declared among the
+  declarations of the program or of a unit (interface or
+  implementation), nor in types declared with `type`, nor in record
+  fields.
 - **An array with an empty index** has `length(a) = 0`; `low(a)` and
   `high(a)` remain the written bounds; every access is an index error;
   `for var i := low(a) to high(a)` does not run its body.
-- **Lengths in the index type**, as Ada's `'Length`: `low(a)`, `high(a)`
-  and `length(a)` have the base type of the index of `a`. With an `Int32`
-  index everything stays 32-bit. If the length does not fit in the base
-  type of the index (an array indexed by `Int8 range -128..127` has 256
-  elements) it is a compile-time error, or a run-time error if the
-  bounds are computed.
+- **Bounds in the index type, lengths in `Int64`**: `low(a)` and
+  `high(a)` have the base type of the index of `a`; `length(a)` is an
+  `Int64`, whatever the index, as the length of a `String` (Ada's
+  `'Length` is a universal integer for the same reason). So every array
+  over a whole discrete type has a length: `array[Byte] of Byte` has 256
+  elements and `length` 256, `array[Colour]` has `length` 3. An array
+  type whose length does not fit in an `Int64` (`array[UInt64] of T`,
+  `array[Int64] of T`) is a compile-time error: no such array fits in
+  memory; with computed bounds, such a length is "out of memory"
+  (§ 10.1).
 
 #### 3.7.1 Open arrays
 
@@ -268,7 +282,7 @@ type Vector = array[Int32 range <>] of Float64;
 ```
 
 - An open array is written `array[I range <>] of T`, where `I` is a
-  discrete type (integer, enumeration or subtype) and `<>` means "bounds
+  discrete type (§ 3.14) and `<>` means "bounds
   to be defined" (Ada's "box").
 - In Luxia 0 an open array is **the type of a parameter**, written there
   or named with `type`, or **the type a pointer points to** (§ 3.10,
@@ -283,7 +297,8 @@ type Vector = array[Int32 range <>] of Float64;
 - The argument is any array whose elements have the **same type** `T` and
   whose index has the **same base type** as `I`. The parameter **takes the
   bounds of the argument**: inside the routine `low(a)`, `high(a)` and
-  `length(a)` are those of the array passed, in the base type of `I`. An
+  `length(a)` are those of the array passed, the bounds in the base type
+  of `I`, the length an `Int64`. An
   `array[Int32 range 5..9]` passed to an `array[Int32 range <>]` has
   `low(a) = 5`.
 - If `I` is a subtype (`array[Positive range <>]`), the bounds of a
@@ -316,15 +331,19 @@ A `String` behaves as a read-only `array[Int64 range <>] of Byte` that
 record x, y, z: Float64; end
 ```
 
-Records have the C layout.
+The layout of a record (the order and the place of its fields) belongs
+to the implementation; with `pragma convention(c, R)` it is that of C
+(§ 3.13).
 
 ### 3.10 Pointers
 
 - `^T` is a pointer to an object of type `T` created with `new(T)`;
   `nil` is the null pointer.
 - Dereferencing is checked (`nil` error).
-- Field access dereferences implicitly: `p.x` rather than `p^.x`; indexing
-  likewise: `p[i]` for a pointer to an array.
+- Field access dereferences implicitly: `p.x`, never `p^.x`, which is a
+  compile-time error (one form for each thing); indexing likewise: `p[i]`
+  for a pointer to an array, never `p^[i]`. `p^` alone is the whole
+  object, as an argument (`low(p^)`) or in an assignment.
 - `^A`, with `A` an open array type (`array[I range <>] of T`), points to
   an array whose bounds are fixed when `new` creates it (`new(A range
   lo..hi)`, § 9.7) and never change, as Ada's access to an unconstrained array.
@@ -457,6 +476,25 @@ layout of Luxia is not promised to be that of C.
 **C strings.** `CString` is a predefined `new CPointer`, a `char *`
 ended by a byte 0, in the memory of C (§ 9.9).
 
+### 3.14 Discrete types
+
+The **discrete types** are the types whose values can be counted one by
+one:
+
+- the integer types of fixed size: `IntN`, `UIntN`, `BitsN` (`Byte`
+  included) and the C integer types by name (§ 3.13);
+- `Char`, `Boolean` and `CBool`;
+- the enumerations;
+- the subtypes with a range (§ 3.4) and the distinct types (§ 3.5) of
+  all these.
+
+`BigInt` and the reals are not discrete. Only a discrete type can be
+the index of an array, the type of a `for` variable, the type of a
+`case` selector, the argument of `succ`, `pred`, `low(T)` and `high(T)`,
+or be narrowed with `range`. On a `BitsN`, which wraps in its
+arithmetic, `succ` and `pred` are still checked (§ 9.3), and a `for`
+ends at its last bound without wrapping (§ 7.5).
+
 ## 4. Constants and constant expressions
 
 ### 4.1 Literals
@@ -532,9 +570,11 @@ var
 ```
 
 - `const`, `type` and `var` sections appear at the head of the program
-  and of routines, as in Pascal; sections (and, at program level,
+  and of routines, as in Pascal; sections (and, at the level of the
+  file,
   routines) may appear **in any order and may repeat**.
-- Routines are declared only at program level (§ 8.4).
+- Routines are declared only at the level of the file, program or unit
+  (§ 8.4, § 11).
 
 ### 5.2 Declarations as statements
 
@@ -567,6 +607,8 @@ the initialiser. The type is still static; only its writing is saved.
   the language (§ 9) cannot be declared again anywhere.
 - A type or a constant defined in terms of itself is an error. A record
   cannot contain itself except through a pointer.
+- The names of the units a file uses, and the names of their
+  interfaces, are visible as § 11.3 says.
 
 ### 5.5 Definite assignment
 
@@ -616,7 +658,11 @@ primary: `2 ** -1` is written `2 ** (-1)`, as in Ada.
 | enumerations | yes | yes, in declaration order |
 | `Boolean` | yes | yes, `false < true` |
 | `String` | yes | yes, byte by byte |
+| `BigInt` | yes | yes, by value |
+| C types by name (`CInt`, `CDouble`, ...) | yes | yes, as their representation (§ 3.13) |
+| `CBool` | yes | yes, `false < true` |
 | pointers (and `nil`) | yes | no |
+| `CPointer` and opaque pointer types (and `nil`) | yes | no |
 
 Records and arrays are not compared as a whole.
 
@@ -633,23 +679,27 @@ Records and arrays are not compared as a whole.
   overflow: a compile-time error when both operands are constants (the
   exact value does not fit), an overflow error at run time otherwise.
   Division by zero is a run-time error.
-- `x ** n` with `x` an integer: `n` may be of any integer type and must be
+- `x ** n` with `x` an integer: `n` may be of any integer type of fixed
+  size (not `BigInt`) and must be
   **non-negative**; a negative `n` at run time is a range error (as in
   Ada, where the exponent is a `Natural`). The result must fit in the type
   of `x` (overflow); in a `BitsN` it wraps.
-- `x ** n` with `x` a real: `n` is an integer of any type and any sign.
+- `x ** n` with `x` a real: `n` is an integer of any type of fixed size
+  and any sign.
   The result is the IEEE 754 `pow` computed in `Float64` and rounded once
   to the type of `x`; a negative exponent gives the reciprocal
   (`0.0 ** -1` is `inf`). There is no run-time error.
 - On **`BigInt`** (§ 3.12) nothing overflows; `div`, `mod` and `rem`
   follow the rules above, and a division by zero is a run-time error.
-  `x ** n` takes `n` of any integer type, **non-negative** (a range error
+  `x ** n` takes `n` of any integer type of fixed size (not `BigInt`),
+  **non-negative** (a range error
   otherwise, as above); `x ** 0` is 1, `0 ** 0` included. For the bases
   0, 1 and −1 the result is exact for every `n`, however large (0, 1 or
   ±1); for any other base a result too large for the memory is "out of
   memory".
 - **Shifts**: `x shl n` and `x shr n` take `x` of a `BitsN` type only and
-  `n` of any integer type. `shr` is a **logical** shift: zeros are shifted
+  `n` of any integer type of fixed size (not `BigInt`). `shr` is a
+  **logical** shift: zeros are shifted
   in. A count below zero, or equal to or above the width of `x`, is a
   shift error at run time.
 
@@ -676,7 +726,7 @@ A conversion is written as a call of the target type: `Float64(i)`,
   the integer is then obtained with an exact conversion:
   `Int32(trunc(x))`.
 - **Integer to real**: explicit, rounded according to IEEE 754.
-  `Float64` of an `Int64` beyond 2^53 loses digits, as the writer asked.
+  `Float64` of an `Int64` beyond 2^53 loses digits: the conversion is written, so the loss is asked for.
 - **Between `UIntN` and `BitsN` of the same width**: explicit, and free
   (same representation).
 - **Integer to integer**: the value must fit the target type, its range
@@ -684,6 +734,14 @@ A conversion is written as a call of the target type: `Float64(i)`,
 - **Integer to `BitsN`** keeps the low bits of the value, in two's
   complement: `BitsN(x)` from a wider type truncates, and a negative value
   wraps. It is the only conversion that cuts bits, and it is written.
+- **Integer to enumeration**: `Colour(n)`, from any integer type of
+  fixed size, is the value at position `n` from 0, the inverse of `ord`
+  (Ada's `'Val`): `Colour(ord(c)) = c`. A position outside the
+  enumeration, or outside the range of a subtype of it, is a
+  **conversion error**, a compile-time error if `n` is a constant. It
+  applies to enumerations declared by the program; `Char` has `chr`
+  (§ 9.3), and `Boolean` is not converted from an integer (`n = 1`
+  says what is meant).
 - **Integer to `BigInt`**: `BigInt(i)` from any integer type is exact (a
   `BitsN` value as an unsigned number). **`BigInt` to integer**:
   `Int32(b)`, `UInt64(b)` and the like follow the rule of integer to
@@ -745,9 +803,8 @@ P(a, b);                          // call: always with parentheses, even empty
 
 ### 7.3 `case`
 
-- The selector is a discrete value with a type (an integer, an
-  enumeration, `Char`, `Boolean`, or a subtype of one); a constant without
-  a type is not a selector.
+- The selector is a discrete value with a type (§ 3.14); a constant
+  without a type is not a selector.
 - Branches are introduced by `when`, with a list of labels, each a value
   or a range (`when 3..9:`). Labels are constants, known at compile time,
   and must fit the type of the selector.
@@ -774,6 +831,10 @@ after the loop.
 - The type of `i` comes from the bounds. If both bounds are constants
   without a type, the type is written: `for var i: Int32 := 1 to 10`.
 - The bounds are evaluated once, on entry.
+- `i` is compared with the last bound **before** each step, so it never
+  goes beyond it: `for var i: Int32 := 1 to high(Int32)` runs its body
+  for every value up to `high(Int32)` and ends without an overflow (as
+  in Ada); the same with `downto` and the first value of the type.
 - There is no step; a loop with a step is written with `while`.
 
 ### 7.6 `exit` and `continue`
@@ -880,8 +941,10 @@ function sqrtf(x: CFloat): CFloat;
   platform (`libgmp.so`, `gmp.dll`, `libgmp.dylib`) and looks for it
   where it is told to, by its command line or its configuration: never
   a path in the program. It opens every library and finds **every**
-  symbol the program declares **before** the program starts; if one is
-  missing it stops at once with a message, never halfway through.
+  symbol the program **can call** **before** the program starts; if one
+  is missing it stops at once with a message, never halfway through. An
+  external routine that no call can reach (a routine of a unit the
+  program does not call) asks for nothing.
 - An external routine is called as any other; its address cannot be
   taken in Luxia 0.
 - **What crosses the boundary**, as parameters and as the result:
@@ -923,7 +986,9 @@ in Luxia 0.
   through `ord`).
 - Integers are written in decimal, a `BigInt` with all its digits; a
   `BitsN` value is written as an unsigned number. A `Boolean` is written `true` or `false`. A constant
-  without a type is written as an `Int64` or a `Float64`.
+  without a type is written as an `Int64` or a `Float64`; one that does
+  not fit is a compile-time error (`writeln(2**100)`: write
+  `BigInt(2)**100`).
 - `x:width` and `x:width:decimals` format an argument as in Pascal. They
   are allowed only in the arguments of `write` and `writeln`, and the
   decimals only on reals (a compile-time error otherwise).
@@ -947,11 +1012,11 @@ in Luxia 0.
   `0.1`, `0.33333334`, `3.4028235e+38`. Infinities are written `inf` and
   `-inf`; a NaN is always `nan` (IEEE 754 does not fix its sign).
 - `writebyte(b)` writes one byte, for binary output.
-- `writebytes(a, from, count)` writes the tract `from .. from + count -
+- `writebytes(a, from, count)` writes the span `from .. from + count -
   1` of `a`, byte by byte as it is, for binary output in blocks. `a` is
   an array of `Byte` or a `String` (only read; a `String` is indexed from
   1 by `Int64`, § 3.8). `from`, `count` and their checks follow the rules
-  of `move` for a tract (§ 9.5), checked before anything is written.
+  of `move` for a span (§ 9.5), checked before anything is written.
 - Everything is written on one stream, the standard output, in the order
   of the calls: `write`, `writeln`, `writebyte` and `writebytes` may be
   mixed. The output may be buffered: an error in writing it is found
@@ -959,21 +1024,21 @@ in Luxia 0.
 
 ### 9.2 Input
 
-`readline(var s: String): Boolean` reads one line and returns `false` at
+`readline(out s: String): Boolean` reads one line and returns `false` at
 the end of the file. A line ends with `LF` or `CR LF`, which are removed.
-At the end of the file `s` becomes `""`: `s` always has a value, like an
-`out` parameter.
+At the end of the file `s` becomes `""`: `s` is an `out` parameter and
+always has a value after the call.
 
 `readbytes(a, from, count)` reads up to `count` bytes of the input into
-the tract `from .. from + count - 1` of `a` and returns how many it read,
-a value of the base type `I` of the index of `a`. It reads fewer than
+the span `from .. from + count - 1` of `a` and returns how many it read,
+an `Int64`. It reads fewer than
 `count` only at the end of the input (0 at the end), as C's `fread`, the
 same on a file, a pipe or a terminal: a program never repeats a short
 read. The bytes come as they are, `CR LF` included; the elements of the
-tract past those read keep their values. `a` is a writable array whose
+span past those read keep their values. `a` is a writable array whose
 elements are `Byte` exactly (a narrower element type is a compile-time
 error, so no value out of range enters `a`). `from`, `count` and their
-checks follow the rules of `move` for a tract (§ 9.5), checked before
+checks follow the rules of `move` for a span (§ 9.5), checked before
 anything is read.
 
 - `readline` and `readbytes` read one stream, the standard input, in the
@@ -990,13 +1055,15 @@ anything is read.
 ### 9.3 Characters
 
 - `LF`, `CR`, `TAB`, `NUL` (§ 2.7).
-- `chr(n)`: the `Char` with code point `n`, checked (§ 3.3).
+- `chr(n)`: the `Char` with code point `n`, with `n` of any integer type
+  of fixed size, checked (§ 3.3).
 - `ord(x)`: for a `Char`, its code point; for a `Boolean`, 0 or 1; for an
   enumeration value, its position from 0. The result is a `UInt32`. An
   integer argument is a compile-time error: an integer is converted
   instead, `UInt32(x)`.
-- `succ(x)`, `pred(x)`: the next and previous value of a discrete type,
-  checked.
+- `succ(x)`, `pred(x)`: the next and previous value of a discrete type
+  (§ 3.14), checked: `succ` of the last value and `pred` of the first
+  are range errors, on a `BitsN` too (they do not wrap).
 
 ### 9.4 Strings
 
@@ -1031,15 +1098,15 @@ anything is read.
 
 ### 9.5 Arrays and discrete types
 
-- `low(a)`, `high(a)`, `length(a)` of an array or a string, in the base
-  type of the index (§ 3.7, § 3.8); `low(p^)`, `high(p^)`, `length(p^)`
+- `low(a)`, `high(a)` of an array or a string, in the base type of the
+  index; `length(a)`, an `Int64` (§ 3.7, § 3.8); `low(p^)`, `high(p^)`, `length(p^)`
   of an array created by `new` (§ 3.10).
 - `move(src, from, dst, to, count)` copies `count` elements of the array
   `src`, from index `from`, into the array `dst`, from index `to`, as
   Ada's slice assignment `dst(to .. to + count - 1) := src(from ..
   from + count - 1)`. The two arrays have elements of the same type and
-  indices of the same base type `I`; `from`, `to` and `count` are values
-  of `I`, computed from the left. `count < 0` is a range error; `count =
+  indices of the same base type `I`; `from` and `to` are values of `I`
+  and `count` an `Int64`, computed from the left. `count < 0` is a range error; `count =
   0` copies nothing and checks no bound; otherwise both ranges must lie
   within the bounds of their array (index error), checked before
   anything is copied. The ranges may overlap: the result is as if the
@@ -1049,29 +1116,29 @@ anything is read.
   `dst` may be reached through a pointer: `move` checks `nil` and a
   dangling pointer itself, at the copy.
 - `translate(a, from, count, table)`, `reverse(a, from, count)` and
-  `occurrences(a, from, count, pattern)` work on the tract `from .. from
-  + count - 1` of the array `a`, with the rules of `move`: `from` and
-  `count` are values of the base type `I` of the index of `a`, computed
-  from the left after `a`; `count < 0` is a range error; `count = 0`
-  does nothing and checks no bound; otherwise the tract must lie within
+  `occurrences(a, from, count, pattern)` work on the span `from .. from
+  + count - 1` of the array `a`, with the rules of `move`: `from` is a
+  value of the base type `I` of the index of `a` and `count` an `Int64`,
+  computed from the left after `a`; `count < 0` is a range error; `count = 0`
+  does nothing and checks no bound; otherwise the span must lie within
   the bounds of `a` (index error), checked before anything is read or
   written. An array reached through a pointer is checked for `nil` and a
   dangling pointer by the routine itself, as by `move`.
-  - `translate` replaces each element `x` of the tract by `table[x]`, as
+  - `translate` replaces each element `x` of the span by `table[x]`, as
     Python's `bytes.translate`. `a` is a writable array of `Byte`;
     `table` is an array indexed by `Byte` whose elements are `Byte`
     (`array[Byte] of Byte`), so that it has a value for every byte: a
     narrower index or element type is a compile-time error. `table` is
     read whole before `a` changes, so `a` and `table` may be the same
     array.
-  - `reverse` reverses the order of the elements of the tract, in place,
+  - `reverse` reverses the order of the elements of the span, in place,
     as Python's `bytearray.reverse`. `a` is a writable array of any
     element type; Strings, BigInts and pointers move with their elements
     (no value is made or lost), and an element without a value carries
     its invalid value (§ 3.11).
   - `occurrences` is the number of non-overlapping occurrences of
-    `pattern` in the tract, searched from the left, as Python's
-    `bytes.count` and Ada's `Ada.Strings.Fixed.Count`: a value of `I`,
+    `pattern` in the span, searched from the left, as Python's
+    `bytes.count` and Ada's `Ada.Strings.Fixed.Count`: an `Int64`,
     never above `count`. `a` is an array of `Byte` or a `String` (only
     read; a `String` is indexed from 1 by `Int64`, § 3.8); `pattern` is a
     `String` or an array of `Byte`, taken whole, evaluated after
@@ -1080,8 +1147,8 @@ anything is read.
 
   The names `translate`, `reverse` and `occurrences` are names of the
   language: like every other one, they cannot be declared again (§ 5.4).
-- `low(T)`, `high(T)` of a discrete type `T` (an integer type, a subtype
-  with a range, an enumeration, `Char`, `Boolean`): the first and the last
+- `low(T)`, `high(T)` of a discrete type `T` (§ 3.14): the first and the
+  last
   value of `T`, a constant of type `T` (as Ada's `T'First` and `T'Last`).
   `low(Int8)` is −128, `high(Boolean)` is `true`. A real type is a
   compile-time error.
@@ -1089,8 +1156,11 @@ anything is read.
 ### 9.6 Mathematics
 
 `sqrt`, `sin`, `cos`, `tan`, `arctan`, `exp`, `ln`, `trunc`, `round`,
-`floor`, `ceil`. `trunc`, `round` (half to even), `floor` and `ceil`
-return a real of the type of their argument (§ 6.6).
+`floor`, `ceil` take a `Float32` or a `Float64` and return a real of the
+same type; a constant without a type needs a conversion
+(`sqrt(Float64(2))`). They follow IEEE 754 and raise no run-time error:
+`sqrt(-1.0)` and `ln(-1.0)` are `nan`, `ln(0.0)` is `-inf`, as for `**`.
+`trunc`, `round` (half to even), `floor` and `ceil` keep a real (§ 6.6).
 
 ### 9.7 Memory
 
@@ -1154,8 +1224,9 @@ As Ada's `Interfaces.C.Strings`, with explicit conversions:
   bytes (`n` an `Int64` from 0; a negative one is a range error), a 0
   among them included.
 - `cvalue(a, n)`, `a` an array of `CChar`, `CUChar` or `Byte` that C
-  filled as a buffer: its first `n` elements as a `String`, `n` checked
-  against the length of `a` (an index error past it).
+  filled as a buffer: its first `n` elements as a `String`, `n` an
+  `Int64`, as a count of `move` (§ 9.5), checked against the length of
+  `a`: below 0 or past the length it is an index error.
 - `freecstring(var p: CString)`: frees `p` with the `free` of C and sets
   it to `nil`; on `nil` it does nothing.
 
@@ -1218,8 +1289,8 @@ code, listed here for reference:
 |---|---|---|
 | 6 | overflow | `overflow_check` |
 | 7 | out of memory | — |
-| 28 | stack overflow | — |
 | 11 | division by zero | `division_check` |
+| 28 | stack overflow | — |
 | 100 | index out of range | `index_check` |
 | 101 | value out of range | `range_check` |
 | 102 | nil dereferenced | `nil_check` |
@@ -1256,13 +1327,18 @@ pragma unsuppress(index_check);
   `dangling_check`, and `all_checks` for all of them.
 - An unknown pragma name and an unknown check name are compile-time
   errors.
-- **Scope**: among the declarations of the program, a pragma applies to
-  the whole file; among the declarations of a routine, to the whole
-  routine; as a statement, from where it stands to the end of its
-  statement list (the body of a loop, a branch of an `if`). An inner
-  pragma prevails over an outer one.
+- **Scope**: among the declarations of a file (the program or a unit,
+  both its parts), a pragma applies to the whole file, wherever it
+  stands among them, and not beyond it (§ 11.6); several pragmas there
+  apply in the order written, so for one check the last one prevails
+  (`suppress(index_check)` then `unsuppress(index_check)` leaves it
+  on). Among the declarations of a routine, the same for the whole
+  routine. As a statement, a pragma is **positional**: it applies from
+  where it stands to the end of its statement list (the body of a loop,
+  a branch of an `if`). An inner pragma prevails over an outer one.
 - **Compiler option**: `limba --suppress=index_check,...` (or
-  `all_checks`) turns checks off for the whole file, with a warning. It
+  `all_checks`) turns checks off in every file of the program, with a
+  warning. It
   serves measurement and final builds and does not replace the pragma.
 
 **Semantics, as in Ada**: turning a check off does not make the program
@@ -1292,14 +1368,30 @@ A call of an external routine (§ 8.5) leaves the language:
 **Forbidding it.** `pragma restrictions(no_external)`, among the
 declarations of the program, makes every external routine, every C type
 by name, `CPointer`, `CString` and `pragma convention` a compile-time
-error; the option `limba --restrict=no_external` does the same without
-touching the source, as Ada's `Restrictions` for programs to be
-certified. A program that compiles so has no unchecked boundary.
+error in the program and in its units; the option `limba
+--restrict=no_external` does the same without touching the source, as
+Ada's `Restrictions` for programs to be certified. Among the
+declarations of a unit, the pragma applies to that unit. The **standard
+library** may declare external routines (it is its boundary with C),
+but a program under the restriction may **reach none of them**: a call
+that leads to an external routine of the library is a compile-time
+error that shows the chain of calls. The routines of the language
+(§ 9) are not external. A program that compiles so has no unchecked
+boundary.
 
-## 11. Program structure
+## 11. Program structure and units
+
+A program is one file, the **program**, and the **units** it uses,
+directly or through other units, each in a file of its own. A unit has
+an interface, the part other files see, and an implementation, the part
+they do not, as in Delphi and Free Pascal; the rules of Ada make the
+connection between the two, and between files, free of silent choices.
+
+### 11.1 The program
 
 ```pascal
 program NBody;
+uses Vectors;
 const ...
 type ...
 var ...
@@ -1309,10 +1401,11 @@ begin
 end.
 ```
 
-- A Luxia 0 program is **a single file**. It starts with `program Name;`,
-  continues with declarations (§ 5) and routines (§ 8) in any order, and
-  ends with the body `begin ... end.`
+- A program starts with `program Name;`, may continue with a `uses`
+  clause (§ 11.3), continues with declarations (§ 5) and routines
+  (§ 8) in any order, and ends with the body `begin ... end.`
 - The name after the final `end` is optional and, if present, checked.
+- Before its body runs, the units are initialised (§ 11.5).
 - The program ends when its body ends, or at a `return;` in the body
   (without a value), with exit status 0; or at `halt` (§ 9.8); or at a
   run-time error (§ 10).
@@ -1336,6 +1429,217 @@ begin
 end;
 ```
 
+### 11.2 Units
+
+```pascal
+unit Geometry;
+
+interface
+
+uses Text;
+
+type
+  Vector = record x, y, z: Float64; end;
+
+const
+  Tolerance = 1.0e-9;
+
+var
+  calls: Int64 := 0;
+
+function Distance(a, b: Vector): Float64;
+
+implementation
+
+function Square(x: Float64): Float64;
+begin
+  return x * x;
+end;
+
+function Distance(a, b: Vector): Float64;
+begin
+  calls := calls + 1;
+  return sqrt(Square(a.x - b.x) + Square(a.y - b.y) + Square(a.z - b.z));
+end Distance;
+
+begin
+  ...
+end Geometry.
+```
+
+- A file holds **one unit**: `unit Name;`, the part `interface`, the
+  part `implementation`, an optional `begin ... end` (its
+  initialisation, § 11.5), and `end [Name].` The name after the final
+  `end` is optional and, if present, checked.
+- **The interface** declares what other files see: types, constants and
+  variables in full, routines by their heading only. An external
+  routine (§ 8.5) stands in the interface whole, with no body: the unit
+  is then the boundary with the C library, and a file that uses it does
+  not see C.
+- **The implementation** holds the bodies of the routines of the
+  interface and everything that stays private, with the rules of a
+  program: sections and routines in any order (§ 5, § 8). What the
+  interface declares is visible in the implementation without being
+  repeated.
+- Every routine of the interface has its body in the implementation;
+  a missing body is a compile-time error. The heading of the body
+  **conforms** to that of the interface, as in Ada:
+  - **textually for names**: the same kind (`procedure` or
+    `function`), the same name of the routine and of the parameters,
+    spelt alike, in the same order, with the same modes (none, `var`,
+    `out`); grouping does not matter (`a, b: Vector` and
+    `a: Vector; b: Vector` conform);
+  - **semantically for types**: each parameter and the result have the
+    same type however written (`Vector` and `Geometry.Vector` are the
+    same type); a subtype with a range has the same bounds
+    (`Int32 range 1..N` and `Int32 range 1..10` conform if `N` is 10);
+    two distinct types (`new`) of the same structure do not.
+- **What the interface shows is nameable outside.** A declaration of
+  the interface uses only types of the interface itself, of the units
+  in the `uses` of the interface, and of the language. A private type
+  in a parameter, a result, the type of a variable or constant, or a
+  field of a record of the interface is a compile-time error.
+- A record of the interface shows all its fields, an enumeration all
+  its values. (Private types, with hidden fields, are planned with
+  objects: Appendix A.)
+- A unit may name its own declarations qualified, `Geometry.calls`
+  inside `Geometry`, as in Delphi.
+
+### 11.3 `uses` and visibility
+
+```pascal
+program Orbits;
+
+uses Geometry, Text;
+
+var a, b: Vector;            // or Geometry.Vector
+begin
+  ...
+  writeln(Distance(a, b), " ", Geometry.calls);
+end.
+```
+
+- One clause `uses A, B;` at most stands after `program Name;`, after
+  `interface` and after `implementation`, as in Delphi. The `uses` of the implementation serve the
+  bodies only and are not seen by a file that uses the unit. Naming a
+  unit twice, in one clause or in the two parts, is a compile-time
+  error.
+- A name of the interface of a used unit is written **directly**
+  (`Distance`) or **qualified** (`Geometry.Distance`), as one prefers,
+  also in types.
+- **Ambiguity.** If a name written directly comes from two used units
+  of the same level (below), that use is a compile-time error, which
+  asks for the qualified form. Using two units that have names in
+  common is not an error; only the ambiguous use is. The order of the
+  `uses` never decides.
+- **Levels.** Names come from three levels: the declarations of the
+  file; the units of the program (§ 11.4); the units of the standard
+  library. A name of a level hides the same name of the levels below:
+  - a declaration of the file that hides a name of a used unit gets a
+    **warning** on the declaration (`'Sort' hides 'Strings.Sort'`),
+    unless the file states it with `pragma hides(Strings.Sort);`,
+    among the declarations of the file, anywhere. The pragma covers that
+    name of that unit only; a pragma that hides nothing is itself a
+    warning. The hidden name stays reachable qualified;
+  - a direct use of a name of a unit of the program that hides a name of
+    a unit of the library gets a **warning** on the use, which the
+    qualified form removes.
+  A new name in a unit, or a new unit in the standard library, thus
+  never changes the meaning of a program and never stops it from
+  compiling: at most it adds a warning.
+- **A qualifier that names a used unit is always the unit.** If a used
+  unit exports a name equal to another used unit (a variable `Text`
+  while the file uses the unit `Text`), `Text.X` is `X` of the unit
+  `Text`, and the variable is reached as `Strings.Text`. Written alone,
+  `Text` is the variable: a unit is not a value.
+- **The name of a used unit cannot be declared in the file** at any
+  level (global, parameter, local, `for` variable, value of an
+  enumeration); only record fields, always reached after a dot, may
+  have it. Otherwise `Text.X` in that file could mean something other
+  than the unit. For the same reason a unit cannot declare its own
+  name. A unit cannot have the name of a name of the language (§ 9).
+- The case rule (§ 2.2) holds across files: a name is spelt as declared,
+  and a unit is named in `uses` as its file declares it.
+- **Variables of an interface are read-only outside their unit**: they
+  are read, but not assigned, not passed as `var` or `out`, and neither
+  are their fields and elements. Only the unit changes them, with its
+  routines. (Delphi and Ada let them be written; Luxia does not, so that
+  a reader of the unit knows who writes its variables.)
+- `uses` is **not transitive**: to name a type of `Text`, a file uses
+  `Text`. A value of that type received from `Geometry` is used without
+  naming the type.
+- **Cycles.** Two units may use each other if at least one of the two
+  `uses` is in an implementation. A cycle made only of `uses` of
+  interfaces is a compile-time error: an interface must be understood
+  without the units that use it. Two types that refer to each other are
+  declared in the same unit.
+- A unit used and never named gets a warning.
+
+### 11.4 Where units are found
+
+- A unit `Geometry` is in the file `geometry.luxia`: the name of the
+  unit in **lowercase**. A file whose unit has another name is a
+  compile-time error. Two units whose names differ only in case cannot
+  exist.
+- Units belong to two **spaces**: the units of the **program**, found in
+  the directory of the program and then in the directories given to the
+  compiler, in order; and the units of the **standard library**,
+  supplied with the implementation, in a place of their own.
+- A `uses` of the program or of one of its units looks in the space of
+  the program first, then in the library; a `uses` of a unit of the
+  library looks **only** in the library. The program never redirects
+  the library, and the library never sees the units of the program. In
+  each space a name gives one file for the whole program; a unit of the
+  program with the name of a unit of the library is a different unit,
+  which the program reaches by that name (the compiler adds a note).
+- The program contains **no paths**: where the files are is told by
+  whoever compiles, by the command line or the configuration, as for C
+  libraries (§ 8.5).
+- A unit not found is a compile-time error on the `uses`.
+- A run-time error in a unit names the file of the unit:
+  `luxia: index out of range at geometry.luxia:12:5`.
+
+### 11.5 Initialisation
+
+- The final `begin ... end` of a unit, optional, is its
+  **initialisation**. The variables of the unit take their initial
+  values first, in the order they are written; then the `begin ... end`
+  runs. In it the rules of the body of a program hold, except that
+  `return;` is a compile-time error; `halt` ends the program, and a
+  run-time error stops it as anywhere.
+- Every unit is initialised **once, before the body of the program**.
+  The order is computed by the compiler from what the initialisations
+  can do, without pragmas:
+  - `U` is initialised **after** `V` when `V` is in the `uses` of the
+    interface of `U`, or when the initialisation of `U` (the initial
+    values of its variables and its `begin ... end`), following calls
+    through all units, **can read or write a variable that the
+    initialisation of `V` writes**;
+  - a variable whose initial value is a constant of a scalar type or a
+    `String`, and that the initialisation of its unit does not write,
+    has its value before any code runs and orders nothing;
+  - among units left free by these rules, the order of the `uses`,
+    depth first, as written (interface, then implementation);
+  - if the constraints form a circle, it is a compile-time error that
+    shows the chain of reads and calls; the code is moved, there is no
+    pragma to force an order.
+- The analysis follows every call to its target (Luxia has no pointers
+  to routines). It works on the text: a read inside a branch that never
+  runs counts all the same, and the message says so.
+- Without cycles of `uses`, every unit is initialised after the units it
+  uses, as in Delphi.
+- There is no finalisation: the memory of the program is returned when
+  the process ends.
+
+### 11.6 Pragmas and units
+
+- `pragma suppress` and `unsuppress` (§ 10.3) apply in the file where
+  they stand; their scope does not cross files.
+- `pragma restrictions` (§ 10.4) in the file of the program applies to
+  the whole program; in a unit, to that unit.
+- `pragma convention(c, R)` stands with the record; a record of an
+  interface carries its convention with it.
+
 ## 12. Grammar
 
 Wirth's notation: `=` defines, `.` ends a rule, `|` separates
@@ -1344,9 +1648,20 @@ groups; terminals are quoted; token classes are lowercase (`ident`,
 `integer`, `real`, `char`, `string`). The grammar is LL(1).
 
 ```ebnf
-Program    = "program" ident ";" { Decl } "begin" Stmts "end" [ ident ] "." .
+Source     = Program | Unit .
+Program    = "program" ident ";" [ Uses ] { Decl }
+             "begin" Stmts "end" [ ident ] "." .
+Unit       = "unit" ident ";"
+             "interface" [ Uses ] { IntfDecl }
+             "implementation" [ Uses ] { Decl }
+             [ "begin" Stmts ] "end" [ ident ] "." .
+Uses       = "uses" ident { "," ident } ";" .
 Decl       = ConstSec | TypeSec | VarSec | Routine | Pragma ";" .
-Pragma     = "pragma" ident "(" IdentList ")" .
+IntfDecl   = ConstSec | TypeSec | VarSec | Heading | Pragma ";" .
+Heading    = ( "procedure" ident Params | "function" ident Params ":" Type )
+             ";" [ "external" string [ ident string ] ";" ] .
+Pragma     = "pragma" ident "(" QualIdent { "," QualIdent } ")" .
+QualIdent  = ident [ "." ident ] .
 ConstSec   = "const" ConstDecl ";" { ConstDecl ";" } .
 ConstDecl  = ident [ ":" Type ] "=" Expr .
 TypeSec    = "type" TypeDecl ";" { TypeDecl ";" } .
@@ -1360,7 +1675,7 @@ Routine    = ( "procedure" ident Params | "function" ident Params ":" Type )
 LocalDecl  = ConstSec | TypeSec | VarSec | Pragma ";" .
 Params     = "(" [ Param { ";" Param } ] ")" .
 Param      = [ "var" | "out" ] IdentList ":" Type .
-Type       = ident [ "range" ( Range | "<>" ) ]
+Type       = QualIdent [ "range" ( Range | "<>" ) ]
            | "new" Type
            | "(" IdentList ")"
            | "array" "[" Type "]" "of" Type
@@ -1407,9 +1722,16 @@ its exponent is a `Primary`.
 The semantic analysis rejects some constructs the grammar lets through,
 to give better messages: a function call used as a statement, a
 designator that is not a call used as a statement, `x:w:d` outside
-`write`/`writeln`, and a routine inside another. In an external
-routine, the `ident` before the second `string` must be `name`, a word
-of context, not a keyword.
+`write`/`writeln`, a routine inside another, and a field or an index
+after `^` (`p^.x`, `p^[i]`: § 3.10). In an external
+routine, the `ident` before the second `string` must be `name`, a
+contextual word with that meaning only there, not a keyword.
+
+A qualified name `Geometry.Distance` is a `Designator` in expressions
+and a `QualIdent` in types and pragmas; the semantic analysis tells a
+unit from a record (§ 11.3). In the interface of a unit a routine is a
+`Heading`: its body, if it is not external, follows in the
+implementation as a `Routine`.
 
 A branch of `case` begins with `when`, and a conditional `exit` or
 `continue` is written `exit when c`; since every statement ends with `;`,
@@ -1420,8 +1742,6 @@ the two uses of `when` do not conflict.
 The following are not part of Luxia 0; they are listed so that programs
 and tools can anticipate them.
 
-- Modules with export marks, one file per module (`module`, `import` and
-  `export` are already reserved).
 - Exceptions and handlers (`raise`, `try ... except`), grouping the
   run-time checks as Ada's `Constraint_Error` does.
 - Named association of arguments (`F(x => 1)`), optional.
@@ -1441,3 +1761,15 @@ and tools can anticipate them.
   no longer written by hand.
 - Ownership of pointers, making `dispose` safe at compile time, and
   lifting the rule of § 3.10 on arguments reached through a pointer.
+- Private types in interfaces, with objects; finalisation of units if
+  objects need it.
+- Generics. Their relation with units is already fixed: a generic of an
+  interface is declared there by its heading and has its body in the
+  implementation, conforming as a routine (§ 11.2); the names of its
+  body are resolved where it is written, never where it is
+  instantiated; its body is checked once, at its definition, against
+  the contract of its parameters, and each instance against the same
+  contract, so that a correct instance always compiles; a variable of
+  the unit used by a generic routine is the one of the unit, shared by
+  every instance; the order of initialisation (§ 11.5) follows the
+  actual routines given to each instance.

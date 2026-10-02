@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- The specification describes units (§ 11), the first step of Luxia 1,
+  in the form of Delphi and Free Pascal with the rigour of Ada:
+  `unit Name; interface ... implementation ... [begin ... end] end.`,
+  one `uses` clause in each part, names written directly or qualified,
+  an ambiguous name an error where it is used (never decided by the
+  order of the clauses), headings of bodies conforming to the interface,
+  variables of an interface read-only outside their unit, cycles only
+  through implementations, an order of initialisation computed from what
+  the initialisations can read and write, two spaces of units (the
+  program and the standard library) so that a new version of the
+  library never changes nor breaks a program. Keywords: `unit`, `uses`,
+  `interface`, `implementation` replace the reserved `module`, `import`,
+  `export`. Not yet in the compiler.
+- A review of the whole specification: `length` is an `Int64` whatever
+  the index (`low` and `high` stay in the index type), as are the counts
+  of `move` and the routines on spans, so that `array[Byte] of Byte`
+  has a length; real literals are exact values of any size, checked only
+  when they take a type; `Colour(n)` converts a position to an
+  enumeration value; `p^.x` and `p^[i]` are errors (one form, `p.x`);
+  an array type whose length does not fit an `Int64` is an error; a new
+  § 3.14 defines the discrete types; the layout of records, the order
+  of pragmas in a file, the end of a `for` at the last value of its
+  type, comparisons, mathematical functions, `readline(out s)` and
+  `cvalue` are stated as the compiler does them. The title is now "The
+  Luxia Language". The compiler follows in the next changes.
+
 - The reference interpreter frees the strings and BigInts that nothing
   holds any longer: a mark-and-sweep collection reads the values of the
   calls alive, the memory alive (slots, globals, blocks not freed) and
