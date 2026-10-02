@@ -440,6 +440,20 @@ static limba_ltype reference(limba_lxs *S, uint32_t node, uint32_t scope)
     }
 }
 
+/* p^.x and p^[i]: one form for each thing, p.x and p[i] (§ 3.10) */
+static uint32_t no_deref(limba_lxs *S, uint32_t node, uint32_t base,
+                         bool field)
+{
+    if (lxs_node(S, base)->kind != LXN_DEREF)
+        return base;
+    lxs_error(S, LXE_DEREF_SELECT, node,
+              field ? "a field is reached through a pointer without "
+                      "'^': write p.x, not p^.x"
+                    : "an element is reached through a pointer without "
+                      "'^': write p[i], not p^[i]");
+    return lxs_node(S, base)->a; /* go on as p.x: one error */
+}
+
 /* the record or array behind a pointer, which . and [] reach alone */
 static limba_ltype through_pointer(limba_lxs *S, limba_ltype t)
 {
@@ -452,6 +466,7 @@ static limba_ltype select(limba_lxs *S, uint32_t node, uint32_t scope)
 {
     limba_lx_node *x = lxs_node(S, node);
     uint32_t base = x->a, fname = x->b;
+    base = no_deref(S, node, base, true);
     limba_ltype t = through_pointer(S, lxs_expr(S, base, scope, 0));
     if (!t)
         return set(S, node, 0);
@@ -478,6 +493,7 @@ static limba_ltype index_expr(limba_lxs *S, uint32_t node, uint32_t scope)
 {
     limba_lx_node *x = lxs_node(S, node);
     uint32_t base = x->a, idx = x->b;
+    base = no_deref(S, node, base, false);
     limba_ltype t = through_pointer(S, lxs_expr(S, base, scope, 0));
     limba_ltype index, elem;
     if (!t) {
@@ -558,7 +574,10 @@ static limba_ltype conversion(limba_lxs *S, uint32_t node, uint32_t scope,
         is_numeric(S, t) && is_numeric(S, target) && !untyped(S, target);
     /* Boolean and CBool, or a Boolean type of the program (§ 3.13) */
     bool booleans = is_bool(S, t) && is_bool(S, target);
-    if (!numeric && !booleans && !lxs_compatible(S, t, target)) {
+    /* Colour(n): a position from 0 to an enumeration, the inverse of ord
+       (Ada's 'Val, § 6.6); from an integer of fixed size, checked */
+    bool position = is_int(S, t) && kind(S, target) == LIMBA_LTK_ENUM;
+    if (!numeric && !booleans && !position && !lxs_compatible(S, t, target)) {
         lxs_error(S, LXE_BAD_CONVERSION, node, "%s does not convert to %s",
                   lxs_tname(S, t, ta), lxs_tname(S, target, tb));
         return target;
@@ -832,8 +851,12 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
         const limba_typeinfo *ti = lxs_ty(S, t);
         if (ti->kind == LIMBA_LTK_STRING)
             return set(S, node, S->ty_int[3]);
+        /* low and high in the base of the index, length an Int64
+           whatever the index (§ 3.7) */
+        limba_ltype i64 = S->ty_int[3];
         if (ti->kind == LIMBA_LTK_OPEN)
-            return set(S, node, lxs_base(S, ti->index));
+            return set(S, node,
+                       id == LXB_LENGTH ? i64 : lxs_base(S, ti->index));
         if (ti->kind != LIMBA_LTK_ARRAY) {
             lxs_error(S, LXE_TYPE_MISMATCH, a, "%s takes %s, not %s", nm,
                       id == LXB_LENGTH
@@ -842,17 +865,15 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
                       lxs_tname(S, t, tb));
             return set(S, node, 0);
         }
-        limba_ltype it = lxs_base(S, ti->index);
+        limba_ltype it = id == LXB_LENGTH ? i64 : lxs_base(S, ti->index);
         if (!(ti->flags & LIMBA_TF_DYNAMIC)) {
+            /* a length past an Int64 is no array: the type is an error */
             const limba_typeinfo *ix = lxs_ty(S, ti->index);
             __int128 v = id == LXB_LOW     ? ix->lo
                          : id == LXB_HIGH  ? ix->hi
                          : ix->hi < ix->lo ? 0
                                            : ix->hi - ix->lo + 1;
-            uint32_t val = lxs_value_int(S, v);
-            if (id == LXB_LENGTH && !lxs_fit(S, node, &val, it))
-                return set(S, node, it);
-            S->val[node] = val;
+            S->val[node] = lxs_value_int(S, v);
         }
         return set(S, node, it);
     }
@@ -998,7 +1019,7 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
             else if (dt)
                 lxs_writable(S, dst, true);
             arg_of(S, arg_at(S, node, 3), scope, ib);
-            arg_of(S, arg_at(S, node, 4), scope, ib);
+            arg_of(S, arg_at(S, node, 4), scope, S->ty_int[3]);
         }
         return set(S, node, S->ts.void_);
     case LXB_TRANSLATE:
@@ -1009,7 +1030,7 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
             limba_ltype ib =
                 bytes_arg(S, arg_at(S, node, 0), scope, nm, false, true);
             arg_of(S, arg_at(S, node, 1), scope, ib);
-            arg_of(S, arg_at(S, node, 2), scope, ib);
+            arg_of(S, arg_at(S, node, 2), scope, S->ty_int[3]);
             uint32_t tab = arg_at(S, node, 3);
             S->open_ok = true;
             limba_ltype tt = lxs_expr(S, tab, scope, 0);
@@ -1044,35 +1065,35 @@ static limba_ltype builtin(limba_lxs *S, uint32_t node, uint32_t scope,
                 lxs_writable(S, a, true);
             }
             arg_of(S, arg_at(S, node, 1), scope, ib);
-            arg_of(S, arg_at(S, node, 2), scope, ib);
+            arg_of(S, arg_at(S, node, 2), scope, S->ty_int[3]);
         }
         return set(S, node, S->ts.void_);
     case LXB_OCCURRENCES: {
         /* occurrences(a, from, count, pattern): a of Bytes or a String,
-           read; pattern a String or Bytes, whole; a count of the index
-           base, as length */
-        limba_ltype ib = 0;
+           read; pattern a String or Bytes, whole; the count and the
+           result Int64s, as length */
         if (arity(S, node, 4, nm, scope)) {
-            ib = bytes_arg(S, arg_at(S, node, 0), scope, nm, true, false);
+            limba_ltype ib =
+                bytes_arg(S, arg_at(S, node, 0), scope, nm, true, false);
             arg_of(S, arg_at(S, node, 1), scope, ib);
-            arg_of(S, arg_at(S, node, 2), scope, ib);
+            arg_of(S, arg_at(S, node, 2), scope, S->ty_int[3]);
             bytes_arg(S, arg_at(S, node, 3), scope, nm, true, false);
         }
-        return set(S, node, ib);
+        return set(S, node, S->ty_int[3]);
     }
     case LXB_READBYTES:
     case LXB_WRITEBYTES: {
         /* readbytes(a, from, count): a of Bytes, written; how many read,
-           of the index base. writebytes(a, from, count): a of Bytes or a
-           String, read (§ 9.1, § 9.2) */
+           an Int64. writebytes(a, from, count): a of Bytes or a String,
+           read (§ 9.1, § 9.2); the count an Int64 */
         bool rd = id == LXB_READBYTES;
-        limba_ltype ib = 0;
         if (arity(S, node, 3, nm, scope)) {
-            ib = bytes_arg(S, arg_at(S, node, 0), scope, nm, !rd, rd);
+            limba_ltype ib =
+                bytes_arg(S, arg_at(S, node, 0), scope, nm, !rd, rd);
             arg_of(S, arg_at(S, node, 1), scope, ib);
-            arg_of(S, arg_at(S, node, 2), scope, ib);
+            arg_of(S, arg_at(S, node, 2), scope, S->ty_int[3]);
         }
-        return set(S, node, rd ? ib : S->ts.void_);
+        return set(S, node, rd ? S->ty_int[3] : S->ts.void_);
     }
     case LXB_DISPOSE:
         if (arity(S, node, 1, nm, scope)) {

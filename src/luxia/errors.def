@@ -14,7 +14,8 @@ LX_ERROR(4, OPEN_COMMENT)      /* a (* comment never closed */
 LX_ERROR(5, BAD_CHAR_LITERAL)  /* '' or a character literal not closed */
 LX_ERROR(6, KEYWORD_CASE)      /* a keyword not in lowercase */
 LX_ERROR(7, BAD_NUMBER)        /* a malformed number */
-LX_ERROR(8, REAL_RANGE)        /* a real number past Float64 */
+LX_ERROR(8, REAL_RANGE)        /* a real number past Float64: no longer
+                                   given (2 Oct 2026, exact literals) */
 LX_ERROR(9, CONTROL_IN_LITERAL) /* a control character in a literal */
 LX_ERROR(10, EXPECTED)          /* a token other than the grammar wants */
 LX_ERROR(11, MIXED_LOGICAL)     /* and, or, xor mixed without parentheses */
@@ -73,3 +74,5 @@ LX_ERROR(61, RESTRICTED)        /* the boundary with C where pragma
                                    restrictions(no_external) forbids it */
 LX_ERROR(62, C_PRAGMA)          /* pragma convention or restrictions
                                    written wrong (§ 3.13, § 10.4) */
+LX_ERROR(63, DEREF_SELECT)      /* p^.x or p^[i]: one form, p.x and p[i]
+                                   (§ 3.10) */

@@ -50,7 +50,7 @@ static const lex_case lex_cases[] = {
     /* reals, and 1..10 is a range */
     {"1.0 2.5e3 2e10 0.5 6.25e-2 1e+2",
      "real:1 real:2500 real:20000000000 real:0.5 real:0.0625 real:100 eof", ""},
-    {"1e400", "real:0 eof", "L0008@1:1"},
+    {"1e400", "real:inf eof", ""}, /* exact, no error until typed */
     {"1..10 a[1..n]", "int:1 .. int:10 id:a [ int:1 .. id:n ] eof", ""},
     /* operators and punctuation */
     {"+ - * / ** & = <> < <= > >= := : ; , . .. ( ) [ ] ^",
@@ -532,6 +532,13 @@ static const sema_case sema_cases[] = {
     {"program p; type R = record a: Int32; end; var q: ^R; procedure h(out "
      "v: R); begin v.a := 1; end h; begin q := new(R); h(q^); end.",
      "L0059@1:122"},
+    /* p^.x and p^[i]: one form, p.x and p[i] (§ 3.10) */
+    {"program p; type R = record a: Int32; end; var q: ^R; begin q := "
+     "new(R); q^.a := 1; end.",
+     "L0063@1:75"},
+    {"program p; type A = array[Int32 range <>] of Int32; begin var q := "
+     "new(A range 1..3); q^[1] := 1; end.",
+     "L0063@1:89"},
     /* arrays made by new (§ 3.10, § 9.7) and move (§ 9.5) */
     {"program p; type R = record x: Int32; end; procedure s(r: R); begin "
      "end s; begin var q := new(R); s(q^); end.",
@@ -559,40 +566,38 @@ static const sema_case sema_cases[] = {
      "L0027@1:152"},
     {"program p; type T = array[Byte] of Byte; var tb: T; type S = Byte range 0..9; var a: array[Int32 range 1..3] of S; begin translate(a, 1, 3, tb); end.",
      "L0027@1:132"},
-    {"program p; type T = array[Byte] of Byte; var tb: T; n: Int32; begin reverse(n, 1, 1); end.",
+    {"program p; type T = array[Byte] of Byte; var tb: T; n: Int64; begin reverse(n, 1, 1); end.",
      "L0027@1:77"},
     {"program p; type A = array[Int32 range <>] of Int32; procedure f(a: "
      "A); begin reverse(a, low(a), 0); end f; begin end.",
      "L0034@1:86"},
     {"program p; var a: array[Int32 range 1..3] of Byte; q: array[Int32 "
-     "range 1..3] of Int32; n: Int32; begin n := occurrences(a, 1, 3, q); "
+     "range 1..3] of Int32; n: Int64; begin n := occurrences(a, 1, 3, q); "
      "end.",
      "L0027@1:131"},
     {"program p; var reverse: Int32; begin end.", "L0023@1:16"},
     {"program p; type T = array[Byte] of Byte; var q: ^T; n: Int64; a: "
-     "array[Int8 range -2..2] of Byte; m: Int8; begin q := new(T); "
+     "array[Int8 range -2..2] of Byte; m: Int64; begin q := new(T); "
      "translate(a, -2, 5, q^); n := occurrences(\"abab\", 1, 4, \"ab\"); m "
      ":= occurrences(a, -2, 5, a); end.",
      ""},
     /* readbytes and writebytes (§ 9.1, § 9.2): an array of Bytes read
        into, written; a String only written; the result used; 141 is the
        status of a closed output */
-    {"program p; var a: array[Int32 range 1..3] of Byte; n: Int32; s: String; begin n := readbytes(s, 1, 1); end.",
+    {"program p; var a: array[Int32 range 1..3] of Byte; n: Int64; s: String; begin n := readbytes(s, 1, 1); end.",
      "L0027@1:94"},
     {"program p; var a: array[Int32 range 1..3] of Int32; begin writebytes(a, 1, 3); end.",
      "L0027@1:70"},
-    {"program p; type S = Byte range 0..9; var a: array[Int32 range 1..3] of S; n: Int32; begin n := readbytes(a, 1, 3); end.",
+    {"program p; type S = Byte range 0..9; var a: array[Int32 range 1..3] of S; n: Int64; begin n := readbytes(a, 1, 3); end.",
      "L0027@1:106"},
-    {"program p; type A = array[Int32 range <>] of Byte; procedure f(a: A); var n: Int32; begin n := readbytes(a, low(a), 0); end f; begin end.",
+    {"program p; type A = array[Int32 range <>] of Byte; procedure f(a: A); var n: Int64; begin n := readbytes(a, low(a), 0); end f; begin end.",
      "L0034@1:106"},
-    {"program p; var a: array[Int32 range 1..3] of Byte; n: Int32; s: String; begin readbytes(a, 1, 3); end.",
+    {"program p; var a: array[Int32 range 1..3] of Byte; n: Int64; s: String; begin readbytes(a, 1, 3); end.",
      "L0037@1:79"},
-    {"program p; var writebytes: Int32; begin end.",
-     "L0023@1:16"},
-    {"program p; type Bs = array[Int32 range <>] of Byte; var q: ^Bs; n: Int64; m: Int32; begin q := new(Bs range 1..4); m := readbytes(q^, 1, 4); writebytes(q^, 1, m); writebytes(\"abc\", 2, 2); n := 1; end.",
+    {"program p; var writebytes: Int32; begin end.", "L0023@1:16"},
+    {"program p; type Bs = array[Int32 range <>] of Byte; var q: ^Bs; n: Int64; m: Int64; begin q := new(Bs range 1..4); m := readbytes(q^, 1, 4); writebytes(q^, 1, m); writebytes(\"abc\", 2, 2); n := 1; end.",
      ""},
-    {"program p; begin halt(141); end.",
-     "L0055@1:23"},
+    {"program p; begin halt(141); end.", "L0055@1:23"},
     {"program p; type R = record s: String; end; var q: ^R; b: Boolean; "
      "begin q := new(R); b := readline(q.s); end.",
      "L0059@1:101"},
@@ -991,8 +996,8 @@ static const run_case run_cases[] =
          "nil; begin\n  writeln(q.a);\nend t.",
          "", "trap 102 at 2:12"},
         {"program t; type R = record a: Int32; end; Ptr = ^R; var q: Ptr := "
-         "nil; begin\n  writeln(q^.a);\nend t.",
-         "", "trap 102 at 2:12"},
+         "nil; begin\n  var r := q^;\n  writeln(r.a);\nend t.",
+         "", "trap 102 at 2:13"},
         /* a dangling pointer is checked at the access itself, after all the
            statement evaluates; a second dispose is an error (§ 3.10, § 9.7)
          */
@@ -1070,13 +1075,38 @@ static const run_case run_cases[] =
          "", "trap 101 at 2:12"},
         {"program t; type A = array[Int32 range <>] of Int32; begin var n: "
          "Int32 := 2147483647;\n  var p := new(A range -n..n);\nend t.",
-         "", "trap 101 at 2:12"},
+         "", "trap 7 at 2:12"},
+        /* length an Int64 whatever the index (§ 3.7): an array over a
+           whole Byte, an enumeration; a length past an Int64 is out of
+           memory when computed */
+        {"program t; type Colour = (Red, Green, Blue); var b: array[Byte] of "
+         "Byte; var c: array[Colour] of Int32; var u: array[UInt8] of Int8; "
+         "begin for var i := low(b) to high(b) do b[i] := 255 - i; end; "
+         "translate(b, 0, length(b), b); writeln(length(b), \" \", length(c), "
+         "\" \", length(u), \" \", b[0], \" \", b[255], \" \", "
+         "occurrences(b, 0, 256, \"\" & chr(7))); end t.",
+         "256 3 256 0 255 1\n", "ok"},
+        {"program t; type A = array[UInt64 range <>] of Byte; begin var n: "
+         "UInt64 := high(UInt64);\n  var p := new(A range 0..n);\nend t.",
+         "", "trap 7 at 2:12"},
+        {"program t; var n: UInt64 := high(UInt64); begin\n  var a: "
+         "array[UInt64 range 0..n] of Byte;\nend t.",
+         "", "trap 7"},
+        /* Colour(n), the inverse of ord (§ 6.6) */
+        {"program t; type Colour = (Red, Green, Blue); var n: Int32 := 2; "
+         "begin writeln(ord(Colour(n)), \" \", ord(Colour(1))); n := 3;\n  "
+         "writeln(ord(Colour(n)));\nend t.",
+         "2 1\n", "trap 103 at 2:15"},
+        /* a real literal is exact until it takes a type (§ 2.4, § 4.2) */
+        {"program t; const x = 1e400 / 1e390; var y: Float64 := x; begin "
+         "writeln(y); end t.",
+         "10000000000.0\n", "ok"},
         {"program t; type A = array[Int64 range <>] of Int64; begin var n: "
          "Int64 := 4611686018427387904;\n  var p := new(A range 0..n);\nend "
          "t.",
          "", "trap 7 at 2:12"},
         {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
-         "new(A range 1..3); var c: Int32 := -1;\n  move(p^, 1, p^, 1, "
+         "new(A range 1..3); var c: Int64 := -1;\n  move(p^, 1, p^, 1, "
          "c);\nend t.",
          "", "trap 101 at 2:3"},
         {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
@@ -1109,7 +1139,11 @@ static const run_case run_cases[] =
          "\" \", rs[3].k, rs[3].w);\nend t.",
          "CTAATGTT\nTTGTAATC\n1 4 2 0\n0 1\n3w3 1w1\n", "ok"},
         {"program t; var a: array[Int32 range 1..8] of Byte; begin var c: "
-         "Int32 := -1;\n  reverse(a, 1, c);\nend t.",
+         "Int64 := -1;\n  reverse(a, 1, c);\nend t.",
+         "", "trap 101 at 2:3"},
+        /* the count is an Int64 below an index without a sign too */
+        {"program t; var a: array[UInt8 range 1..8] of Byte; begin var c: "
+         "Int64 := -1;\n  reverse(a, 1, c);\nend t.",
          "", "trap 101 at 2:3"},
         {"program t; var a: array[Int32 range 1..8] of Byte; tbl: "
          "array[Byte] of Byte; begin\n  translate(a, 7, 3, tbl);\nend t.",
@@ -1133,7 +1167,7 @@ static const run_case run_cases[] =
          "new(A range 1..3);\n  move(p^, 1, p^, 2, 3);\nend t.",
          "", "trap 100 at 2:3"},
         {"program t; type A = array[Int32 range <>] of Int32; var q: ^A; "
-         "function f(): Int32; begin dispose(q); return 1; end f; begin q := "
+         "function f(): Int64; begin dispose(q); return 1; end f; begin q := "
          "new(A range 1..3);\n  move(q^, 1, q^, 1, f());\nend t.",
          "", "trap 105 at 2:3"},
         {"program t; type A = array[Int32 range <>] of Int32; begin var p := "
@@ -1604,11 +1638,12 @@ static int test_run(void)
 static const struct {
     const char *src, *in, *out, *end;
 } io_cases[] = {
-    {"program t;\nvar a: array[Int32 range 1..8] of Byte;\n  s: String;\n  n: Int32;\n  b: Boolean;\nbegin\n  n := readbytes(a, 1, 3);\n  b := readline(s);\n  writeln(n, \" \", b, \" [\", s, \"]\");\n  writebytes(a, 1, 2);\n  writeln();\n  n := readbytes(a, 99, 0);\n  b := readline(s);\n  writeln(s, \" \", b, \" \", n);\n  n := readbytes(a, 2, 7);\n  write(n, \" \");\n  writebytes(a, 2, n);\n  writeln();\n  n := readbytes(a, 1, 8);\n  b := readline(s);\n  writeln(n, \" \", b, \" [\", s, \"]\");\n  writebytes(\"xyz\", 2, 2);\n  writebytes(s, 5, 0);\n  writeln();\nend t.",
-     "ab\r\ncd\nefgh", "3 true []\nab\ncd true 0\n4 efgh\n0 false []\nyz\n", "ok"},
-    {"program t; var a: array[Int32 range 1..8] of Byte; n: Int32; begin var c: Int32 := -1;\n  n := readbytes(a, 1, c);\nend t.",
+    {"program t;\nvar a: array[Int32 range 1..8] of Byte;\n  s: String;\n  n: Int64;\n  b: Boolean;\nbegin\n  n := readbytes(a, 1, 3);\n  b := readline(s);\n  writeln(n, \" \", b, \" [\", s, \"]\");\n  writebytes(a, 1, 2);\n  writeln();\n  n := readbytes(a, 99, 0);\n  b := readline(s);\n  writeln(s, \" \", b, \" \", n);\n  n := readbytes(a, 2, 7);\n  write(n, \" \");\n  writebytes(a, 2, n);\n  writeln();\n  n := readbytes(a, 1, 8);\n  b := readline(s);\n  writeln(n, \" \", b, \" [\", s, \"]\");\n  writebytes(\"xyz\", 2, 2);\n  writebytes(s, 5, 0);\n  writeln();\nend t.",
+     "ab\r\ncd\nefgh", "3 true []\nab\ncd true 0\n4 efgh\n0 false []\nyz\n",
+     "ok"},
+    {"program t; var a: array[Int32 range 1..8] of Byte; n: Int64; begin var c: Int64 := -1;\n  n := readbytes(a, 1, c);\nend t.",
      "x", "", "trap 101 at 2:8"},
-    {"program t; var a: array[Int32 range 1..8] of Byte; n: Int32; begin\n  n := readbytes(a, 6, 4);\nend t.",
+    {"program t; var a: array[Int32 range 1..8] of Byte; n: Int64; begin\n  n := readbytes(a, 6, 4);\nend t.",
      "x", "", "trap 100 at 2:8"},
     {"program t; begin var s: String := \"abc\";\n  writebytes(s, 3, 2);\nend t.",
      "", "", "trap 100 at 2:3"},
@@ -1616,15 +1651,15 @@ static const struct {
      "", "", "trap 100 at 2:3"},
     {"program t; type Bs = array[Int32 range <>] of Byte; begin var p := new(Bs range 1..3); dispose(p);\n  writebytes(p^, 1, 1);\nend t.",
      "", "", "trap 105 at 2:3"},
-    {"program t; type Bs = array[Int32 range <>] of Byte; var n: Int32; begin var p := new(Bs range 1..3); dispose(p);\n  n := readbytes(p^, 1, 1);\nend t.",
+    {"program t; type Bs = array[Int32 range <>] of Byte; var n: Int64; begin var p := new(Bs range 1..3); dispose(p);\n  n := readbytes(p^, 1, 1);\nend t.",
      "x", "", "trap 105 at 2:8"},
-    {"program t; type Bs = array[Int32 range <>] of Byte; var p: ^Bs; n: Int32; begin\n  n := readbytes(p^, 1, 1);\nend t.",
+    {"program t; type Bs = array[Int32 range <>] of Byte; var p: ^Bs; n: Int64; begin\n  n := readbytes(p^, 1, 1);\nend t.",
      "x", "", "trap 102 at 2:8"},
-    {"program p; var n: Int32 := 141; begin halt(n); end p.",
-     "", "", "trap 101"},
+    {"program p; var n: Int32 := 141; begin halt(n); end p.", "", "",
+     "trap 101"},
     {"program t; var s: String; b: Boolean; begin\n  b := readline(s);\nend t.",
      unreadable, "", "trap 107 at 2:8"},
-    {"program t; var a: array[Int32 range 1..8] of Byte; n: Int32; begin\n  n := readbytes(a, 1, 8);\nend t.",
+    {"program t; var a: array[Int32 range 1..8] of Byte; n: Int64; begin\n  n := readbytes(a, 1, 8);\nend t.",
      unreadable, "", "trap 107 at 2:8"},
 };
 
@@ -1635,9 +1670,9 @@ static int test_io(void)
         char end[256];
         limba_report dummy;
         size_t len;
-        char *out = compile_run(io_cases[i].src, io_cases[i].in,
-                                strlen(io_cases[i].in), 0, NULL, end,
-                                sizeof(end), &dummy, &len);
+        char *out =
+            compile_run(io_cases[i].src, io_cases[i].in, strlen(io_cases[i].in),
+                        0, NULL, end, sizeof(end), &dummy, &len);
         char *at = strstr(end, " at ");
         if (at && !strstr(io_cases[i].end, " at "))
             *at = 0;
@@ -1957,7 +1992,7 @@ int main(void)
            "semantic, %zu run and %zu input cases, %u valid programs, %u "
            "calling C, report and limit, %d failures\n",
            COUNT(lex_cases), COUNT(expr_cases), COUNT(program_cases),
-           COUNT(sema_cases), COUNT(run_cases), COUNT(io_cases), programs,
-           ffi, failures);
+           COUNT(sema_cases), COUNT(run_cases), COUNT(io_cases), programs, ffi,
+           failures);
     return failures ? 1 : 0;
 }

@@ -132,7 +132,8 @@ limba_ltype limba_types_array(limba_types *ts, limba_ltype index,
         __int128 n = ts->t[index].hi - ts->t[index].lo + 1;
         if (n < 0)
             n = 0;
-        if (n > (__int128)UINT64_MAX ||
+        /* a length past an Int64 is no array (§ 3.7) */
+        if (n > (__int128)INT64_MAX ||
             __builtin_mul_overflow((uint64_t)n, ts->t[elem].size, &size)) {
             *ok = false;
             size = 0;

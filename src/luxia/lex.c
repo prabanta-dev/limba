@@ -278,12 +278,9 @@ static void number(lexer *L)
             if (L->text[i] != '_')
                 buf_put(L, &L->text[i], 1);
         buf_put(L, "", 1);
+        /* the exact value is the semantics' (§ 4.2): a literal past
+           Float64 is no error until it takes a type; v is for --emit=ast */
         v = strtod(L->buf, NULL);
-        if (isinf(v)) {
-            error(L, LXE_REAL_RANGE, start, L->pos - start, "%s",
-                  "this real number is too large for Float64");
-            v = 0;
-        }
     }
     limba_lx *lx = L->lx;
     LIMBA_GROW(lx->reals, lx->nreals, lx->capreals);

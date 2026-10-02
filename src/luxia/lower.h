@@ -197,6 +197,9 @@ limba_id lxl_conv_at(lxl *L, limba_id v, limba_ltype from, limba_ltype to,
 void lxl_array_parts(lxl *L, uint32_t base, uint32_t at, limba_id *p,
                      limba_id *len, limba_id *lo, limba_id *hi);
 limba_id lxl_to_i64(lxl *L, limba_id v, limba_ltype t);
+/* the elements of a computed array lo..hi (i64 values), 0 if empty; a
+   length past INT64_MAX is out of memory */
+limba_id lxl_count(lxl *L, limba_id empty, limba_id lo, limba_id hi);
 /* is base[idx] inside base by the bounds of the for variable idx */
 bool lxl_in_bounds(const lxl *L, uint32_t base, uint32_t idx);
 /* an object without an initial value (§ 4.5): every scalar of a range

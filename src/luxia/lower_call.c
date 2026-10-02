@@ -116,15 +116,15 @@ static limba_id inside(lxl *L, bool sg, limba_id i, limba_id lo, limba_id hi,
                bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b), c);
 }
 
-/* the checks of a tract of count elements from index from, in an array
-   lo..hi (§ 9.5, as move): count below 0 a range error, then, unless
-   count is 0, the tract inside the array (index error) */
-static void tract_checks(lxl *L, bool sg, limba_id from, limba_id count,
-                         limba_id lo, limba_id hi)
+/* the checks of a span of count elements (an Int64) from index from, in
+   an array lo..hi whose index is signed if sg (§ 9.5, as move): count
+   below 0 a range error, then, unless count is 0, the span inside the
+   array (index error) */
+static void span_checks(lxl *L, bool sg, limba_id from, limba_id count,
+                        limba_id lo, limba_id hi)
 {
     limba_id zero = lxl_iconst(L, LIMBA_T_I64, 0);
-    if (sg)
-        lxl_check(L, icmp(L, LIMBA_CC_SGE, count, zero), LXR_RANGE);
+    lxl_check(L, icmp(L, LIMBA_CC_SGE, count, zero), LXR_RANGE);
     lxl_check(L,
               bin(L, LIMBA_OP_OR, LIMBA_T_I1, icmp(L, LIMBA_CC_EQ, count, zero),
                   inside(L, sg, from, lo, hi, count)),
@@ -615,11 +615,10 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         limba_id from = lxl_to_i64(L, lxl_value(L, arg(L, node, 1)), ib);
         span(L, dst, node, &db, &dlo, &dhi);
         limba_id to = lxl_to_i64(L, lxl_value(L, arg(L, node, 3)), ib);
-        limba_id count = lxl_to_i64(L, lxl_value(L, arg(L, node, 4)), ib);
+        limba_id count = lxl_value(L, arg(L, node, 4)); /* an Int64 */
         lxl_at(L, node);
         limba_id zero = lxl_iconst(L, LIMBA_T_I64, 0);
-        if (sg)
-            lxl_check(L, icmp(L, LIMBA_CC_SGE, count, zero), LXR_RANGE);
+        lxl_check(L, icmp(L, LIMBA_CC_SGE, count, zero), LXR_RANGE);
         lxl_check(L,
                   bin(L, LIMBA_OP_OR, LIMBA_T_I1,
                       icmp(L, LIMBA_CC_EQ, count, zero),
@@ -648,10 +647,10 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         limba_id b, lo, hi, tb, tlo, thi;
         span(L, a0, node, &b, &lo, &hi);
         limba_id from = lxl_to_i64(L, lxl_value(L, arg(L, node, 1)), ib);
-        limba_id count = lxl_to_i64(L, lxl_value(L, arg(L, node, 2)), ib);
+        limba_id count = lxl_value(L, arg(L, node, 2)); /* an Int64 */
         span(L, arg(L, node, 3), node, &tb, &tlo, &thi);
         lxl_at(L, node);
-        tract_checks(L, lxl_signed(L, ib), from, count, lo, hi);
+        span_checks(L, lxl_signed(L, ib), from, count, lo, hi);
         limba_id pa = element_at(L, b, lo, from, 1);
         lxl_live(L, pa);
         lxl_live(L, tb);
@@ -665,9 +664,9 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         limba_id b, lo, hi;
         span(L, a0, node, &b, &lo, &hi);
         limba_id from = lxl_to_i64(L, lxl_value(L, arg(L, node, 1)), ib);
-        limba_id count = lxl_to_i64(L, lxl_value(L, arg(L, node, 2)), ib);
+        limba_id count = lxl_value(L, arg(L, node, 2)); /* an Int64 */
         lxl_at(L, node);
-        tract_checks(L, lxl_signed(L, ib), from, count, lo, hi);
+        span_checks(L, lxl_signed(L, ib), from, count, lo, hi);
         uint64_t esize = ti(L, ti(L, t0)->elem)->size;
         limba_id pa = element_at(L, b, lo, from, esize);
         lxl_live(L, pa);
@@ -684,10 +683,10 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         limba_id b, lo, hi, qb, qlo, qhi;
         bytes_span(L, a0, node, &b, &lo, &hi);
         limba_id from = lxl_to_i64(L, lxl_value(L, arg(L, node, 1)), ib);
-        limba_id count = lxl_to_i64(L, lxl_value(L, arg(L, node, 2)), ib);
+        limba_id count = lxl_value(L, arg(L, node, 2)); /* an Int64 */
         bytes_span(L, arg(L, node, 3), node, &qb, &qlo, &qhi);
         lxl_at(L, node);
-        tract_checks(L, lxl_signed(L, ib), from, count, lo, hi);
+        span_checks(L, lxl_signed(L, ib), from, count, lo, hi);
         limba_id m = length64(L, qlo, qhi);
         lxl_check(L, icmp(L, LIMBA_CC_SGT, m, lxl_iconst(L, LIMBA_T_I64, 0)),
                   LXR_RANGE);
@@ -696,14 +695,13 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         lxl_live(L, pa);
         lxl_live(L, pq);
         uint32_t args[4] = {pa, count, pq, m};
-        *result = from_i64(
-            L, lxl_rt(L, LIMBA_RT_MEM_COUNT, LIMBA_T_I64, args, 4), ib);
+        *result = lxl_rt(L, LIMBA_RT_MEM_COUNT, LIMBA_T_I64, args, 4);
         return;
     }
     case LXB_READBYTES:
     case LXB_WRITEBYTES: {
         /* readbytes(a, from, count), writebytes(a, from, count): the
-           checks of move, then one read or write of the tract (§ 9.1,
+           checks of move, then one read or write of the span (§ 9.1,
            § 9.2) */
         bool rd = id == LXB_READBYTES;
         bool str = ti(L, t0)->kind == LIMBA_LTK_STRING;
@@ -711,15 +709,14 @@ static void builtin(lxl *L, uint32_t node, unsigned id, limba_id *result)
         limba_id b, lo, hi;
         bytes_span(L, a0, node, &b, &lo, &hi);
         limba_id from = lxl_to_i64(L, lxl_value(L, arg(L, node, 1)), ib);
-        limba_id count = lxl_to_i64(L, lxl_value(L, arg(L, node, 2)), ib);
+        limba_id count = lxl_value(L, arg(L, node, 2)); /* an Int64 */
         lxl_at(L, node);
-        tract_checks(L, lxl_signed(L, ib), from, count, lo, hi);
+        span_checks(L, lxl_signed(L, ib), from, count, lo, hi);
         limba_id pa = element_at(L, b, lo, from, 1);
         lxl_live(L, pa);
         uint32_t args[2] = {pa, count};
         if (rd)
-            *result = from_i64(
-                L, lxl_rt(L, LIMBA_RT_IO_READ, LIMBA_T_I64, args, 2), ib);
+            *result = lxl_rt(L, LIMBA_RT_IO_READ, LIMBA_T_I64, args, 2);
         else
             lxl_rt(L, LIMBA_RT_IO_WRITE, LIMBA_T_VOID, args, 2);
         return;

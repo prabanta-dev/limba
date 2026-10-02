@@ -222,17 +222,19 @@ prog.luxia:2:17: error[L0007]: '_' may appear only between two digits
 
 ### L0008 — REAL OUT OF RANGE
 
-A real literal must fit in `Float64` (§ 2.4).
+No longer given. A real literal is an exact value of any size (§ 2.4,
+§ 4.2): `1e400 / 1e390` is the constant `1e10`. A constant too large for
+the type it takes is L0029:
 
 ```pascal
 program p;
-const Big = 1e400;
+const Big: Float64 = 1e400;
 begin
 end.
 ```
 
 ```
-prog.luxia:2:13: error[L0008]: this real number is too large for Float64
+prog.luxia:2:22: error[L0029]: the constant is too large for Float64
 ```
 
 ### L0009 — CONTROL CHARACTER IN LITERAL
@@ -1290,6 +1292,26 @@ end.
 prog.luxia:3:1: error[L0062]: the convention is C: 'pragma convention(c, R)', R a record type declared here
 ```
 
+### L0063 — FIELD OR ELEMENT AFTER ^
+
+A field or an element is reached through a pointer without `^`: `p.x`
+and `p[i]`, never `p^.x` nor `p^[i]`, one form for each thing (§ 3.10).
+`p^` alone is the whole object.
+
+```pascal
+program p;
+type Node = record v: Int32; end;
+var q: ^Node;
+begin
+  q := new(Node);
+  q^.v := 1;
+end.
+```
+
+```
+prog.luxia:6:5: error[L0063]: a field is reached through a pointer without '^': write p.x, not p^.x
+```
+
 ## All the codes
 
 | Code | Name | Meaning |
@@ -1301,7 +1323,7 @@ prog.luxia:3:1: error[L0062]: the convention is C: 'pragma convention(c, R)', R 
 | L0005 | BAD_CHAR_LITERAL | `''` or a character literal not closed |
 | L0006 | KEYWORD_CASE | a keyword not in lowercase |
 | L0007 | BAD_NUMBER | a malformed number |
-| L0008 | REAL_RANGE | a real literal past `Float64` |
+| L0008 | REAL_RANGE | no longer given (a real literal is exact: L0029) |
 | L0009 | CONTROL_IN_LITERAL | a control character in a literal |
 | L0010 | EXPECTED | a token other than the grammar wants |
 | L0011 | MIXED_LOGICAL | `and`, `or`, `xor` mixed without parentheses |
@@ -1356,3 +1378,4 @@ prog.luxia:3:1: error[L0062]: the convention is C: 'pragma convention(c, R)', R 
 | L0060 | C_BOUNDARY | a type that does not cross to C |
 | L0061 | RESTRICTED | the boundary with C where `pragma restrictions(no_external)` forbids it |
 | L0062 | C_PRAGMA | `pragma convention` or `restrictions` written wrong |
+| L0063 | DEREF_SELECT | a field or an element after `^` (`p^.x`, `p^[i]`) |

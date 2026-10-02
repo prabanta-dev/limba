@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- The compiler follows the reviewed specification. `length(a)` is an
+  `Int64` whatever the index, and so are the counts of `move`,
+  `translate`, `reverse`, `occurrences`, `readbytes` and `writebytes`
+  and the results of the last two that count: before, `length` of an
+  `array[Byte]` was 0 (256 wrapped in a `Bits8`), and the length of an
+  array indexed by an enumeration was a value of that enumeration. An
+  array type whose length does not fit an `Int64` is an error; with
+  computed bounds such a length, or a size past the memory, is "out of
+  memory" (before, a computed array over a whole `UInt64` had no
+  elements). Real literals are exact until they take a type (`1e400 /
+  1e390` is `1e10`; L0008 is no longer given). `Colour(n)` converts a
+  position to an enumeration value, checked. `p^.x` and `p^[i]` are the
+  new error L0063. The random programs use counts of `Int64`, negative
+  ones on every index.
+
 - The specification describes units (§ 11), the first step of Luxia 1,
   in the form of Delphi and Free Pascal with the rigour of Ada:
   `unit Name; interface ... implementation ... [begin ... end] end.`,

@@ -310,12 +310,15 @@ limba_id lxl_conv(lxl *L, limba_id v, limba_ltype from, limba_ltype to)
                                                   : LIMBA_OP_FPTOUI,
                   toi, v);
     }
-    if (tx->kind != LIMBA_LTK_INT || ti(L, from)->kind != LIMBA_LTK_INT) {
+    bool position =
+        tx->kind == LIMBA_LTK_ENUM && ti(L, from)->kind == LIMBA_LTK_INT;
+    if (!position &&
+        (tx->kind != LIMBA_LTK_INT || ti(L, from)->kind != LIMBA_LTK_INT)) {
         /* same kind, compatible: a range may narrow */
         return lxl_coerce(L, v, from, to);
     }
-    /* integer to integer: a Bits type takes the low bits; any other must
-       hold the value */
+    /* integer to integer, or to an enumeration by position (§ 6.6): a
+       Bits type takes the low bits; any other must hold the value */
     if (!(is_modular(L, to) && !(tx->flags & LIMBA_TF_RANGE))) {
         limba_id w = lxl_to_i64(L, v, from);
         bool fsg = lxl_signed(L, from);
@@ -831,10 +834,26 @@ limba_id lxl_addr(lxl *L, uint32_t node)
 /* ---- values ---- */
 
 /* new(A range lo..hi): the bounds from the left, checked (those of a
-   non-empty array in a subtype index, a length in the base of the index,
-   a size in bytes within INT64_MAX, else out of memory), then the block:
+   non-empty array in a subtype index), a length and a size in bytes
+   within INT64_MAX, else out of memory (§ 3.7), then the block:
    lo and hi as i64 values, the elements from + 16, as § 3.11 wants them
    (§ 9.7, progetto_ir.md § 4) */
+/* the number of elements of a computed array lo..hi (i64 values),
+   empty if empty: hi - lo + 1, a length past INT64_MAX out of memory, no
+   check (§ 3.7) */
+limba_id lxl_count(lxl *L, limba_id empty, limba_id lo, limba_id hi)
+{
+    limba_id d = bin(L, LIMBA_OP_SUB, LIMBA_T_I64, hi, lo);
+    limba_id fits =
+        cmp(L, false, LIMBA_CC_ULT, d, lxl_iconst(L, LIMBA_T_I64, INT64_MAX));
+    limba_id ok = bin(L, LIMBA_OP_OR, LIMBA_T_I1, empty, fits);
+    lxl_emit(L, LIMBA_OP_CHECK, LIMBA_T_VOID, 0, LIMBA_TRAP_NOMEM, 0, &ok, 1);
+    uint32_t sel[3] = {
+        empty, lxl_iconst(L, LIMBA_T_I64, 0),
+        bin(L, LIMBA_OP_ADD, LIMBA_T_I64, d, lxl_iconst(L, LIMBA_T_I64, 1))};
+    return lxl_emit(L, LIMBA_OP_SELECT, LIMBA_T_I64, 0, 0, 0, sel, 3);
+}
+
 static limba_id new_array(lxl *L, uint32_t node)
 {
     const limba_lx_node *tn = nd(L, nd(L, node)->a);
@@ -857,16 +876,7 @@ static limba_id new_array(lxl *L, uint32_t node)
                       bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b)),
                   LXR_RANGE);
     }
-    /* hi - lo + 1 elements, a length that fits the base of the index */
-    limba_id d = bin(L, LIMBA_OP_SUB, LIMBA_T_I64, hi, lo);
-    uint64_t maxlen = (uint64_t)ti(L, ib)->hi;
-    limba_id fits = cmp(L, false, LIMBA_CC_ULT, d,
-                        lxl_iconst(L, LIMBA_T_I64, (int64_t)maxlen));
-    lxl_check(L, bin(L, LIMBA_OP_OR, LIMBA_T_I1, empty, fits), LXR_RANGE);
-    uint32_t sel[3] = {
-        empty, lxl_iconst(L, LIMBA_T_I64, 0),
-        bin(L, LIMBA_OP_ADD, LIMBA_T_I64, d, lxl_iconst(L, LIMBA_T_I64, 1))};
-    limba_id n = lxl_emit(L, LIMBA_OP_SELECT, LIMBA_T_I64, 0, 0, 0, sel, 3);
+    limba_id n = lxl_count(L, empty, lo, hi);
     /* 16 + n * size never past INT64_MAX: out of memory, not a block too
        small (this is no check: it cannot be suppressed) */
     uint64_t esize = ti(L, el)->size ? ti(L, el)->size : 1;

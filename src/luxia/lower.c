@@ -456,20 +456,25 @@ static void dynamic(lxl *L, limba_sym s, uint32_t tnode)
     st->lo = lxl_value(L, in->b);
     st->hi = lxl_value(L, in->c);
     limba_id lo = lxl_to_i64(L, st->lo, it), hi = lxl_to_i64(L, st->hi, it);
-    uint32_t o2[2] = {hi, lo};
-    limba_id d = lxl_emit(L, LIMBA_OP_SUB, LIMBA_T_I64, 0, 0, 0, o2, 2);
-    uint32_t o3[2] = {d, lxl_iconst(L, LIMBA_T_I64, 1)};
-    limba_id n = lxl_emit(L, LIMBA_OP_ADD, LIMBA_T_I64, 0, 0, 0, o3, 2);
-    /* an empty range holds no element (§ 4.5) */
-    uint32_t c[2] = {n, lxl_iconst(L, LIMBA_T_I64, 0)};
-    uint32_t sel[3] = {
-        lxl_emit(L, LIMBA_OP_ICMP, LIMBA_T_I1, LIMBA_CC_SLT, 0, 0, c, 2), c[1],
-        n};
-    n = lxl_emit(L, LIMBA_OP_SELECT, LIMBA_T_I64, 0, 0, 0, sel, 3);
+    /* an empty range holds no element (§ 4.5), a length past an Int64 is
+       out of memory (§ 3.7) */
+    uint32_t c[2] = {hi, lo};
+    limba_id empty = lxl_emit(L, LIMBA_OP_ICMP, LIMBA_T_I1,
+                              lxl_signed(L, lxs_base(L->S, it)) ? LIMBA_CC_SLT
+                                                                : LIMBA_CC_ULT,
+                              0, 0, c, 2);
+    limba_id n = lxl_count(L, empty, lo, hi);
     st->count = n;
+    /* n * size never past INT64_MAX: out of memory, as new (no check) */
+    uint64_t esize = ti(L, x->elem)->size ? ti(L, x->elem)->size : 1;
+    uint32_t r[2] = {n,
+                     lxl_iconst(L, LIMBA_T_I64, (int64_t)(INT64_MAX / esize))};
+    limba_id room =
+        lxl_emit(L, LIMBA_OP_ICMP, LIMBA_T_I1, LIMBA_CC_ULE, 0, 0, r, 2);
+    lxl_emit(L, LIMBA_OP_CHECK, LIMBA_T_VOID, 0, LIMBA_TRAP_NOMEM, 0, &room, 1);
     uint32_t o4[2] = {
         n, lxl_iconst(L, LIMBA_T_I64, (int64_t)ti(L, x->elem)->size)};
-    limba_id bytes = lxl_emit(L, LIMBA_OP_MULOV, LIMBA_T_I64, 0, 0, 0, o4, 2);
+    limba_id bytes = lxl_emit(L, LIMBA_OP_MUL, LIMBA_T_I64, 0, 0, 0, o4, 2);
     st->addr = lxl_rt(L, LIMBA_RT_MEM_ALLOC, LIMBA_T_PTR, &bytes, 1);
     uint32_t o5[3] = {st->addr, lxl_iconst(L, LIMBA_T_I8, 0), bytes};
     lxl_emit(L, LIMBA_OP_MEMSET, LIMBA_T_VOID, 0, 0, 0, o5, 3);

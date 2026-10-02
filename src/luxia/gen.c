@@ -295,7 +295,7 @@ enum {
        writeln(readbytes(var^, ...)) and writebytes(var^, ...) of an array
        of Bytes made by new; writebytes(var, ...) of a String;
        writeln(readbytes(zN, e, fld)) of an array zN: array[Int32 range
-       1..4] of Byte declared before, the tract inside */
+       1..4] of Byte declared before, the span inside */
     S_RDB,
     S_WRB,
     S_WRS,
@@ -927,7 +927,8 @@ static int depth(G *g)
 static uint32_t bound(G *g, unsigned k, uint32_t v)
 {
     uint32_t at = g->v[v].t;
-    uint32_t i = new_e(g, k, index_base(g, at));
+    /* low and high in the base of the index, length an Int64 (§ 3.7) */
+    uint32_t i = new_e(g, k, k == E_LEN ? T_I64 : index_base(g, at));
     g->e[i].var = v;
     if (g->ty[at].k == K_ARRAY) {
         const xt *x = &g->ty[at];
@@ -955,13 +956,15 @@ static uint32_t index_for(G *g, uint32_t v, int d)
     return value_for(g, g->ty[at].index, d);
 }
 
-/* a visible array variable whose index has base b; -1 if none */
+/* a visible array variable whose index has base b (any for NTYPES);
+   -1 if none */
 static int pick_indexed(G *g, unsigned b)
 {
     uint32_t n = 0, chosen = 0;
     for (uint32_t i = 0; i < g->nscope; i++) {
         uint32_t v = g->scope[i];
-        if (is_array(g, g->v[v].t) && index_base(g, g->v[v].t) == b &&
+        if (is_array(g, g->v[v].t) &&
+            (b == NTYPES || index_base(g, g->v[v].t) == b) &&
             below(g, ++n) == 0)
             chosen = v;
     }
@@ -1573,7 +1576,14 @@ static uint32_t leaf(G *g, unsigned t, bool need_var, int d)
         return element(g, (uint32_t)a, d);
     int x = t != T_BOOL && chance(g, 10) ? pick_indexed(g, t) : -1;
     if (x >= 0) {
-        uint32_t b = bound(g, E_LOW + below(g, 3), (uint32_t)x);
+        uint32_t b = bound(g, E_LOW + below(g, 2), (uint32_t)x);
+        if (!need_var || !g->e[b].cst)
+            return b;
+    }
+    /* length(a) is an Int64 whatever the index of a */
+    x = t == T_I64 && chance(g, 10) ? pick_indexed(g, NTYPES) : -1;
+    if (x >= 0) {
+        uint32_t b = bound(g, E_LEN, (uint32_t)x);
         if (!need_var || !g->e[b].cst)
             return b;
     }
@@ -2566,9 +2576,10 @@ static uint32_t heap_write(G *g, uint32_t h, bool bounds, v128 lo, v128 hi)
     uint32_t items[3] = {it, 0, 0}, n = 1;
     if (bounds) {
         uint32_t sep = new_e(g, E_STR, 0);
-        uint32_t len = new_e(g, E_HLEN, ix);
+        uint8_t op = (uint8_t)below(g, 3);
+        uint32_t len = new_e(g, E_HLEN, op == 2 ? T_I64 : ix);
         g->e[len].var = h;
-        g->e[len].op = (uint8_t)below(g, 3);
+        g->e[len].op = op;
         bool first = chance(g, 50);
         items[0] = first ? len : it;
         items[1] = sep;
@@ -2581,16 +2592,17 @@ static uint32_t heap_write(G *g, uint32_t h, bool bounds, v128 lo, v128 hi)
     return w;
 }
 
-/* move(h^, from, d^, to, count), count -1..4; lo..hi as heap_write */
+/* move(h^, from, d^, to, count), count -1..4, an Int64; lo..hi as
+   heap_write */
 static uint32_t heap_move(G *g, uint32_t h, uint32_t d, v128 lo, v128 hi)
 {
     unsigned ix = g->ty[g->ty[g->v[h].t].elem].index;
-    v128 k = fam(ix) == 'S' ? (v128)below(g, 6) - 1 : (v128)below(g, 5);
+    v128 k = (v128)below(g, 6) - 1;
     if (lo <= hi && k > hi - lo + 1 && chance(g, 80))
         k = hi - lo + 1;
     uint32_t from = lit(g, ix, some_index(g, ix, lo, hi));
     uint32_t to = lit(g, ix, some_index(g, ix, lo, hi));
-    uint32_t count = lit(g, ix, k);
+    uint32_t count = lit(g, T_I64, k);
     uint32_t m = new_s(g, S_MOVE);
     g->st[m].var = h;
     g->st[m].idx = d;
@@ -2600,13 +2612,13 @@ static uint32_t heap_move(G *g, uint32_t h, uint32_t d, v128 lo, v128 hi)
     return m;
 }
 
-/* a tract of h for reverse, translate, occurrences, readbytes and
-   writebytes: from and count,
-   count -1..4 (lo..hi as heap_write), into the statement's e and fld */
-static uint32_t heap_tract(G *g, unsigned k, uint32_t h, v128 lo, v128 hi)
+/* a span of h for reverse, translate, occurrences, readbytes and
+   writebytes: from and count, count -1..4 and an Int64 (lo..hi as
+   heap_write), into the statement's e and fld */
+static uint32_t heap_span(G *g, unsigned k, uint32_t h, v128 lo, v128 hi)
 {
     unsigned ix = g->ty[g->ty[g->v[h].t].elem].index;
-    v128 n = fam(ix) == 'S' ? (v128)below(g, 6) - 1 : (v128)below(g, 5);
+    v128 n = (v128)below(g, 6) - 1;
     v128 f = some_index(g, ix, lo, hi);
     if (lo <= hi && chance(g, 70)) {
         /* inside: the routine is reached, its work seen */
@@ -2617,7 +2629,7 @@ static uint32_t heap_tract(G *g, unsigned k, uint32_t h, v128 lo, v128 hi)
         n = hi - lo + 1;
     }
     uint32_t from = lit(g, ix, f);
-    uint32_t count = lit(g, ix, n);
+    uint32_t count = lit(g, T_I64, n);
     uint32_t m = new_s(g, k);
     g->st[m].var = h;
     g->st[m].e = from;
@@ -2628,7 +2640,7 @@ static uint32_t heap_tract(G *g, unsigned k, uint32_t h, v128 lo, v128 hi)
 /* translate(h^, ...) through a table of j * K + C, h of Bytes */
 static uint32_t heap_trans(G *g, uint32_t h, v128 lo, v128 hi)
 {
-    uint32_t m = heap_tract(g, S_TRANS, h, lo, hi);
+    uint32_t m = heap_span(g, S_TRANS, h, lo, hi);
     g->st[m].fn = chance(g, 30) ? 1 : below(g, 256);
     g->st[m].args = below(g, 256);
     return m;
@@ -2637,7 +2649,7 @@ static uint32_t heap_trans(G *g, uint32_t h, v128 lo, v128 hi)
 /* writeln(occurrences(h^, from, count, d^)), h and d of Bytes */
 static uint32_t heap_occ(G *g, uint32_t h, uint32_t d, v128 lo, v128 hi)
 {
-    uint32_t m = heap_tract(g, S_OCC, h, lo, hi);
+    uint32_t m = heap_span(g, S_OCC, h, lo, hi);
     g->st[m].idx = d;
     return m;
 }
@@ -2660,14 +2672,14 @@ static uint32_t str_bytes(G *g)
 }
 
 /* writeln(readbytes(zN, from, count)) of a local array of 4 Bytes, the
-   tract inside: the input read in blocks often, whatever the program
+   span inside: the input read in blocks often, whatever the program
    holds */
 static uint32_t local_read(G *g)
 {
     unsigned f = 1 + below(g, 2);
     uint32_t m = new_s(g, S_RDZ);
     g->st[m].e = lit(g, T_I32, f);
-    g->st[m].fld = lit(g, T_I32, below(g, 6 - f));
+    g->st[m].fld = lit(g, T_I64, below(g, 6 - f));
     return m;
 }
 
@@ -2740,7 +2752,7 @@ static uint32_t heap_array(G *g, uint32_t *out)
             out[n++] = heap_write(g, v, false, lo, hi);
         }
         if (chance(g, 30)) {
-            out[n++] = heap_tract(g, S_REV, v, lo, hi);
+            out[n++] = heap_span(g, S_REV, v, lo, hi);
             out[n++] = heap_write(g, v, false, lo, hi);
         }
         if (el == T_B8 && chance(g, 50)) {
@@ -2774,11 +2786,11 @@ static uint32_t heap_array(G *g, uint32_t *out)
             out[n++] = heap_occ(g, v, pv, lo, hi);
         }
         if (el == T_B8 && chance(g, 50)) {
-            out[n++] = heap_tract(g, S_RDB, v, lo, hi);
+            out[n++] = heap_span(g, S_RDB, v, lo, hi);
             out[n++] = heap_write(g, v, false, lo, hi);
         }
         if (el == T_B8 && chance(g, 50))
-            out[n++] = heap_tract(g, S_WRB, v, lo, hi);
+            out[n++] = heap_span(g, S_WRB, v, lo, hi);
         if (chance(g, 30))
             n += heap_free(g, v, out + n);
         return n;
@@ -2810,9 +2822,9 @@ static uint32_t heap_array(G *g, uint32_t *out)
         else if (w == 1)
             out[0] = heap_occ(g, (uint32_t)h, (uint32_t)pick_heap(g, ht), 1, 0);
         else if (w < 4)
-            out[0] = heap_tract(g, w == 2 ? S_RDB : S_WRB, (uint32_t)h, 1, 0);
+            out[0] = heap_span(g, w == 2 ? S_RDB : S_WRB, (uint32_t)h, 1, 0);
         else
-            out[0] = heap_tract(g, S_REV, (uint32_t)h, 1, 0);
+            out[0] = heap_span(g, S_REV, (uint32_t)h, 1, 0);
         return 1;
     }
     return heap_free(g, (uint32_t)h, out);
@@ -5510,7 +5522,6 @@ static int run_stmt(X *x, uint32_t si)
         /* from the left: the source (nil, dangling), from, the target,
            to, count; count < 0 a range error, the two ranges inside
            their arrays unless count is 0, then a copy that may overlap */
-        unsigned ix = g->ty[g->ty[g->v[s->var].t].elem].index;
         struct xh *a = heap_at(x, s->var, s->line, s->col);
         if (!a)
             return X_RET;
@@ -5528,7 +5539,7 @@ static int run_stmt(X *x, uint32_t si)
             return X_RET;
         a = &x->harr[sh];
         b = &x->harr[dh];
-        if (fam(ix) == 'S' && count < 0) {
+        if (count < 0) { /* an Int64 */
             stop(x, 101, s->line, s->col);
             return X_RET;
         }
@@ -5549,9 +5560,8 @@ static int run_stmt(X *x, uint32_t si)
     case S_OCC: {
         /* from the left: the array (nil, dangling), from, count, the
            pattern of occurrences (nil, dangling); count < 0 a range
-           error, the tract inside the array unless count is 0, an empty
+           error, the span inside the array unless count is 0, an empty
            pattern a range error */
-        unsigned ix = g->ty[g->ty[g->v[s->var].t].elem].index;
         struct xh *a = heap_at(x, s->var, s->line, s->col);
         if (!a)
             return X_RET;
@@ -5568,7 +5578,7 @@ static int run_stmt(X *x, uint32_t si)
             ph = (uint32_t)(p - x->harr);
         }
         a = &x->harr[ah];
-        if (fam(ix) == 'S' && count < 0) {
+        if (count < 0) { /* an Int64 */
             stop(x, 101, s->line, s->col);
             return X_RET;
         }
@@ -5577,7 +5587,7 @@ static int run_stmt(X *x, uint32_t si)
             stop(x, 100, s->line, s->col);
             return X_RET;
         }
-        /* no address of a cell when the tract is empty: hcell may be
+        /* no address of a cell when the span is empty: hcell may be
            NULL */
         v128 *c = count > 0 ? &x->hcell[a->first + (from - a->lo)] : NULL;
         if (s->k == S_REV) {
@@ -5609,7 +5619,7 @@ static int run_stmt(X *x, uint32_t si)
                     i++;
                 }
             }
-            print_value(g, &x->out, ix, found);
+            print_value(g, &x->out, T_I64, found);
             put(&x->out, "\n");
         }
         return X_NEXT;
@@ -5617,10 +5627,9 @@ static int run_stmt(X *x, uint32_t si)
     case S_RDB:
     case S_WRB: {
         /* from the left: the array (nil, dangling), from, count; count <
-           0 a range error, the tract inside the array unless count is 0;
+           0 a range error, the span inside the array unless count is 0;
            then up to count bytes of the input, fewer only at its end,
            which is final; or the bytes written as they are */
-        unsigned ix = g->ty[g->ty[g->v[s->var].t].elem].index;
         struct xh *a = heap_at(x, s->var, s->line, s->col);
         if (!a)
             return X_RET;
@@ -5630,7 +5639,7 @@ static int run_stmt(X *x, uint32_t si)
         if (x->trap)
             return X_RET;
         a = &x->harr[ah];
-        if (fam(ix) == 'S' && count < 0) {
+        if (count < 0) { /* an Int64 */
             stop(x, 101, s->line, s->col);
             return X_RET;
         }
@@ -5655,12 +5664,12 @@ static int run_stmt(X *x, uint32_t si)
                 c[i] = (uint8_t)x->in[x->inpos++];
             x->in_end = got < count;
         }
-        print_value(g, &x->out, ix, got);
+        print_value(g, &x->out, T_I64, got);
         put(&x->out, "\n");
         return X_NEXT;
     }
     case S_RDZ: {
-        /* the tract inside zN: up to count bytes of the input, fewer
+        /* the span inside zN: up to count bytes of the input, fewer
            only at its end, which is final; how many, written */
         v128 count = ev(x, s->fld);
         if (x->trap)
@@ -5672,7 +5681,7 @@ static int run_stmt(X *x, uint32_t si)
             x->inpos += (size_t)got;
             x->in_end = got < count;
         }
-        print_value(g, &x->out, T_I32, got);
+        print_value(g, &x->out, T_I64, got);
         put(&x->out, "\n");
         return X_NEXT;
     }
