@@ -1,0 +1,53 @@
+; output: 1048576
+; output: 1006
+; result: 0
+; values no longer held are freed (lir_run, IR § 11c and § 11d): 100
+; strings of 1 MiB, each kept in a global until the next, and 200 000
+; BigInts of 1 000 digits, each held until the next is made, are far more
+; than the 64 MiB of a run here; only the last of each is alive
+global @last : str
+
+func @main : fn() -> i64 {
+b0:
+  v0 = iconst i64 0
+  v1 = iconst i64 1
+  v2 = iconst i64 19
+  v3 = sconst str "x"
+  br b1(v3, v0)
+b1(v4: str, v5: i64):
+  v6 = call.rt str str_concat(v4, v4)
+  v7 = add i64 v5, v1
+  v8 = icmp.slt i1 v7, v2
+  cbr v8, b1(v6, v7), b2(v6, v0)
+b2(v9: str, v10: i64):
+  v11 = call.rt str str_concat(v9, v9)
+  v12 = gaddr ptr @last
+  store v11, v12
+  v13 = add i64 v10, v1
+  v14 = iconst i64 100
+  v15 = icmp.slt i1 v13, v14
+  cbr v15, b2(v9, v13), b3
+b3:
+  v16 = gaddr ptr @last
+  v17 = load str v16
+  v18 = call.rt i64 str_len(v17)
+  call.rt void print_i64(v18)
+  call.rt void print_nl()
+  v19 = iconst i64 10
+  v20 = call.rt ref big_from_i64(v19)
+  v21 = iconst i64 1000
+  v22 = call.rt ref big_pow(v20, v21)
+  br b4(v22, v0)
+b4(v23: ref, v24: i64):
+  v25 = call.rt ref big_add(v23, v22)
+  v26 = add i64 v24, v1
+  v27 = iconst i64 200000
+  v28 = icmp.slt i1 v26, v27
+  cbr v28, b4(v25, v26), b5(v25)
+b5(v29: ref):
+  v30 = call.rt str str_from_big(v29)
+  v31 = call.rt i64 str_len(v30)
+  call.rt void print_i64(v31)
+  call.rt void print_nl()
+  ret v0
+}

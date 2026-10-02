@@ -83,7 +83,7 @@ int main(int argc, char **argv)
     limba_eval_result r;
     /* the program reads standard input and its own arguments */
     limba_eval_limits lim = {
-        0, 0, argc - first_arg, argv + first_arg, stdin, check_mem, 0};
+        0, 0, argc - first_arg, argv + first_arg, stdin, check_mem, 0, false};
     limba_eval(m, entry, &lim, &r);
     signal(SIGPIPE, SIG_IGN); /* a closed output is EPIPE */
     errno = 0;

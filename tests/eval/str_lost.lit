@@ -1,0 +1,29 @@
+; memory: broken
+; output: bb
+; a str of a global cleared by memset with no release: memory counts one
+; reference that no word holds; a collection after the call that did it
+; must keep the string, or the count that does not match would be lost
+global @g : str
+
+func @lose : fn() -> void {
+b0:
+  v0 = sconst str "a"
+  v1 = call.rt str str_concat(v0, v0)
+  v2 = gaddr ptr @g
+  store v1, v2
+  v3 = iconst i8 0
+  v4 = iconst i64 8
+  memset v2, v3, v4
+  ret
+}
+
+func @main : fn() -> i64 {
+b0:
+  call void @lose()
+  v0 = sconst str "b"
+  v1 = call.rt str str_concat(v0, v0)
+  call.rt void print_str(v1)
+  call.rt void print_nl()
+  v2 = iconst i64 0
+  ret v2
+}

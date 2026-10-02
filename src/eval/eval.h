@@ -17,7 +17,10 @@
  * is not a live block the trap INVALID_FREE, ptr_live answers whether a
  * block is alive: freed blocks are never reused, so a dangling pointer
  * stays different from any new one. The counts of retain, release and of
- * store str are kept only with check_mem.
+ * store str are kept only with check_mem. Strings and BigInts are freed
+ * by a collection when nothing holds them: no value of a call alive, no
+ * word of memory alive, no count of check_mem; one held only by a freed
+ * block goes too.
  *
  * read_line and io_read read one stream, in; its end is final, and an
  * error in reading it is the trap IO. The output stays in memory, in out:
@@ -58,9 +61,14 @@ typedef struct {
        of § 11c (LIMBA_EVAL_BADMEM); slower, the output does not change */
     bool check_mem;
     /* the memory of the program: blocks of mem_alloc alive, the slots of
-       the calls alive, and every string made (never freed here); past it,
-       the trap NOMEM. 0 for 1 GiB, a limit of this oracle, not of the IR */
+       the calls alive, and the strings and BigInts still held (a value of
+       a call alive, a word of memory alive: a collection frees the others
+       before the budget runs out); past it, the trap NOMEM. 0 for 1 GiB,
+       a limit of this oracle, not of the IR */
     uint64_t max_memory;
+    /* a collection before every string or BigInt made, not only now and
+       then: slow, for the tests, so that every run tries it */
+    bool collect_often;
 } limba_eval_limits;
 
 typedef struct {

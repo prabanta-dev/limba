@@ -8,7 +8,11 @@
  * tests/eval, every .lit: the interpreter itself, against what its header
  *     says: "; output: <line>" per printed line, "; result: <n>",
  *     "; trap: <code>" or "; memory: broken" (a rule of the strings in
- *     memory broken, found by check_mem, on in every run here). An oracle
+ *     memory broken, found by check_mem, on in every run here), and
+ *     "; max memory: <bytes>" for a budget other than 64 MiB; run twice,
+ *     the second time with a collection before each value made and,
+ *     unless memory is to be broken, without check_mem, whose counts would
+ *     keep alive what memory holds before the collection looks. An oracle
  *     is checked before it judges.
  * tests/eval, tests/ir/ok, tests/opt (before ";; expect"), every .lit with
  *     a @main: the same program not optimised, fully optimised, and with
@@ -28,9 +32,12 @@
 
 static int failures, compared, skipped;
 /* every run counts the strings in memory and checks their rules, in 64 MiB
-   of memory: enough for these programs, little for the tests of NOMEM */
+   of memory: enough for these programs, little for the tests of NOMEM; the
+   header is checked again with a collection before each value made */
 static const limba_eval_limits check_mem = {.check_mem = true,
                                             .max_memory = (uint64_t)64 << 20};
+static const limba_eval_limits collect_often = {
+    .check_mem = true, .max_memory = (uint64_t)64 << 20, .collect_often = true};
 
 #define CHECK(cond, ...)                                                       \
     do {                                                                       \
@@ -104,6 +111,7 @@ static void golden(const char *path)
     int status = LIMBA_EVAL_OK;
     int64_t value = 0;
     bool has_value = false;
+    uint64_t memory = 0;
     for (const char *p = text; *p == ';'; p = strchr(p, '\n') + 1) {
         const char *eol = strchr(p, '\n');
         size_t n = (size_t)(eol - p);
@@ -119,23 +127,34 @@ static void golden(const char *path)
             value = strtoll(p + 8, NULL, 10);
         } else if (!strncmp(p, "; memory: broken", 16)) {
             status = LIMBA_EVAL_BADMEM;
+        } else if (!strncmp(p, "; max memory: ", 14)) {
+            memory = strtoull(p + 14, NULL, 10);
         }
         if (!eol)
             break;
     }
     want[wlen] = 0;
-    limba_eval_result r;
-    limba_eval(m, "main", &check_mem, &r);
-    CHECK(r.status == status, "%s: ended with status %d, expected %d", path,
-          r.status, status);
-    CHECK(status != LIMBA_EVAL_TRAP || r.code == value,
-          "%s: trap %" PRId64 ", expected %" PRId64, path, r.code, value);
-    CHECK(!has_value || (int64_t)r.ret == value,
-          "%s: returned %" PRId64 ", expected %" PRId64, path, (int64_t)r.ret,
-          value);
-    CHECK(r.outlen == wlen && !memcmp(r.out, want, wlen),
-          "%s: printed\n%s---\nexpected\n%s", path, r.out, want);
-    limba_eval_result_free(&r);
+    for (int often = 0; often < 2; often++) {
+        limba_eval_result r;
+        limba_eval_limits lim = often ? collect_often : check_mem;
+        if (memory)
+            lim.max_memory = memory;
+        if (often && status != LIMBA_EVAL_BADMEM)
+            lim.check_mem = false;
+        limba_eval(m, "main", &lim, &r);
+        const char *how = often ? " (collecting often)" : "";
+        CHECK(r.status == status, "%s%s: ended with status %d, expected %d",
+              path, how, r.status, status);
+        CHECK(status != LIMBA_EVAL_TRAP || r.code == value,
+              "%s%s: trap %" PRId64 ", expected %" PRId64, path, how, r.code,
+              value);
+        CHECK(!has_value || (int64_t)r.ret == value,
+              "%s%s: returned %" PRId64 ", expected %" PRId64, path, how,
+              (int64_t)r.ret, value);
+        CHECK(r.outlen == wlen && !memcmp(r.out, want, wlen),
+              "%s%s: printed\n%s---\nexpected\n%s", path, how, r.out, want);
+        limba_eval_result_free(&r);
+    }
     limba_module_free(m);
     free(text);
 }

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The reference interpreter frees the strings and BigInts that nothing
+  holds any longer: a mark-and-sweep collection reads the values of the
+  calls alive, the memory alive (slots, globals, blocks not freed) and
+  what the runtime is making, conservatively. Before, every value stayed
+  until the end, and a long computation (pidigits beyond a few thousand
+  digits) ran out of memory where an engine that frees dead values does
+  not; now 10 000 digits of pidigits finish. The tests run every program
+  with a collection before each value made as well, so that the whole
+  net, random programs included, tries it.
 - Joining two empty constant strings (`"" & ""`) no longer passes a null
   pointer to `memcpy`: undefined behaviour in C, harmless in practice,
   found by the undefined-behaviour sanitizer; a fixed case now covers it.

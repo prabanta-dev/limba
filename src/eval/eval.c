@@ -9,6 +9,9 @@
  * address, strings as a pointer to an immutable string of this file, a
  * BigInt (ref) as a pointer to an immutable number in the same box (0 is
  * the number 0, as it is the string "").
+ * Strings and BigInts no longer reachable are freed by a collection (see
+ * collect): the oracle does not know when an SSA value dies, but it can
+ * see which values the calls alive, memory and the runtime still hold.
  * Memory is real: slots and globals are allocated, load and store touch
  * them. The arithmetic here is written again on purpose rather than shared
  * with the constant folder: an oracle that reuses the code it judges would
@@ -41,6 +44,8 @@ typedef struct {
     int64_t seen;     /* at the end: the words of memory that hold it */
     uint8_t immortal; /* sconst, an initial value: never counted */
     uint8_t listed;   /* in E.counted */
+    uint8_t big;      /* a BigInt: its words are a block of their own */
+    uint8_t marked;   /* collect: still held */
     char data[];
 } estr;
 
@@ -52,6 +57,14 @@ typedef struct {
 } amap;
 
 #define AMAP_NONE SIZE_MAX
+
+/* a call alive: its values and its slots, which a collection reads */
+typedef struct frame {
+    struct frame *up;
+    const limba_func *f;
+    const uint64_t *v;
+    void *const *slots;
+} frame;
 
 typedef struct {
     const limba_module *m;
@@ -84,7 +97,20 @@ typedef struct {
     estr **sconst; /* the string of each sconst, made once: immortal */
     bool checked;  /* the counts checked once, at the end or at a stop */
     bool in_end;   /* the end of the input met: final (luxia_0.md § 9.2) */
+    /* the collection of strings and BigInts no longer held (collect) */
+    estr **vals; /* every string and BigInt made, not yet freed */
+    size_t nvals, capvals;
+    estr **pinned; /* made by the call of the runtime running: held by C */
+    size_t npinned, cappinned;
+    frame *frames;     /* the calls alive, innermost first */
+    uint64_t valbytes; /* the bytes of vals, within used */
+    uint64_t since;    /* the bytes of values made since the last collection */
+    uint64_t gc_next;  /* when since passes it, a collection */
 } E;
+
+/* a collection at least every GC_MIN bytes of values made, and not before
+   as many as it found alive and read (its cost is paid by what is made) */
+#define GC_MIN ((uint64_t)32 << 20)
 
 /* the run has a thread of its own, with a stack for max_depth calls of
    any build (a sanitizer grows each frame); reserved, not touched */
@@ -171,30 +197,169 @@ static void amap_free(amap *a)
     free(a->val);
 }
 
-/* n bytes more for the program, if the budget has them */
+/* ---- the collection of strings and BigInts ---- */
+
+/* the bytes of value x within used */
+static uint64_t val_bytes(const estr *x)
+{
+    if (!x->big)
+        return sizeof(estr) + (uint64_t)x->len + 1;
+    limba_big b;
+    memcpy(&b, x->data, sizeof(b));
+    return sizeof(estr) + sizeof(limba_big) + 1 + (uint64_t)b.cap * 4;
+}
+
+static void val_free(estr *x)
+{
+    if (x->big) {
+        limba_big b;
+        memcpy(&b, x->data, sizeof(b));
+        limba_big_free(&b);
+    }
+    free(x);
+}
+
+/* word w held: if it is a value, marked */
+static void mark(E *e, const amap *set, uint64_t w)
+{
+    size_t k = amap_find(set, (uintptr_t)w);
+    if (k != AMAP_NONE)
+        e->vals[set->val[k]]->marked = 1;
+}
+
+/* the words of [p, p + n): a str or a ref in memory is 8-aligned (IR
+   § 11c), and so is every block here; returns n */
+static uint64_t mark_mem(E *e, const amap *set, const void *p, size_t n)
+{
+    if (!p)
+        return 0;
+    for (size_t off = 0; off + 8 <= n; off += 8) {
+        uint64_t w;
+        memcpy(&w, (const char *)p + off, 8);
+        mark(e, set, w);
+    }
+    return n;
+}
+
+/* a value survives a collection if something holds it: a value of a call
+   alive (a word that only looks like it keeps it too, never the reverse),
+   a word of memory alive (slots, globals, blocks of mem_alloc not freed),
+   the call of the runtime running; or if it is immortal, or check_mem
+   counts references to it from memory (freeing it would hide a count
+   that does not match). Strings and BigInts hold nothing themselves. A
+   value reachable only through a freed block is gone: a correct module
+   checks ptr_live before it reads one */
+static bool survives(const estr *x)
+{
+    return x->immortal || x->marked || x->mrefs != 0;
+}
+
+static void collect(E *e)
+{
+    const limba_module *m = e->m;
+    amap set = {0};
+    uint64_t read = 0;
+    for (size_t i = 0; i < e->nvals; i++)
+        amap_put(&set, (uintptr_t)e->vals[i], i);
+    for (const frame *fr = e->frames; fr; fr = fr->up) {
+        const limba_func *f = fr->f;
+        for (uint32_t i = 0; i <= f->ninsts; i++)
+            mark(e, &set, fr->v[i]);
+        read += 8 * ((uint64_t)f->ninsts + 1);
+        for (uint32_t k = 0; k < f->nslots; k++)
+            read += mark_mem(e, &set, fr->slots[k], f->slots[k].size);
+    }
+    for (uint32_t i = 0; i < m->nglobals; i++)
+        read +=
+            mark_mem(e, &set, e->globals[i], m->types[m->globals[i].type].size);
+    for (size_t k = 0; k < e->heap.cap; k++)
+        if (e->heap.key[k] > 1)
+            read +=
+                mark_mem(e, &set, (const void *)e->heap.key[k], e->heap.val[k]);
+    /* a guard: no function of the runtime yet makes a value and then
+       takes memory again before it returns */
+    for (size_t i = 0; i < e->npinned; i++)
+        e->pinned[i]->marked = 1;
+    amap_free(&set);
+    size_t j = 0;
+    for (size_t i = 0; i < e->ncounted; i++)
+        if (survives(e->counted[i]))
+            e->counted[j++] = e->counted[i];
+    e->ncounted = j;
+    j = 0;
+    for (size_t i = 0; i < e->nvals; i++) {
+        estr *x = e->vals[i];
+        if (survives(x)) {
+            x->marked = 0;
+            e->vals[j++] = x;
+        } else {
+            uint64_t n = val_bytes(x);
+            e->used -= n;
+            e->valbytes -= n;
+            val_free(x);
+        }
+    }
+    e->nvals = j;
+    e->since = 0;
+    e->gc_next = e->valbytes + read > GC_MIN ? e->valbytes + read : GC_MIN;
+}
+
+/* n bytes more for the program, if the budget has them, after a
+   collection if it does not */
 static bool take(E *e, uint64_t n)
 {
-    if (n > e->budget - e->used)
-        return false;
+    if (n > e->budget - e->used) {
+        collect(e);
+        if (n > e->budget - e->used)
+            return false;
+    }
     e->used += n;
     return true;
+}
+
+/* n bytes for a new value: a collection first when enough were made */
+static bool take_val(E *e, uint64_t n)
+{
+    if (e->lim.collect_often || e->since + n > e->gc_next)
+        collect(e);
+    if (!take(e, n))
+        return false;
+    e->since += n;
+    e->valbytes += n;
+    return true;
+}
+
+/* x made, its n bytes taken: listed for the collection, and held while
+   the call of the runtime that makes it runs */
+static estr *val_add(E *e, estr *x)
+{
+    LIMBA_GROW(e->vals, e->nvals, e->capvals);
+    e->vals[e->nvals++] = x;
+    if (e->armed) {
+        LIMBA_GROW(e->pinned, e->npinned, e->cappinned);
+        e->pinned[e->npinned++] = x;
+    }
+    return x;
 }
 
 /* a string of n bytes, its contents to be written by the caller; past the
    budget, in the runtime, the trap NOMEM */
 static estr *str_alloc(E *e, size_t n)
 {
-    if (!take(e, sizeof(estr) + (uint64_t)n + 1)) {
+    uint64_t size = sizeof(estr) + (uint64_t)n + 1;
+    if (!take_val(e, size)) {
         if (e->armed)
             longjmp(e->nomem, 1);
-        e->used += sizeof(estr) + (uint64_t)n + 1; /* a constant: made */
+        e->used += size; /* a constant: made */
+        e->since += size;
+        e->valbytes += size;
     }
-    estr *x = keep(e, limba_xmalloc(sizeof(estr) + n + 1));
+    estr *x = limba_xmalloc(sizeof(estr) + n + 1);
     x->len = n;
     x->mrefs = x->seen = 0;
-    x->immortal = x->listed = 0;
+    x->immortal = x->listed = x->big = x->marked = 0;
     x->data[n] = 0;
-    return x;
+    return val_add(e, x);
 }
 
 static estr *str_make(E *e, const char *s, size_t n)
@@ -357,19 +522,33 @@ static bool big_box(E *e, limba_big *t, uint64_t *r)
         return true;
     }
     size_t box = sizeof(estr) + sizeof(limba_big) + 1;
-    if (!take(e, box + (uint64_t)t->cap * sizeof(uint32_t))) {
+    if (!take_val(e, box + (uint64_t)t->cap * sizeof(uint32_t))) {
         limba_big_free(t);
         return trap(e, LIMBA_TRAP_NOMEM);
     }
-    estr *x = keep(e, limba_xmalloc(box));
+    estr *x = limba_xmalloc(box);
     x->len = sizeof(limba_big);
     x->mrefs = x->seen = 0;
-    x->immortal = x->listed = 0;
+    x->immortal = x->listed = x->marked = 0;
+    x->big = 1;
     x->data[x->len] = 0;
-    keep(e, t->w);
     memcpy(x->data, t, sizeof(*t));
-    *r = sv(x);
+    *r = sv(val_add(e, x));
     return true;
+}
+
+/* an operation of the _lim functions failed for room: true if a
+   collection, once per call, freed some (t emptied, to be made again) */
+static bool big_again(E *e, limba_big *t, bool *tried)
+{
+    if (*tried)
+        return false;
+    *tried = true;
+    limba_big_free(t);
+    limba_big_init(t);
+    uint64_t before = e->used;
+    collect(e);
+    return e->used < before;
 }
 
 /* the result of an operation of the _lim functions: false is NOMEM */
@@ -398,6 +577,7 @@ static bool runtime_big(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
 {
     limba_big t, x, y;
     limba_big_init(&t);
+    bool ok, tried = false;
     /* the functions whose first operand is a BigInt */
     bool first_big = rt != LIMBA_RT_BIG_FROM_I64 &&
                      rt != LIMBA_RT_BIG_FROM_U64 && rt != LIMBA_RT_BIG_LIT &&
@@ -413,8 +593,10 @@ static bool runtime_big(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_BIG_LIT: {
         const estr *s = str_of(a[0]);
         bool neg = s->len && s->data[0] == '-';
-        bool ok = limba_big_parse_lim(&t, s->data + neg, s->len - neg, 10,
-                                      big_room(e));
+        do
+            ok = limba_big_parse_lim(&t, s->data + neg, s->len - neg, 10,
+                                     big_room(e));
+        while (!ok && big_again(e, &t, &tried));
         if (ok && neg)
             limba_big_neg(&t, &t);
         return big_done(e, ok, &t, r);
@@ -478,13 +660,22 @@ static bool runtime_big(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     }
     case LIMBA_RT_BIG_ADD:
         y = big_get(a[1]);
-        return big_done(e, limba_big_add_lim(&t, &x, &y, big_room(e)), &t, r);
+        do
+            ok = limba_big_add_lim(&t, &x, &y, big_room(e));
+        while (!ok && big_again(e, &t, &tried));
+        return big_done(e, ok, &t, r);
     case LIMBA_RT_BIG_SUB:
         y = big_get(a[1]);
-        return big_done(e, limba_big_sub_lim(&t, &x, &y, big_room(e)), &t, r);
+        do
+            ok = limba_big_sub_lim(&t, &x, &y, big_room(e));
+        while (!ok && big_again(e, &t, &tried));
+        return big_done(e, ok, &t, r);
     case LIMBA_RT_BIG_MUL:
         y = big_get(a[1]);
-        return big_done(e, limba_big_mul_lim(&t, &x, &y, big_room(e)), &t, r);
+        do
+            ok = limba_big_mul_lim(&t, &x, &y, big_room(e));
+        while (!ok && big_again(e, &t, &tried));
+        return big_done(e, ok, &t, r);
     case LIMBA_RT_BIG_NEG:
         limba_big_neg(&t, &x);
         return big_box(e, &t, r);
@@ -515,7 +706,10 @@ static bool runtime_big(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         return big_box(e, &m, r);
     }
     case LIMBA_RT_BIG_POW:
-        return big_done(e, limba_big_pow_lim(&t, &x, a[1], big_room(e)), &t, r);
+        do
+            ok = limba_big_pow_lim(&t, &x, a[1], big_room(e));
+        while (!ok && big_again(e, &t, &tried));
+        return big_done(e, ok, &t, r);
     case LIMBA_RT_BIG_CMP:
         y = big_get(a[1]);
         *r = norm((uint64_t)(int64_t)limba_big_cmp(&x, &y), LIMBA_T_I32);
@@ -527,7 +721,7 @@ static bool runtime_big(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_STR_FROM_BIG: {
         size_t n;
         char *text = big_text(a[0], &n);
-        bool ok = true;
+        ok = true;
         if (rt == LIMBA_RT_PRINT_BIG) {
             limba_w_bytes(&e->out, text, n);
         } else if (!take(e, sizeof(estr) + (uint64_t)n + 1)) {
@@ -550,7 +744,9 @@ static bool runtime_big(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
             free(digits);
             return true;
         }
-        bool ok = limba_big_parse_lim(&t, digits, n, base, big_room(e));
+        do
+            ok = limba_big_parse_lim(&t, digits, n, base, big_room(e));
+        while (!ok && big_again(e, &t, &tried));
         free(digits);
         if (ok && neg)
             limba_big_neg(&t, &t);
@@ -1608,6 +1804,8 @@ static bool call_inst(E *e, const limba_func *f, const limba_inst *in,
         e->status = LIMBA_EVAL_UNSUPPORTED; /* call.ext: no C here */
         ok = false;
     }
+    e->npinned = 0; /* *r goes to the values of the call, with nothing made
+                       before */
     if (args != stack)
         free(args);
     return ok;
@@ -1643,6 +1841,8 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
     uint64_t *v = limba_xcalloc((size_t)f->ninsts + 1, sizeof(*v));
     /* the slots live while the call does: zeroed at entry (IR § 4) */
     void **slots = limba_xcalloc((size_t)f->nslots + 1, sizeof(*slots));
+    frame fr = {e->frames, f, v, slots};
+    e->frames = &fr;
     bool ok = true;
     for (uint32_t s = 0; s < f->nslots && ok; s++)
         if (!(slots[s] =
@@ -1814,6 +2014,7 @@ done:
         free(slots[s]);
         e->used -= zalloc_size(f->slots[s].size, f->slots[s].align);
     }
+    e->frames = fr.up;
     free(v);
     free(slots);
     e->depth--;
@@ -1870,6 +2071,7 @@ void limba_eval(const limba_module *m, const char *entry,
         e.lim.argv = limits->argv;
         e.lim.in = limits->in;
         e.lim.check_mem = limits->check_mem;
+        e.lim.collect_often = limits->collect_often;
     }
     memset(r, 0, sizeof(*r));
 
@@ -1938,6 +2140,10 @@ void limba_eval(const limba_module *m, const char *entry,
     for (size_t i = 0; i < e.narena; i++)
         free(e.arena[i]);
     free(e.arena);
+    for (size_t i = 0; i < e.nvals; i++)
+        val_free(e.vals[i]);
+    free(e.vals);
+    free(e.pinned);
     amap_free(&e.heap);
     for (size_t k = 0; k < e.cstrs.cap; k++) /* C strings never freed */
         if (e.cstrs.key[k] > 1)

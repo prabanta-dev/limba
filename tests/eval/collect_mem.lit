@@ -1,0 +1,50 @@
+; output: abcd efgh ijkl
+; result: 0
+; strings held only by memory: a global, a block of mem_alloc and a slot
+; of the caller, written by a call that has returned; the strings made
+; after it (a collection before each, in the second run of test_eval)
+; must not free them
+global @g : str
+
+func @put : fn(ptr, ptr) -> void {
+b0(v0: ptr, v1: ptr):
+  v2 = sconst str "ab"
+  v3 = sconst str "cd"
+  v4 = call.rt str str_concat(v2, v3)
+  v5 = gaddr ptr @g
+  store v4, v5
+  v6 = sconst str "ef"
+  v7 = sconst str "gh"
+  v8 = call.rt str str_concat(v6, v7)
+  store v8, v0
+  v9 = sconst str "ij"
+  v10 = sconst str "kl"
+  v11 = call.rt str str_concat(v9, v10)
+  store v11, v1
+  ret
+}
+
+func @main : fn() -> i64 {
+  slot 8 align 8 type str
+b0:
+  v0 = iconst i64 8
+  v1 = call.rt ptr mem_alloc(v0)
+  v2 = slot ptr $0
+  call void @put(v1, v2)
+  v3 = sconst str "x"
+  v4 = call.rt str str_concat(v3, v3)
+  v5 = call.rt str str_concat(v4, v3)
+  v6 = gaddr ptr @g
+  v7 = load str v6
+  call.rt void print_str(v7)
+  v8 = sconst str " "
+  call.rt void print_str(v8)
+  v9 = load str v1
+  call.rt void print_str(v9)
+  call.rt void print_str(v8)
+  v10 = load str v2
+  call.rt void print_str(v10)
+  call.rt void print_nl()
+  v11 = iconst i64 0
+  ret v11
+}
