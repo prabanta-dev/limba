@@ -17,7 +17,7 @@
 /* ---- messages ---- */
 
 /* the source text at loc */
-const char *lxs_text_at(const limba_lxs *S, limba_loc loc)
+static const char *text_at(const limba_lxs *S, limba_loc loc)
 {
     for (uint32_t i = 0; i < S->src->count; i++) {
         const limba_srcfile *f = &S->src->file[i];
@@ -27,7 +27,7 @@ const char *lxs_text_at(const limba_lxs *S, limba_loc loc)
     return "";
 }
 
-uint32_t lxs_ident_len(const char *s)
+static uint32_t ident_len(const char *s)
 {
     uint32_t n = 0;
     while ((s[n] >= 'a' && s[n] <= 'z') || (s[n] >= 'A' && s[n] <= 'Z') ||
@@ -36,8 +36,15 @@ uint32_t lxs_ident_len(const char *s)
     return n;
 }
 
-#define text_at lxs_text_at
-#define ident_len lxs_ident_len
+const char *lxs_text_at(const limba_lxs *S, limba_loc loc)
+{
+    return text_at(S, loc);
+}
+
+uint32_t lxs_ident_len(const char *s)
+{
+    return ident_len(s);
+}
 
 /* the bytes a node spans for the mark under a message */
 static uint32_t node_len(const limba_lxs *S, uint32_t node)
@@ -382,11 +389,11 @@ limba_sym lxs_lookup(limba_lxs *S, uint32_t scope, uint32_t node)
     bool impl;
     /* before its declaration: in the same file (another file's names
        are all visible, § 11.3) */
-    bool here =
-        !S->nunits || lxs_unit_of(S, y->scope, &impl) == lxs_unit_at(S, node);
-    if ((y->kind == LIMBA_LSYM_CONST || y->kind == LIMBA_LSYM_VAR) && here &&
+    if ((y->kind == LIMBA_LSYM_CONST || y->kind == LIMBA_LSYM_VAR) &&
         y->loc != LIMBA_NOLOC && y->loc > x->loc && y->node &&
-        lxs_node(S, y->node)->kind != LXN_TYPEDECL) {
+        lxs_node(S, y->node)->kind != LXN_TYPEDECL &&
+        (S->nunits < 2 ||
+         lxs_unit_of(S, y->scope, &impl) == lxs_unit_at(S, node))) {
         lxs_error(S, LXE_BEFORE_DECL, node,
                   "'%.*s' is used before its declaration", (int)n, use);
         lxs_note(S, y->loc, y->len, "declared here");

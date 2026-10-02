@@ -29,10 +29,17 @@ typedef struct {
     size_t inlen;
     int argc; /* its command line, for arg */
     char **argv;
+    /* the unit Lib the program uses (lib.luxia), NULL for none; a place
+       in it is "lib.luxia:LINE:COLUMN" in end */
+    char *unit;
 } limba_lxgen;
 
 /* the program of a seed; false if no attempt ran within the limits */
 bool limba_lxgen_make(uint64_t seed, limba_lxgen *p);
+/* the same program in two files (§ 11): the routines that name nothing
+   of the program go into the unit Lib, named directly or as Lib.Name,
+   and Lib's initialisation prints "lib" first */
+bool limba_lxgen_make_units(uint64_t seed, limba_lxgen *p);
 void limba_lxgen_free(limba_lxgen *p);
 
 #endif

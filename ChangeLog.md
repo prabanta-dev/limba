@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The random programs come in two files too: `lx_gen -d DIR SEED`
+  writes the program and the unit `Lib`, which holds the routines that
+  name nothing of the program (the generator now makes some routines
+  sealed: base types, no global in sight), named directly or as
+  `Lib.Name`, with an initialisation that prints first; a run-time error
+  in `Lib` names its file. `test_luxia` runs every seed in one file and
+  in two. A defect of the order of the initialisations found that way
+  (a loop one symbol too far) is mended. An example with units in files,
+  the library included, is in `tests/luxia/units/`. The checks of units
+  are skipped for a file that uses none.
+
 - Units (specification § 11), in the compiler. `limba prog.luxia` reads
   the program and every unit it uses and writes one `.lir`: `unit Name;
   interface ... implementation ... [begin ... end] end Name.`, one `uses`

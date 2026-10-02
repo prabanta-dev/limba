@@ -189,6 +189,8 @@ limba_sym lxs_find(limba_lxs *S, uint32_t scope, uint32_t name, uint32_t node)
         return s;
     bool impl;
     uint32_t u = lxs_unit_of(S, scope, &impl);
+    if (!S->units[u].uses)
+        return s; /* a file that uses no unit: nothing more to look at */
     limba_sym best = 0, other = 0, hidden = 0;
     uint32_t ub = 0, uo = 0, uh = 0;
     int level = 9;
@@ -311,6 +313,9 @@ bool lxs_unit_declare(limba_lxs *S, uint32_t scope, uint32_t name_node)
     const limba_lx_node *x = &S->t->node[name_node];
     bool impl;
     uint32_t u = lxs_unit_of(S, scope, &impl);
+    const limba_lxs_unit *f = &S->units[u];
+    if (!f->uses && !f->intf)
+        return true; /* a program that uses no unit */
     const char *text = lxs_text_at(S, x->loc);
     uint32_t n = lxs_ident_len(text);
     /* the names of the units a file uses, and its own (§ 11.3) */
@@ -324,7 +329,6 @@ bool lxs_unit_declare(limba_lxs *S, uint32_t scope, uint32_t name_node)
                   (int)n, text);
         return false;
     }
-    const limba_lxs_unit *f = &S->units[u];
     /* a name of the implementation is not one of the interface */
     if (f->intf && scope == f->impl) {
         limba_sym d = limba_sym_local(&S->st, f->intf, x->a);
@@ -346,6 +350,8 @@ static void hides_check(limba_lxs *S)
 {
     for (uint32_t u = 0; u < S->nunits; u++) {
         const limba_lxs_unit *f = &S->units[u];
+        if (!f->uses)
+            continue;
         for (uint32_t i = f->first; i < f->last && i < S->t->nnode; i++) {
             const limba_lx_node *x = &S->t->node[i];
             limba_sym s = x->kind == LXN_NAME ? S->sym[i] : 0;
@@ -354,8 +360,6 @@ static void hides_check(limba_lxs *S)
                  S->st.sym[s].scope != f->impl))
                 continue;
             bool impl = S->st.sym[s].scope == f->impl;
-            const char *text = lxs_text_at(S, x->loc);
-            uint32_t n = lxs_ident_len(text);
             for (uint32_t k = 0;; k++) {
                 uint32_t ref = visible_ref(S, u, impl, k);
                 if (!ref)
@@ -367,8 +371,8 @@ static void hides_check(limba_lxs *S)
                 if (!limba_sym_local(&S->st, S->units[w].intf, x->a) ||
                     hides_stated(S, u, w, x->a))
                     continue;
-                const char *a;
-                uint32_t na;
+                const char *a, *text = lxs_text_at(S, x->loc);
+                uint32_t na, n = lxs_ident_len(text);
                 name_of(S, w, &a, &na);
                 limba_report_add(S->rep, LIMBA_WARNING, LXE_HIDES, x->loc, n,
                                  "'%.*s' hides '%.*s.%.*s': if it is meant, "
@@ -415,6 +419,18 @@ static bool pragma_named(limba_lxs *S, uint32_t node, const char *name)
 static void qualify(limba_lxs *S, uint32_t u)
 {
     const limba_lxs_unit *f = &S->units[u];
+    if (!f->uses && !f->name) {
+        /* nothing can qualify a name; a pragma hides names no unit */
+        uint32_t l = S->t->node[f->root].b;
+        for (uint32_t i = 0; l && i < S->t->node[l].b; i++) {
+            uint32_t d = limba_lx_list_at(S->t, l, i);
+            if (S->t->node[d].kind == LXN_PRAGMA && pragma_named(S, d, "hides"))
+                lxs_error(S, LXE_C_PRAGMA, d,
+                          "pragma hides names a name of a unit used: "
+                          "'pragma hides(Unit.Name)'");
+        }
+        return;
+    }
     for (uint32_t i = f->first; i < f->last && i < S->t->nnode; i++) {
         limba_lx_node *x = &S->t->node[i];
         if (x->kind == LXN_SEL) {
@@ -658,7 +674,7 @@ static void init_order(limba_lxs *S, const use_index *ux)
         wrote[u] = limba_xcalloc(ns, 1);
         reach(S, ux, LXS_INIT | u, first[u], wrote[u], todo);
         /* its variables with an initial value computed at run time */
-        for (limba_sym s = 1; s < ns; s++)
+        for (limba_sym s = 1; s < S->st.nsym; s++)
             if (var_unit(S, s) == u && !ready(S, s) &&
                 S->t->node[S->st.sym[s].node].c)
                 wrote[u][s] = 1;
@@ -680,7 +696,7 @@ static void init_order(limba_lxs *S, const use_index *ux)
         for (uint32_t v = 0; v < nu; v++) {
             if (v == u || is_program(S, v))
                 continue;
-            for (limba_sym s = 1; s < ns; s++)
+            for (limba_sym s = 1; s < S->st.nsym; s++)
                 if (first[u][s] && wrote[v][s] &&
                     S->st.sym[s].kind == LIMBA_LSYM_VAR) {
                     if (!after[u * nu + v])
@@ -820,6 +836,8 @@ void lxs_check_units(limba_lxs *S)
             S->sunit[f->impl] = (u + 1) | 0x80000000u;
         }
     }
+    for (uint32_t u = 0; u < nu; u++)
+        S->units[u].uses = visible_ref(S, u, true, 0) != 0;
     for (uint32_t u = 0; u < nu; u++) {
         check_uses(S, u);
         qualify(S, u);
@@ -850,7 +868,7 @@ void lxs_check_units(limba_lxs *S)
    message tells (§ 10.4) */
 static void library_c(limba_lxs *S, const uint32_t *first, uint32_t ns)
 {
-    for (limba_sym x = 1; x < ns; x++) {
+    for (limba_sym x = 1; x < ns && x < S->st.nsym; x++) {
         const limba_symbol *y = &S->st.sym[x];
         if (!first[x] || y->kind != LIMBA_LSYM_ROUTINE || !y->node)
             continue;

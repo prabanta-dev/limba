@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Maurizio Cammalleri
+//
+// A unit of the program used by the implementation of another unit.
+unit Text;
+
+interface
+
+function Banner(s: String): String;
+
+implementation
+
+function Banner(s: String): String;
+begin
+  return "[" & s & "]";
+end Banner;
+
+end Text.

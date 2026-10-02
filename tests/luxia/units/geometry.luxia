@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Maurizio Cammalleri
+//
+// A unit: what other files see in its interface, the rest in its
+// implementation, and an initialisation that runs once, before the
+// program and after the units it uses.
+unit Geometry;
+
+interface
+
+type
+  Vector = record x, y, z: Float64; end;
+
+var
+  calls: Int64 := 0;
+
+function Distance(a, b: Vector): Float64;
+
+implementation
+
+uses Text;
+
+function Square(x: Float64): Float64;
+begin
+  return x * x;
+end Square;
+
+function Distance(a, b: Vector): Float64;
+begin
+  calls := calls + 1;
+  return sqrt(Square(a.x - b.x) + Square(a.y - b.y) + Square(a.z - b.z));
+end Distance;
+
+begin
+  writeln(Text.Banner("geometry"));
+end Geometry.

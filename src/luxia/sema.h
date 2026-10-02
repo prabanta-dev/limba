@@ -124,6 +124,7 @@ typedef struct {
     bool library;         /* a unit of the standard library */
     bool restricted;      /* its own pragma restrictions(no_external) */
     uint32_t order;       /* its place in the initialisation, from 0 */
+    bool uses;            /* it uses some unit: names may come from them */
 } limba_lxs_unit;
 
 /* what a routine or an initialisation does that the order of the

@@ -350,6 +350,9 @@ typedef struct {
 
 typedef struct {
     bool func;
+    /* sealed: base types only, no global seen, only sealed routines
+       called, so that it may go into a unit (§ 11) */
+    bool sealed;
     uint32_t rt;
     uint32_t par[4];
     uint8_t np;
@@ -401,6 +404,9 @@ typedef struct {
     uint32_t arg[3], narg;
     uint32_t line[6], nline;
     bool nl_end;
+    /* a program with the unit Lib (§ 11): the routines moved into it */
+    bool units;
+    uint8_t *moved;
 } G;
 
 static uint32_t new_str(G *g, const char *b, size_t n)
@@ -720,9 +726,13 @@ static uint32_t new_range(G *g, bool short_range)
     return new_type(g, (xt){K_RANGE, (uint8_t)b, 0, 0, lo, hi, 0, 0});
 }
 
+static bool sealed(const G *g);
+
 /* the type of a variable: a scalar, sometimes a range of the program */
 static uint32_t var_type(G *g)
 {
+    if (sealed(g))
+        return any_type(g);
     uint32_t n = 0, chosen = 0;
     for (uint32_t t = NTYPES; t < g->nty; t++)
         if (g->ty[t].k == K_RANGE && below(g, ++n) == 0)
@@ -877,12 +887,19 @@ static int pick_array(G *g, uint32_t t, bool write)
 
 /* a function made before the current routine, whose result has base t;
    -1 if none */
+/* the routine being made is sealed: it calls only sealed ones */
+static bool sealed(const G *g)
+{
+    return g->cur >= 0 && g->r[g->cur].sealed;
+}
+
 static int pick_func(G *g, unsigned t)
 {
     uint32_t top = g->cur >= 0 ? (uint32_t)g->cur : g->nr, n = 0, chosen = 0;
     for (uint32_t i = 0; i < top; i++)
         if (g->r[i].func && is_scalar(g, g->r[i].rt) &&
-            base(g, g->r[i].rt) == t && below(g, ++n) == 0)
+            (!sealed(g) || g->r[i].sealed) && base(g, g->r[i].rt) == t &&
+            below(g, ++n) == 0)
             chosen = i;
     return n ? (int)chosen : -1;
 }
@@ -894,7 +911,8 @@ static int pick_agg_func(G *g, uint32_t t)
     uint32_t top = g->cur >= 0 ? (uint32_t)g->cur : g->nr, n = 0, chosen = 0;
     for (uint32_t i = 0; i < top; i++) {
         uint32_t rt = g->r[i].rt;
-        if (!g->r[i].func || is_scalar(g, rt) || (t && rt != t))
+        if (!g->r[i].func || is_scalar(g, rt) || (t && rt != t) ||
+            (sealed(g) && !g->r[i].sealed))
             continue;
         if (below(g, ++n) == 0)
             chosen = i;
@@ -1478,7 +1496,7 @@ static uint32_t const_leaf(G *g, unsigned t)
 static uint32_t pick_enum(G *g)
 {
     uint32_t n = 0, chosen = 0;
-    for (uint32_t t = NTYPES; t < g->nty; t++)
+    for (uint32_t t = NTYPES; t < g->nty && !sealed(g); t++)
         if (g->ty[t].k == K_ENUM && below(g, ++n) == 0)
             chosen = t;
     return chosen;
@@ -1615,7 +1633,7 @@ static uint32_t leaf(G *g, unsigned t, bool need_var, int d)
 static uint32_t membership(G *g, int d)
 {
     uint32_t n = 0, range = 0;
-    for (uint32_t t = NTYPES; t < g->nty; t++)
+    for (uint32_t t = NTYPES; t < g->nty && !sealed(g); t++)
         if (g->ty[t].k == K_RANGE && below(g, ++n) == 0)
             range = t;
     unsigned b = n && chance(g, 60) ? base(g, range) : int_type(g);
@@ -2179,7 +2197,7 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
     }
     /* a conversion, sometimes to a range of the same base */
     uint32_t to = t;
-    for (uint32_t r = NTYPES; r < g->nty; r++)
+    for (uint32_t r = NTYPES; r < g->nty && !sealed(g); r++)
         if (g->ty[r].k == K_RANGE && base(g, r) == t && chance(g, 30))
             to = r;
     return conv(g, to,
@@ -2366,7 +2384,7 @@ static uint32_t declare(G *g, uint32_t t)
 static uint32_t declare_agg(G *g)
 {
     uint32_t n = 0, t = 0;
-    for (uint32_t u = NTYPES; u < g->nty; u++)
+    for (uint32_t u = NTYPES; u < g->nty && !sealed(g); u++)
         if ((g->ty[u].k == K_RECORD || g->ty[u].k == K_ARRAY) &&
             below(g, ++n) == 0)
             t = u;
@@ -2710,7 +2728,7 @@ static uint32_t heap_free(G *g, uint32_t h, uint32_t *out)
 static uint32_t heap_array(G *g, uint32_t *out)
 {
     uint32_t nh = 0, ht = 0;
-    for (uint32_t u = NTYPES; u < g->nty; u++)
+    for (uint32_t u = NTYPES; u < g->nty && !sealed(g); u++)
         if (g->ty[u].k == K_HEAP && below(g, ++nh) == 0)
             ht = u;
     if (!nh)
@@ -3201,7 +3219,8 @@ static uint32_t stmt(G *g, uint32_t *out)
         uint32_t top = g->cur >= 0 ? (uint32_t)g->cur : g->nr, n = 0;
         uint32_t fn = 0;
         for (uint32_t i = 0; i < top; i++)
-            if (!g->r[i].func && below(g, ++n) == 0)
+            if (!g->r[i].func && (!sealed(g) || g->r[i].sealed) &&
+                below(g, ++n) == 0)
                 fn = i;
         if (n) {
             uint32_t a[4];
@@ -3363,9 +3382,13 @@ static void routine(G *g)
     LIMBA_GROW(g->r, g->nr, g->capr);
     uint32_t id = g->nr++;
     memset(&g->r[id], 0, sizeof(xr));
+    /* sometimes sealed: an Int64 and a Boolean first, base types, the
+       globals out of sight (the unit of lx_gen -d, § 11) */
+    bool seal = chance(g, 30);
+    g->r[id].sealed = seal;
     g->r[id].func = chance(g, 50);
-    g->r[id].rt = var_type_s(g);
-    if (g->r[id].func && chance(g, 45)) {
+    g->r[id].rt = seal ? (chance(g, 15) ? T_STR : any_type(g)) : var_type_s(g);
+    if (!seal && g->r[id].func && chance(g, 45)) {
         /* a record or an array of the program */
         uint32_t n = 0;
         for (uint32_t u = NTYPES; u < g->nty; u++)
@@ -3373,9 +3396,26 @@ static void routine(G *g)
                 below(g, ++n) == 0)
                 g->r[id].rt = u;
     }
-    g->r[id].np = (uint8_t)below(g, 4);
+    g->r[id].np = (uint8_t)(seal ? 2 + below(g, 3) : below(g, 4));
     uint32_t mark = g->nscope;
+    /* sealed: the scope empty while it is made, given back after */
+    uint32_t *outer = NULL;
+    if (seal) {
+        outer = limba_xmalloc((g->nscope + 1) * sizeof(*outer));
+        memcpy(outer, g->scope, g->nscope * sizeof(*outer));
+        g->nscope = 0;
+    }
     for (uint32_t k = 0; k < g->r[id].np; k++) {
+        if (seal) {
+            uint32_t t = k == 0 ? T_I64 : k == 1 ? T_BOOL : any_type(g);
+            bool byref = k >= 2 && !g->r[id].func && chance(g, 40);
+            bool out = k >= 2 && !byref && !g->r[id].func && chance(g, 30);
+            uint32_t p = new_v(g, t, out ? V_OUT : byref ? V_VAR : V_IN);
+            g->r[id].par[k] = p;
+            if (!out)
+                show(g, p);
+            continue;
+        }
         uint32_t t = var_type_s(g);
         /* sometimes an open array, made from an array of the program */
         uint32_t n = 0, from = 0;
@@ -3511,6 +3551,10 @@ static void routine(G *g)
     g->r[id].nblk = n;
     g->cur = -1;
     g->nscope = mark;
+    if (outer) {
+        memcpy(g->scope, outer, mark * sizeof(*outer));
+        free(outer);
+    }
 }
 
 /* ---- the source ---- */
@@ -3519,7 +3563,13 @@ typedef struct {
     char *b;
     size_t n, cap;
     uint32_t line, col;
+    /* added to the lines recorded: UNIT_LINES in the unit, so that a
+       place says its file */
+    uint32_t lbase;
 } text;
+
+/* the lines of the unit Lib, recorded from here (a program has fewer) */
+#define UNIT_LINES 1000000u
 
 /* n bytes of s; a column is a code point, as the front end counts */
 static void putn(text *o, const char *s, size_t n)
@@ -3570,6 +3620,10 @@ static void put_name(text *o, const G *g, uint32_t v)
 
 static void put_rname(text *o, const G *g, uint32_t r)
 {
+    /* a routine of Lib named by the program: directly, or qualified
+       (§ 11.3), as the place falls */
+    if (g->moved && g->moved[r] && !o->lbase && ((o->n * 2654435761u) >> 7) & 1)
+        put(o, "Lib.");
     putf(o, "%c%u", g->r[r].func ? 'f' : 'p', r);
 }
 
@@ -3618,7 +3672,7 @@ static void put_big(text *o, const G *g, v128 v)
 
 static void here(xe *x, const text *o)
 {
-    x->line = o->line;
+    x->line = o->line + o->lbase;
     x->col = o->col;
 }
 
@@ -3876,12 +3930,12 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
 {
     xs s = g->st[si];
     indent(o, ind);
-    g->st[si].line = o->line;
+    g->st[si].line = o->line + o->lbase;
     g->st[si].col = o->col;
     switch (s.k) {
     case S_VAR:
         put(o, "var ");
-        g->st[si].nline = o->line;
+        g->st[si].nline = o->line + o->lbase;
         g->st[si].ncol = o->col;
         put_name(o, g, s.var);
         put(o, ": ");
@@ -3906,12 +3960,13 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
     case S_ASSIGN:
         put_name(o, g, s.var);
         if (s.fld) {
-            g->st[si].iline = o->line; /* nil is reported at the . */
+            g->st[si].iline = o->line + o->lbase; /* nil is reported at the . */
             g->st[si].icol = o->col;
             putf(o, ".f%u", s.fld - 1);
         }
         if (s.idx) {
-            g->st[si].iline = o->line; /* the index is checked at the [ */
+            g->st[si].iline =
+                o->line + o->lbase; /* the index is checked at the [ */
             g->st[si].icol = o->col;
             put(o, "[");
             pexpr(g, o, s.idx);
@@ -4051,7 +4106,7 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         break;
     case S_HNEW:
         put(o, "var ");
-        g->st[si].nline = o->line;
+        g->st[si].nline = o->line + o->lbase;
         g->st[si].ncol = o->col;
         put_name(o, g, s.var);
         put(o, " := new(");
@@ -4064,7 +4119,8 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         break;
     case S_HSET:
         put_name(o, g, s.var);
-        g->st[si].iline = o->line; /* nil, dangling and index at the [ */
+        g->st[si].iline =
+            o->line + o->lbase; /* nil, dangling and index at the [ */
         g->st[si].icol = o->col;
         put(o, "[");
         pexpr(g, o, s.idx);
@@ -4102,7 +4158,7 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         if (s.k == S_OCC)
             put(o, "writeln(");
         /* nil, dangling, range and index at the name */
-        g->st[si].line = o->line;
+        g->st[si].line = o->line + o->lbase;
         g->st[si].col = o->col;
         put(o, s.k == S_REV     ? "reverse("
                : s.k == S_TRANS ? "translate("
@@ -4125,7 +4181,7 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         putf(o, "var z%u: array[Int32 range 1..4] of Byte;\n", si);
         indent(o, ind);
         put(o, "writeln(");
-        g->st[si].line = o->line;
+        g->st[si].line = o->line + o->lbase;
         g->st[si].col = o->col;
         putf(o, "readbytes(z%u, ", si);
         pexpr(g, o, s.e);
@@ -4139,7 +4195,7 @@ static void pstmt(G *g, text *o, uint32_t si, int ind)
         if (s.k == S_RDB)
             put(o, "writeln(");
         /* nil, dangling, range and index at the name */
-        g->st[si].line = o->line;
+        g->st[si].line = o->line + o->lbase;
         g->st[si].col = o->col;
         put(o, s.k == S_RDB ? "readbytes(" : "writebytes(");
         put_name(o, g, s.var);
@@ -4163,9 +4219,42 @@ static void pblock(G *g, text *o, uint32_t b, uint32_t n, int ind)
         pstmt(g, o, g->ls[b + i], ind);
 }
 
+/* routine r, or only its heading */
+static void routine_text(G *g, text *o, uint32_t r, bool heading)
+{
+    const xr *x = &g->r[r];
+    put(o, x->func ? "\nfunction " : "\nprocedure ");
+    putf(o, "%c%u", x->func ? 'f' : 'p', r);
+    put(o, "(");
+    for (uint32_t k = 0; k < x->np; k++) {
+        uint32_t p = x->par[k];
+        if (k)
+            put(o, "; ");
+        if (g->v[p].kind == V_VAR)
+            put(o, "var ");
+        if (g->v[p].kind == V_OUT)
+            put(o, "out ");
+        put_name(o, g, p);
+        put(o, ": ");
+        put_type(o, g, g->v[p].t);
+    }
+    put(o, ")");
+    if (x->func) {
+        put(o, ": ");
+        put_type(o, g, x->rt);
+    }
+    if (heading) {
+        put(o, ";\n");
+        return;
+    }
+    put(o, ";\nbegin\n");
+    pblock(g, o, x->blk, x->nblk, 1);
+    putf(o, "end %c%u;\n", x->func ? 'f' : 'p', r);
+}
+
 static void program(G *g, text *o, uint32_t nglob)
 {
-    put(o, "program Random;\n");
+    put(o, g->units ? "program Random;\nuses Lib;\n" : "program Random;\n");
     if (g->ngc) {
         put(o, "\nconst\n");
         for (uint32_t k = 0; k < g->ngc; k++) {
@@ -4236,39 +4325,129 @@ static void program(G *g, text *o, uint32_t nglob)
             put(o, ";\n");
         }
     }
-    for (uint32_t r = 0; r < g->nr; r++) {
-        const xr *x = &g->r[r];
-        put(o, x->func ? "\nfunction " : "\nprocedure ");
-        put_rname(o, g, r);
-        put(o, "(");
-        for (uint32_t k = 0; k < x->np; k++) {
-            uint32_t p = x->par[k];
-            if (k)
-                put(o, "; ");
-            if (g->v[p].kind == V_VAR)
-                put(o, "var ");
-            if (g->v[p].kind == V_OUT)
-                put(o, "out ");
-            put_name(o, g, p);
-            put(o, ": ");
-            put_type(o, g, g->v[p].t);
-        }
-        put(o, ")");
-        if (x->func) {
-            put(o, ": ");
-            put_type(o, g, x->rt);
-        }
-        put(o, ";\nbegin\n");
-        pblock(g, o, x->blk, x->nblk, 1);
-        put(o, "end ");
-        put_rname(o, g, r);
-        put(o, ";\n");
-    }
+    for (uint32_t r = 0; r < g->nr; r++)
+        if (!g->moved || !g->moved[r])
+            routine_text(g, o, r, false);
     put(o, "\nbegin\n");
     pblock(g, o, g->main_blk, g->main_n, 1);
     put(o, "end Random.\n");
     LIMBA_GROW(o->b, o->n, o->cap);
     o->b[o->n] = 0;
+}
+
+/* may routine r go into the unit Lib: its text names no global, no
+   type, value or constant of the program, no routine left in it (the
+   unit cannot see the program) */
+static bool movable(const G *g, uint32_t r, const char *b, size_t n)
+{
+    for (size_t i = 0; i < n;) {
+        char c = b[i];
+        if (c == '"') {
+            /* a String: "" inside it */
+            size_t j = i + 1;
+            while (j < n && !(b[j] == '"' && (j + 1 >= n || b[j + 1] != '"')))
+                j += b[j] == '"' ? 2 : 1;
+            i = j + 1;
+            continue;
+        }
+        if (c == '\'') {
+            /* a Char: the apostrophe written three times, or one
+               character (UTF-8) between two */
+            if (i + 2 < n && b[i + 1] == '\'' && b[i + 2] == '\'') {
+                i += 3;
+                continue;
+            }
+            size_t j = i + 1;
+            while (j < n && b[j] != '\'')
+                j++;
+            i = j + 1;
+            continue;
+        }
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) {
+            i++;
+            if (c >= '0' && c <= '9')
+                while (i < n && ((b[i] >= '0' && b[i] <= '9') ||
+                                 (b[i] >= 'a' && b[i] <= 'z') ||
+                                 (b[i] >= 'A' && b[i] <= 'Z') || b[i] == '_' ||
+                                 b[i] == '.'))
+                    i++;
+            continue;
+        }
+        size_t w = i;
+        while (w < n &&
+               ((b[w] >= 'a' && b[w] <= 'z') || (b[w] >= 'A' && b[w] <= 'Z')))
+            w++;
+        size_t d = w;
+        while (d < n && b[d] >= '0' && b[d] <= '9')
+            d++;
+        if (d > w) {
+            /* a name of the generator: a letter or a type, then a number */
+            unsigned num = (unsigned)strtoul(b + w, NULL, 10);
+            bool type = false;
+            for (unsigned t = 0; t < NTYPES; t++)
+                if (strlen(tname[t]) == d - i &&
+                    !memcmp(tname[t], b + i, d - i))
+                    type = true;
+            if (!type) {
+                if (w - i != 1 || (d < n && b[d] == 'x'))
+                    return false; /* a type, a value of an enumeration */
+                switch (i && b[i - 1] == '.' ? '.' : b[i]) {
+                case '.':
+                    break; /* a field */
+                case 'f':
+                case 'p':
+                    /* itself, or a routine already in Lib */
+                    if (num != r && (num >= g->nr || !g->moved[num]))
+                        return false;
+                    break;
+                case 'g':
+                    return false;
+                case 'k':
+                case 'v':
+                case 'a':
+                case 'i':
+                case 'w':
+                    if (num >= g->nv || g->v[num].kind == V_GLOBAL)
+                        return false;
+                    /* a constant of the program: one of its statements */
+                    for (uint32_t k = 0; k < g->ngc; k++)
+                        if (g->st[g->gc[k]].var == num)
+                            return false;
+                    break;
+                case 'z':
+                case 'j':
+                    break; /* the tables of translate and readbytes */
+                default:
+                    return false;
+                }
+            }
+        }
+        i = d;
+    }
+    return true;
+}
+
+/* the unit Lib: the headings of the routines moved, their bodies, and an
+   initialisation that prints a line (§ 11.2, § 11.5) */
+static void unit_text(G *g, text *u)
+{
+    for (uint32_t r = 0; r < g->nr; r++) {
+        text t = {NULL, 0, 0, 1, 1, 0};
+        routine_text(g, &t, r, false);
+        g->moved[r] = movable(g, r, t.b, t.n);
+        free(t.b);
+    }
+    put(u, "unit Lib;\n\ninterface\n");
+    for (uint32_t r = 0; r < g->nr; r++)
+        if (g->moved[r])
+            routine_text(g, u, r, true);
+    put(u, "\nimplementation\n");
+    for (uint32_t r = 0; r < g->nr; r++)
+        if (g->moved[r])
+            routine_text(g, u, r, false);
+    put(u, "\nbegin\n  writeln(\"lib\");\nend Lib.\n");
+    LIMBA_GROW(u->b, u->n, u->cap);
+    u->b[u->n] = 0;
 }
 
 /* ---- the run ---- */
@@ -5114,7 +5293,7 @@ static v128 ev(X *x, uint32_t i)
         v128 v = ev(x, e->a);
         if (x->trap)
             return 0;
-        text o = {NULL, 0, 0, 1, 1};
+        text o = {NULL, 0, 0, 1, 1, 0};
         print_value(g, &o, base(g, g->e[e->a].t), v);
         v128 r = run_str(x, o.b ? o.b : "", o.n);
         free(o.b);
@@ -5413,7 +5592,7 @@ static int run_stmt(X *x, uint32_t si)
                     fail(x, fe->c, 101); /* at the decimals */
                 if (x->trap)
                     return X_RET;
-                text t = {NULL, 0, 0, 1, 1};
+                text t = {NULL, 0, 0, 1, 1, 0};
                 unsigned b = base(g, g->e[fe->a].t);
                 if (fe->c && isnan(fval(v))) {
                     put(&t, "nan");
@@ -5780,7 +5959,7 @@ static void g_free(G *g)
     free(g->big);
 }
 
-static bool attempt(uint64_t seed, limba_lxgen *p)
+static bool attempt(uint64_t seed, limba_lxgen *p, bool units)
 {
     G g;
     memset(&g, 0, sizeof(g));
@@ -6061,7 +6240,13 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
             append(&g, &g.main_blk, &g.main_n, hs[k], false);
     }
 
-    text src = {NULL, 0, 0, 1, 1};
+    text src = {NULL, 0, 0, 1, 1, 0};
+    text unit = {NULL, 0, 0, 1, 1, UNIT_LINES};
+    if (units) {
+        g.units = true;
+        g.moved = limba_xcalloc(g.nr ? g.nr : 1, 1);
+        unit_text(&g, &unit);
+    }
     program(&g, &src, nglob);
 
     X x;
@@ -6088,10 +6273,12 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
             x.ahi[v] = g.ty[g.v[v].t].hi;
         }
     x.out.line = x.out.col = 1;
+    if (units)
+        put(&x.out, "lib\n"); /* the initialisation of Lib, first */
     for (uint32_t v = 0; v < nglob; v++)
         if (!is_array(&g, g.v[v].t) && !is_record(&g, g.v[v].t))
             x.cell[x.ref[v]] = g.e[g.st[v].e].lit;
-    text in = {NULL, 0, 0, 1, 1};
+    text in = {NULL, 0, 0, 1, 1, 0};
     for (uint32_t k = 0; k < g.nline; k++) {
         putn(&in, g.str[g.line[k]].b, g.str[g.line[k]].n);
         if (k + 1 < g.nline || g.nl_end)
@@ -6121,18 +6308,27 @@ static bool attempt(uint64_t seed, limba_lxgen *p)
                 memcpy(p->argv[k], a->b, a->n);
             p->argv[k][a->n] = 0;
         }
+        /* a place in Lib says its file */
+        const char *file = x.line >= UNIT_LINES ? "lib.luxia:" : "";
+        uint32_t line = x.line >= UNIT_LINES ? x.line - UNIT_LINES : x.line;
         if (x.halt)
-            snprintf(p->end, sizeof(p->end), "halt %d at %u:%u", x.code, x.line,
-                     x.col);
+            snprintf(p->end, sizeof(p->end), "halt %d at %s%u:%u", x.code, file,
+                     line, x.col);
         else if (x.trap)
-            snprintf(p->end, sizeof(p->end), "trap %d at %u:%u", x.code, x.line,
-                     x.col);
+            snprintf(p->end, sizeof(p->end), "trap %d at %s%u:%u", x.code, file,
+                     line, x.col);
         else if (x.live)
             snprintf(p->end, sizeof(p->end), "ok, %u live", x.live);
         else
             snprintf(p->end, sizeof(p->end), "ok");
+        if (units) {
+            p->unit = unit.b;
+            unit.b = NULL;
+        }
     }
     free(src.b);
+    free(unit.b);
+    free(g.moved);
     free(in.b);
     free(x.out.b);
     free(x.cell);
@@ -6150,7 +6346,16 @@ bool limba_lxgen_make(uint64_t seed, limba_lxgen *p)
 {
     memset(p, 0, sizeof(*p));
     for (uint64_t k = 0; k < 16; k++)
-        if (attempt(seed * 16 + k, p))
+        if (attempt(seed * 16 + k, p, false))
+            return true;
+    return false;
+}
+
+bool limba_lxgen_make_units(uint64_t seed, limba_lxgen *p)
+{
+    memset(p, 0, sizeof(*p));
+    for (uint64_t k = 0; k < 16; k++)
+        if (attempt(seed * 16 + k, p, true))
             return true;
     return false;
 }
@@ -6158,6 +6363,7 @@ bool limba_lxgen_make(uint64_t seed, limba_lxgen *p)
 void limba_lxgen_free(limba_lxgen *p)
 {
     free(p->src);
+    free(p->unit);
     free(p->out);
     free(p->in);
     for (int k = 0; k < p->argc; k++)

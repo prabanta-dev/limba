@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Maurizio Cammalleri
+//
+// A unit of the standard library, for the tests: found with
+// --stdlib=tests/luxia/units/std, in a space of its own.
+unit Strings;
+
+interface
+
+function Times(s: String; n: Int64): String;
+
+implementation
+
+function Times(s: String; n: Int64): String;
+begin
+  var r: String := "";
+  for var i: Int64 := 1 to n do
+    r := r & s;
+  end;
+  return r;
+end Times;
+
+end Strings.

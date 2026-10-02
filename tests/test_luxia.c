@@ -1470,8 +1470,21 @@ static const char unreadable[] = "";
 
 /* run main on the input in (NULL: none; unreadable: an error in reading);
    what it printed (malloc'd, *len bytes) and how it ended */
+static char *run_module_in(limba_module *m, const char *in, size_t inlen,
+                           int argc, char **argv, char *end, size_t size,
+                           size_t *len, const char *main_file);
+
 static char *run_module(limba_module *m, const char *in, size_t inlen, int argc,
                         char **argv, char *end, size_t size, size_t *len)
+{
+    return run_module_in(m, in, inlen, argc, argv, end, size, len, NULL);
+}
+
+/* as run_module; a place in a file other than main_file (not NULL) says
+   its file: "at lib.luxia:3:5" */
+static char *run_module_in(limba_module *m, const char *in, size_t inlen,
+                           int argc, char **argv, char *end, size_t size,
+                           size_t *len, const char *main_file)
 {
     /* every run tries the collection of lir_run, before each value made */
     limba_eval_limits lim = {0, 0, argc, argv, NULL, true, 0, true};
@@ -1493,8 +1506,12 @@ static char *run_module(limba_module *m, const char *in, size_t inlen, int argc,
     else if (r.live)
         snprintf(end, size, "ok, %zu live", r.live);
     if (r.pos && r.pos <= m->npos) {
-        size_t n = strlen(end);
-        snprintf(end + n, size - n, " at %u:%u", m->pos[r.pos - 1].line,
+        size_t n = strlen(end), fn = 0;
+        const char *file = limba_str(m, m->pos[r.pos - 1].file, &fn);
+        bool other = main_file && file &&
+                     (fn != strlen(main_file) || memcmp(file, main_file, fn));
+        snprintf(end + n, size - n, " at %.*s%s%u:%u", other ? (int)fn : 0,
+                 other ? file : "", other ? ":" : "", m->pos[r.pos - 1].line,
                  m->pos[r.pos - 1].col);
     }
     char *out = r.out;
@@ -1803,6 +1820,55 @@ static uint64_t env(const char *name, uint64_t def)
    end where it says:
      LIMBA_LXGEN_SEEDS  how many seeds (default 200)
      LIMBA_LXGEN_FIRST  the first seed (default 1) */
+/* the reader of the unit Lib of a random program */
+static int lib_reader(void *ctx, int space, const char *name, const char **text,
+                      size_t *len, const char **path)
+{
+    const limba_lxgen *p = ctx;
+    if (space != LIMBA_LUXIA_PROGRAM_UNIT || strcmp(name, "lib") || !p->unit)
+        return LIMBA_LUXIA_UNIT_ABSENT;
+    *text = p->unit;
+    *len = strlen(p->unit);
+    *path = "lib.luxia";
+    return LIMBA_LUXIA_UNIT_FOUND;
+}
+
+/* a random program in two files (§ 11), compiled by the front end
+   library at -O0 and -O1 and run: what it printed (*len bytes) and how
+   it ended, an OPTDIFF if the two runs differ */
+static char *run_units(const limba_lxgen *p, char *end, size_t size,
+                       size_t *len)
+{
+    char *out[2] = {NULL, NULL};
+    size_t n[2] = {0, 0};
+    char ends[2][256];
+    for (int level = 0; level < 2; level++) {
+        snprintf(ends[level], sizeof(ends[level]), "errors");
+        limba_luxia_options o = {0};
+        o.level = level;
+        o.read_unit = lib_reader;
+        o.read_ctx = (void *)p;
+        limba_luxia_consumer k = {0};
+        k.keep_bodies = true;
+        limba_module *m = NULL;
+        limba_luxia_compile_text("prog.luxia", p->src, strlen(p->src), &o, &k,
+                                 &m);
+        if (m) {
+            out[level] =
+                run_module_in(m, p->in, p->inlen, p->argc, p->argv, ends[level],
+                              sizeof(ends[level]), &n[level], "prog.luxia");
+            limba_module_free(m);
+        }
+    }
+    snprintf(end, size, "%s", ends[0]);
+    if (n[0] != n[1] || (n[0] && memcmp(out[0], out[1], n[0])) ||
+        strcmp(ends[0], ends[1]))
+        snprintf(end, size, "OPTDIFF: %.100s / %.100s", ends[0], ends[1]);
+    free(out[1]);
+    *len = n[0];
+    return out[0];
+}
+
 static int test_random(void)
 {
     uint64_t first = env("LIMBA_LXGEN_FIRST", 1);
@@ -1831,6 +1897,27 @@ static int test_random(void)
                     (unsigned long long)seed, end, p.end, k, olen, p.outlen,
                     (unsigned long long)seed);
             failures++;
+        }
+        /* the same program with its routines that name nothing of it in
+           the unit Lib */
+        limba_lxgen q;
+        if (limba_lxgen_make_units(seed, &q)) {
+            char *uo = run_units(&q, end, sizeof(end), &olen);
+            if (strcmp(end, q.end) || olen != q.outlen ||
+                (olen && memcmp(uo, q.out, olen))) {
+                size_t k = 0;
+                while (k < olen && k < q.outlen && uo[k] == q.out[k])
+                    k++;
+                fprintf(stderr,
+                        "test_luxia: random seed %llu with a unit: ended %s, "
+                        "expected %s; output differs at byte %zu of %zu (%zu "
+                        "expected); tools/lx_gen -d DIR %llu\n",
+                        (unsigned long long)seed, end, q.end, k, olen, q.outlen,
+                        (unsigned long long)seed);
+                failures++;
+            }
+            free(uo);
+            limba_lxgen_free(&q);
         }
         unsigned code;
         if (!strncmp(p.end, "ok", 2))
@@ -1976,6 +2063,8 @@ static int test_ffi(unsigned *count)
 }
 
 /* ---- units (specification § 11) ---- */
+
+static char *slurp(const char *path, size_t *len);
 
 /* the files of a program: the first is compiled, the others read by the
    reader of the front end; a name std/x.luxia is in the space of the
@@ -2254,9 +2343,40 @@ static int test_unit_module(void)
     return failures;
 }
 
+/* a program with units in files: tests/luxia/units, the library in std/
+   (§ 11.4), what it prints in expected/ */
+static int test_unit_files(void)
+{
+    limba_luxia_options o = {0};
+    o.stdlib_path = "tests/luxia/units/std";
+    limba_luxia_consumer k = {0};
+    k.keep_bodies = true;
+    limba_module *m = NULL;
+    int st =
+        limba_luxia_compile_file("tests/luxia/units/orbits.luxia", &o, &k, &m);
+    size_t elen, olen = 0;
+    char *exp = slurp("tests/luxia/units/expected/orbits.out", &elen);
+    char end[256] = "errors";
+    char *out =
+        m ? run_module(m, NULL, 0, 0, NULL, end, sizeof(end), &olen) : NULL;
+    int failures = 0;
+    if (st != LIMBA_LUXIA_OK || !exp || strcmp(end, "ok") || olen != elen ||
+        (olen && memcmp(out, exp, olen))) {
+        fprintf(stderr,
+                "test_luxia: tests/luxia/units/orbits.luxia: status "
+                "%d, ended %s, printed %zu bytes (%zu expected)\n",
+                st, end, olen, exp ? elen : 0);
+        failures++;
+    }
+    free(out);
+    free(exp);
+    limba_module_free(m);
+    return failures;
+}
+
 static int test_units(void)
 {
-    int failures = test_unit_module();
+    int failures = test_unit_module() + test_unit_files();
     for (size_t i = 0; i < COUNT(unit_cases); i++) {
         const unit_case *c = &unit_cases[i];
         char out_end[2][256] = {"errors", "errors"};

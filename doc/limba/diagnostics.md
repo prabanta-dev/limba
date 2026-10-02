@@ -1277,8 +1277,9 @@ prog.luxia:3:11: error[L0061]: 'Beep' is an external routine, which pragma restr
 
 `pragma convention(c, R)` names the C convention and a record type `R`
 declared in the same declarations; `pragma restrictions(no_external)`
-names the one restriction, among the declarations of the program. Neither
-is a statement.
+names the one restriction, among the declarations of the program or of a
+unit; `pragma hides(Unit.Name)` names a name of a unit the file uses
+(§ 11.3). None is a statement.
 
 ```pascal
 program p;
@@ -1693,7 +1694,7 @@ prog.luxia:5:15: error[L0079]: pragma restrictions(no_external) forbids the boun
 | L0059 | THROUGH_POINTER | a record or an array reached through a pointer as an argument, or a scalar as a `var` one |
 | L0060 | C_BOUNDARY | a type that does not cross to C |
 | L0061 | RESTRICTED | the boundary with C where `pragma restrictions(no_external)` forbids it |
-| L0062 | C_PRAGMA | `pragma convention` or `restrictions` written wrong |
+| L0062 | C_PRAGMA | `pragma convention`, `restrictions` or `hides` written wrong |
 | L0063 | DEREF_SELECT | a field or an element after `^` (`p^.x`, `p^[i]`) |
 | L0064 | UNIT_NOT_FOUND | a unit used that no file holds |
 | L0065 | UNIT_FILE | a file named not as its unit, or a program used as a unit |
