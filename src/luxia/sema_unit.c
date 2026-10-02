@@ -359,9 +359,11 @@ static void hides_check(limba_lxs *S)
                 (S->st.sym[s].scope != f->intf &&
                  S->st.sym[s].scope != f->impl))
                 continue;
-            bool impl = S->st.sym[s].scope == f->impl;
+            /* a declaration of the interface is seen in the
+               implementation too: it hides the names of every unit the
+               file uses */
             for (uint32_t k = 0;; k++) {
-                uint32_t ref = visible_ref(S, u, impl, k);
+                uint32_t ref = visible_ref(S, u, true, k);
                 if (!ref)
                     break;
                 uint32_t w = S->t->node[ref].b;

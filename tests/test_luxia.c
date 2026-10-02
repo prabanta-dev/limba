@@ -1832,12 +1832,28 @@ static int lib_reader(void *ctx, int space, const char *name, const char **text,
                       size_t *len, const char **path)
 {
     const limba_lxgen *p = ctx;
-    if (space != LIMBA_LUXIA_PROGRAM_UNIT || strcmp(name, "lib") || !p->unit)
-        return LIMBA_LUXIA_UNIT_ABSENT;
-    *text = p->unit;
-    *len = strlen(p->unit);
-    *path = "lib.luxia";
-    return LIMBA_LUXIA_UNIT_FOUND;
+    static char where[LIMBA_LXGEN_FILES][32];
+    for (unsigned k = 0; k < p->nfile; k++)
+        if ((space == LIMBA_LUXIA_STDLIB_UNIT) == p->file[k].library &&
+            !strcmp(name, p->file[k].name)) {
+            snprintf(where[k], sizeof(where[k]), "%s%s.luxia",
+                     p->file[k].library ? "<std>/" : "", p->file[k].name);
+            *text = p->file[k].text;
+            *len = strlen(p->file[k].text);
+            *path = where[k];
+            return LIMBA_LUXIA_UNIT_FOUND;
+        }
+    return LIMBA_LUXIA_UNIT_ABSENT;
+}
+
+/* the codes of the warnings and notes of a compilation, after a space
+   each */
+static void unit_notes(void *ctx, const limba_luxia_diag *d)
+{
+    char *b = ctx;
+    size_t n = strlen(b);
+    if (d->severity != LIMBA_LUXIA_ERROR && *d->code && n + 8 < 64)
+        snprintf(b + n, 64 - n, " %s", d->code);
 }
 
 /* a random program in two files (§ 11), compiled by the front end
@@ -1857,6 +1873,9 @@ static char *run_units(const limba_lxgen *p, char *end, size_t size,
         o.read_ctx = (void *)p;
         limba_luxia_consumer k = {0};
         k.keep_bodies = true;
+        char notes[64] = "";
+        k.ctx = notes;
+        k.diag = unit_notes;
         limba_module *m = NULL;
         limba_luxia_compile_text("prog.luxia", p->src, strlen(p->src), &o, &k,
                                  &m);
@@ -1866,6 +1885,9 @@ static char *run_units(const limba_lxgen *p, char *end, size_t size,
                               sizeof(ends[level]), &n[level], "prog.luxia");
             limba_module_free(m);
         }
+        /* only the warnings and notes the generator expects */
+        if (strcmp(notes + (*notes == ' '), p->notes))
+            snprintf(ends[level], sizeof(ends[level]), "diagnoses '%s'", notes);
     }
     snprintf(end, size, "%s", ends[0]);
     if (n[0] != n[1] || (n[0] && memcmp(out[0], out[1], n[0])) ||
@@ -2142,6 +2164,16 @@ static const unit_case unit_cases[] = {
      "",
      "errors",
      "L0074@p.luxia:9:5 w:L0071@p.luxia:3:5 w:L0078@p.luxia:6:16"},
+    /* a declaration of the interface hides a name of a unit used only by
+       the implementation, where both are seen: a warning, or the pragma */
+    {{{"p.luxia", "program P; uses A, B; begin writeln(A.n, B.n); end."},
+      {"a.luxia", "unit A;\ninterface\nvar n: Int64 := 1;\nimplementation\n"
+                  "uses B;\nbegin\n  n := B.n + 1;\nend A."},
+      {"b.luxia", "unit B;\ninterface\nvar n: Int64 := 5;\npragma "
+                  "hides(A.n);\nimplementation\nuses A;\nend B."}},
+     "65\n",
+     "ok",
+     "w:L0071@a.luxia:3:5"},
     /* the heading of a body conforms to the interface: names textual,
        types semantic (Geometry.Vector is Vector); a heading without its
        body */

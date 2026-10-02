@@ -407,6 +407,9 @@ typedef struct {
     /* a program with the unit Lib (§ 11): the routines moved into it */
     bool units;
     uint8_t *moved;
+    /* and the web of units around it, NULL for none */
+    struct web *web;
+    bool lib_named; /* the program names a routine of Lib */
 } G;
 
 static uint32_t new_str(G *g, const char *b, size_t n)
@@ -3624,6 +3627,8 @@ static void put_rname(text *o, const G *g, uint32_t r)
        (§ 11.3), as the place falls */
     if (g->moved && g->moved[r] && !o->lbase && ((o->n * 2654435761u) >> 7) & 1)
         put(o, "Lib.");
+    if (g->moved && g->moved[r] && !o->lbase)
+        ((G *)g)->lib_named = true;
     putf(o, "%c%u", g->r[r].func ? 'f' : 'p', r);
 }
 
@@ -4252,9 +4257,305 @@ static void routine_text(G *g, text *o, uint32_t r, bool heading)
     putf(o, "end %c%u;\n", x->func ? 'f' : 'p', r);
 }
 
+/* ---- the web of units (§ 11) ----
+
+   Beside Lib, units of their own that the program uses: from 2 to 4 of
+   the program (Wa, Wb, ...), whose initialisations read and write each
+   other's variables, and sometimes a small library with collisions
+   between the two spaces. Each unit W has
+     ucW, ready (a constant never written), uxW, written by its
+     initialisation, uyW, a constant that at most one other
+     initialisation changes through USetW; UGetW reads uxW.
+   The initialisations follow a valid order (pos); a read of uxW, or of
+   uyW after its writer, is a constraint (§ 11.5) the order respects, and
+   the values do not depend on which valid order the compiler takes. The
+   uses that no constraint asks, in implementations, go both ways
+   (cycles), and the names are written directly or qualified. The
+   program prints every value first. */
+
+#define WEB_MAX 4
+
+struct web {
+    unsigned n;
+    unsigned pos[WEB_MAX]; /* the place of each unit in a valid order */
+    unsigned order[WEB_MAX];
+    int64_t c[WEB_MAX], x[WEB_MAX], y[WEB_MAX], y0[WEB_MAX];
+    int writer[WEB_MAX];  /* the unit whose initialisation sets uy, -1 */
+    int64_t set[WEB_MAX]; /* what it adds */
+    uint8_t use[WEB_MAX][WEB_MAX]; /* 1 in the implementation, 2 in the
+                                      interface */
+    /* the terms of each initialisation: kind (0 uc, 1 ux, 2 UGet, 3 uy),
+       unit, written qualified */
+    uint8_t tk[WEB_MAX][6], tu[WEB_MAX][6], tq[WEB_MAX][6];
+    unsigned nt[WEB_MAX];
+    int64_t k[WEB_MAX];
+    int dup[2]; /* two units that give udup, -1 */
+    int hid;    /* the unit whose uc the program hides, -1 */
+    bool lib;   /* Coll in both spaces, Lb and Lbase */
+    bool named; /* Coll gives a variable Lb */
+    text out;   /* the line the program prints first */
+};
+
+static void web_make(G *g, struct web *w)
+{
+    memset(w, 0, sizeof(*w));
+    w->n = 2 + below(g, WEB_MAX - 1);
+    for (unsigned i = 0; i < w->n; i++)
+        w->order[i] = i;
+    for (unsigned i = w->n - 1; i > 0; i--) {
+        unsigned j = below(g, i + 1), t = w->order[i];
+        w->order[i] = w->order[j];
+        w->order[j] = t;
+    }
+    for (unsigned i = 0; i < w->n; i++) {
+        w->pos[w->order[i]] = i;
+        w->c[i] = below(g, 1000);
+        w->y0[i] = w->y[i] = below(g, 1000);
+        w->k[i] = below(g, 1000);
+        w->writer[i] = -1;
+    }
+    /* the writers of the uy: any other unit */
+    for (unsigned j = 0; j < w->n; j++)
+        if (chance(g, 50)) {
+            unsigned i = below(g, w->n - 1);
+            w->writer[j] = (int)(i >= j ? i + 1 : i);
+            w->set[j] = 1 + below(g, 999);
+            w->use[w->writer[j]][j] = 1;
+        }
+    /* the terms: what comes before in the order, the ready ones of any */
+    for (unsigned i = 0; i < w->n; i++) {
+        unsigned nt = below(g, 5);
+        for (unsigned t = 0; t < nt; t++) {
+            unsigned j = below(g, w->n);
+            unsigned kind = below(g, 4);
+            if (j == i)
+                kind = 0; /* its own uc */
+            else if ((kind == 1 || kind == 2) && w->pos[j] > w->pos[i])
+                kind = 0; /* its ux is not written yet: the ready one */
+            else if (kind == 3 && w->writer[j] >= 0 && w->writer[j] != (int)i &&
+                     w->pos[w->writer[j]] > w->pos[i])
+                kind = 0; /* uy not yet set by its writer */
+            w->tk[i][w->nt[i]] = (uint8_t)kind;
+            w->tu[i][w->nt[i]] = (uint8_t)j;
+            w->tq[i][w->nt[i]] = (uint8_t)(j == i ? 0 : chance(g, 50));
+            w->nt[i]++;
+            if (j != i)
+                w->use[i][j] = 1;
+        }
+    }
+    /* the uses to the interface where the order allows it */
+    for (unsigned i = 0; i < w->n; i++)
+        for (unsigned j = 0; j < w->n; j++)
+            if (w->use[i][j] && w->pos[j] < w->pos[i] && chance(g, 40))
+                w->use[i][j] = 2;
+    w->dup[0] = w->dup[1] = -1;
+    if (chance(g, 50)) {
+        w->dup[0] = (int)below(g, w->n);
+        w->dup[1] = (int)((w->dup[0] + 1 + below(g, w->n - 1)) % w->n);
+    }
+    w->hid = chance(g, 50) ? (int)below(g, w->n) : -1;
+    w->lib = chance(g, 50);
+    w->named = w->lib && chance(g, 50);
+    /* the run, in the order */
+    for (unsigned o = 0; o < w->n; o++) {
+        unsigned i = w->order[o];
+        for (unsigned j = 0; j < w->n; j++)
+            if (w->writer[j] == (int)i)
+                w->y[j] = (w->y[j] + w->set[j]) % 1000;
+        int64_t v = w->k[i];
+        for (unsigned t = 0; t < w->nt[i]; t++) {
+            unsigned j = w->tu[i][t];
+            v += w->tk[i][t] == 0   ? w->c[j]
+                 : w->tk[i][t] == 1 ? w->x[j]
+                 : w->tk[i][t] == 2 ? w->x[j] * 2 + w->c[j]
+                                    : w->y[j];
+        }
+        w->x[i] = v % 1000;
+    }
+}
+
+static void web_uses(text *o, const struct web *w, unsigned i, uint8_t part)
+{
+    bool any = false;
+    for (unsigned j = 0; j < w->n; j++)
+        if (w->use[i][j] == part) {
+            putf(o, "%sW%c", any ? ", " : "uses ", 'a' + j);
+            any = true;
+        }
+    if (any)
+        put(o, ";\n");
+}
+
+/* unit Wi */
+static void web_unit(const struct web *w, unsigned i, text *o)
+{
+    char u = (char)('a' + i);
+    putf(o, "unit W%c;\n\ninterface\n", u);
+    web_uses(o, w, i, 2);
+    putf(o, "var\n  uc%c: Int64 := %d;\n  ux%c: Int64;\n  uy%c: Int64 := %d;\n",
+         u, (int)w->c[i], u, u, (int)w->y0[i]);
+    if (w->dup[0] == (int)i || w->dup[1] == (int)i) {
+        putf(o, "  udup: Int64 := %d;\n", 10 + (int)i);
+        /* it hides the other's, if it uses that unit: on purpose */
+        int other = w->dup[w->dup[0] == (int)i];
+        if (w->use[i][other])
+            putf(o, "pragma hides(W%c.udup);\n", 'a' + other);
+    }
+    putf(o, "function UGet%c(): Int64;\nprocedure USet%c(n: Int64);\n", u, u);
+    put(o, "\nimplementation\n");
+    web_uses(o, w, i, 1);
+    /* putf holds 128 bytes: a piece at a time */
+    putf(o, "\nfunction UGet%c(): Int64;\nbegin\n", u);
+    putf(o, "  return ux%c * 2 + uc%c;\nend UGet%c;\n", u, u, u);
+    putf(o, "\nprocedure USet%c(n: Int64);\nbegin\n", u);
+    putf(o, "  uy%c := (uy%c + n) mod 1000;\nend USet%c;\n\nbegin\n", u, u, u);
+    for (unsigned j = 0; j < w->n; j++)
+        if (w->writer[j] == (int)i)
+            putf(o, "  W%c.USet%c(%d);\n", 'a' + j, 'a' + j, (int)w->set[j]);
+    putf(o, "  ux%c := (%d", u, (int)w->k[i]);
+    static const char *const what[] = {"uc", "ux", "UGet", "uy"};
+    for (unsigned t = 0; t < w->nt[i]; t++) {
+        unsigned j = w->tu[i][t];
+        put(o, " + ");
+        if (w->tq[i][t])
+            putf(o, "W%c.", 'a' + j);
+        putf(o, "%s%c%s", what[w->tk[i][t]], 'a' + j,
+             w->tk[i][t] == 2 ? "()" : "");
+    }
+    putf(o, ") mod 1000;\nend W%c.\n", u);
+}
+
+/* the program's part: its uses after Lib */
+static void web_program_uses(text *o, const struct web *w)
+{
+    for (unsigned i = 0; i < w->n; i++)
+        putf(o, ", W%c", 'a' + i);
+    if (w->lib)
+        put(o, ", Coll, Lb");
+}
+
+/* the program's declarations: a uc hidden on purpose */
+static void web_program_decls(text *o, const struct web *w)
+{
+    if (w->hid >= 0)
+        putf(o, "\nvar\n  uc%c: Int64 := %d;\npragma hides(W%c.uc%c);\n",
+             'a' + w->hid, 2000 + w->hid, 'a' + w->hid, 'a' + w->hid);
+}
+
+/* the first statement of the program: every value, and the line it
+   prints */
+static void web_program_print(text *o, struct web *w)
+{
+    text *out = &w->out;
+    put(o, "  writeln(");
+    bool first = true;
+#define WEB_ITEM(...)                                                          \
+    do {                                                                       \
+        if (!first) {                                                          \
+            put(o, ", \" \", ");                                               \
+            put(out, " ");                                                     \
+        }                                                                      \
+        first = false;                                                         \
+        putf(o, __VA_ARGS__);                                                  \
+    } while (0)
+    for (unsigned i = 0; i < w->n; i++) {
+        char u = (char)('a' + i);
+        /* direct or qualified, as the values fall */
+        bool q = (w->c[i] + i) & 1;
+        char qu[4] = "", nq[4] = "";
+        snprintf(q ? qu : nq, 4, "W%c.", u);
+        WEB_ITEM("%sux%c", qu, u);
+        putf(out, "%d", (int)w->x[i]);
+        WEB_ITEM("%sUGet%c()", nq, u);
+        putf(out, "%d", (int)(w->x[i] * 2 + w->c[i]));
+        WEB_ITEM("%suy%c", qu, u);
+        putf(out, "%d", (int)w->y[i]);
+        WEB_ITEM("W%c.uc%c", u, u);
+        putf(out, "%d", (int)w->c[i]);
+        /* written alone: the program's own if it hides it */
+        WEB_ITEM("uc%c", u);
+        putf(out, "%d", w->hid == (int)i ? 2000 + (int)i : (int)w->c[i]);
+    }
+    for (unsigned k = 0; k < 2; k++)
+        if (w->dup[k] >= 0) {
+            WEB_ITEM("W%c.udup", 'a' + w->dup[k]);
+            putf(out, "%d", 10 + w->dup[k]);
+        }
+    if (w->lib) {
+        WEB_ITEM("%s", w->c[0] & 2 ? "cv" : "Coll.cv");
+        put(out, "100");
+        WEB_ITEM("Lb.LGet()");
+        put(out, "320");
+        if (w->named) {
+            WEB_ITEM("Lb");
+            put(out, "42");
+            WEB_ITEM("Coll.Lb");
+            put(out, "42");
+        }
+    }
+#undef WEB_ITEM
+    put(o, ");\n");
+    put(out, "\n");
+}
+
+/* the files of the web: name, text, in the library */
+static unsigned web_files(const struct web *w, limba_lxgen_file *f)
+{
+    unsigned n = 0;
+    for (unsigned i = 0; i < w->n; i++, n++) {
+        text t = {NULL, 0, 0, 1, 1, 0};
+        web_unit(w, i, &t);
+        LIMBA_GROW(t.b, t.n, t.cap);
+        t.b[t.n] = 0;
+        f[n].text = t.b;
+        snprintf(f[n].name, sizeof(f[n].name), "w%c", 'a' + i);
+        f[n].library = false;
+    }
+    if (!w->lib)
+        return n;
+    static const struct {
+        const char *name, *text;
+        bool library;
+    } lib[] = {
+        {"coll",
+         "unit Coll;\n\ninterface\nvar\n  cv: Int64 := 100;\n%s\n"
+         "implementation\nend Coll.\n",
+         false},
+        {"coll",
+         "unit Coll;\n\ninterface\nvar\n  cv: Int64 := 300;\n\n"
+         "implementation\nend Coll.\n",
+         true},
+        {"lb",
+         "unit Lb;\n\ninterface\nfunction LGet(): Int64;\n\nimplementation\n"
+         "uses Coll, Lbase;\n\nfunction LGet(): Int64;\nbegin\n  return "
+         "Coll.cv + Lbase.bk;\nend LGet;\nend Lb.\n",
+         true},
+        {"lbase",
+         "unit Lbase;\n\ninterface\nconst\n  bk = 20;\n\nimplementation\n"
+         "end Lbase.\n",
+         true},
+    };
+    for (unsigned k = 0; k < 4; k++, n++) {
+        char buf[512];
+        snprintf(buf, sizeof(buf), lib[k].text,
+                 w->named ? "  Lb: Int64 := 42;\n" : "");
+        f[n].text = limba_xmalloc(strlen(buf) + 1);
+        memcpy(f[n].text, buf, strlen(buf) + 1);
+        snprintf(f[n].name, sizeof(f[n].name), "%s", lib[k].name);
+        f[n].library = lib[k].library;
+    }
+    return n;
+}
+
 static void program(G *g, text *o, uint32_t nglob)
 {
-    put(o, g->units ? "program Random;\nuses Lib;\n" : "program Random;\n");
+    g->lib_named = false;
+    put(o, g->units ? "program Random;\nuses Lib" : "program Random;\n");
+    if (g->units) {
+        if (g->web)
+            web_program_uses(o, g->web);
+        put(o, ";\n");
+    }
     if (g->ngc) {
         put(o, "\nconst\n");
         for (uint32_t k = 0; k < g->ngc; k++) {
@@ -4325,10 +4626,14 @@ static void program(G *g, text *o, uint32_t nglob)
             put(o, ";\n");
         }
     }
+    if (g->web)
+        web_program_decls(o, g->web);
     for (uint32_t r = 0; r < g->nr; r++)
         if (!g->moved || !g->moved[r])
             routine_text(g, o, r, false);
     put(o, "\nbegin\n");
+    if (g->web)
+        web_program_print(o, g->web);
     pblock(g, o, g->main_blk, g->main_n, 1);
     put(o, "end Random.\n");
     LIMBA_GROW(o->b, o->n, o->cap);
@@ -6242,10 +6547,16 @@ static bool attempt(uint64_t seed, limba_lxgen *p, bool units)
 
     text src = {NULL, 0, 0, 1, 1, 0};
     text unit = {NULL, 0, 0, 1, 1, UNIT_LINES};
+    struct web web;
     if (units) {
         g.units = true;
         g.moved = limba_xcalloc(g.nr ? g.nr : 1, 1);
         unit_text(&g, &unit);
+        /* drawn after the program, which stays the one of one file */
+        if (chance(&g, 75)) {
+            web_make(&g, &web);
+            g.web = &web;
+        }
     }
     program(&g, &src, nglob);
 
@@ -6275,6 +6586,8 @@ static bool attempt(uint64_t seed, limba_lxgen *p, bool units)
     x.out.line = x.out.col = 1;
     if (units)
         put(&x.out, "lib\n"); /* the initialisation of Lib, first */
+    if (g.web)
+        putn(&x.out, web.out.b, web.out.n); /* the program's first line */
     for (uint32_t v = 0; v < nglob; v++)
         if (!is_array(&g, g.v[v].t) && !is_record(&g, g.v[v].t))
             x.cell[x.ref[v]] = g.e[g.st[v].e].lit;
@@ -6322,12 +6635,25 @@ static bool attempt(uint64_t seed, limba_lxgen *p, bool units)
         else
             snprintf(p->end, sizeof(p->end), "ok");
         if (units) {
-            p->unit = unit.b;
+            p->file[0].text = unit.b;
             unit.b = NULL;
+            snprintf(p->file[0].name, sizeof(p->file[0].name), "lib");
+            p->nfile = 1;
+            if (g.web)
+                p->nfile += web_files(&web, p->file + 1);
+            /* the note on Coll comes as the units are read, the warning
+               on a Lib never named after the analysis */
+            snprintf(p->notes, sizeof(p->notes), "%s%s",
+                     g.web && web.lib ? "L0080" : "",
+                     g.lib_named        ? ""
+                     : g.web && web.lib ? " L0077"
+                                        : "L0077");
         }
     }
     free(src.b);
     free(unit.b);
+    if (g.web)
+        free(web.out.b);
     free(g.moved);
     free(in.b);
     free(x.out.b);
@@ -6363,7 +6689,8 @@ bool limba_lxgen_make_units(uint64_t seed, limba_lxgen *p)
 void limba_lxgen_free(limba_lxgen *p)
 {
     free(p->src);
-    free(p->unit);
+    for (unsigned k = 0; k < p->nfile; k++)
+        free(p->file[k].text);
     free(p->out);
     free(p->in);
     for (int k = 0; k < p->argc; k++)

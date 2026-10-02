@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- The random programs in more files now often come with a web of units
+  around them: two to four units of the program whose initialisations
+  read and write each other's variables (the order is the compiler's to
+  compute), cycles through implementations, a name two units give,
+  `pragma hides` in the program and in units, and a small library whose
+  unit `Coll` has the name of one of the program, with a name exported
+  equal to a unit used. The program prints every value first; the
+  warnings and notes are compared with those expected. `lx_gen -d`
+  writes the units of the program in `prog/` and those of the library in
+  `std/`. Found that way: a declaration of an interface hid a name of a
+  unit used only by the implementation without the warning, and a
+  `pragma hides` stating it was taken for one that hides nothing.
+
 - `limba` frees the list of its `-I` directories and checks that it
   could have it: under asan the command no longer ends with a leak at
   every compilation of a `.luxia`. `test_luxia` now runs the command of

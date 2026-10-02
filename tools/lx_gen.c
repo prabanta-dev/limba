@@ -65,12 +65,16 @@ static int write_dir(const char *dir, const limba_lxgen *p)
     }
     for (int k = 0; k < p->argc; k++)
         at += sprintf(at, "%s\n", p->argv[k]);
-    bool ok =
-        write_file(prog, "prog.luxia", p->src, strlen(p->src)) &&
-        (!p->unit || write_file(prog, "lib.luxia", p->unit, strlen(p->unit))) &&
-        write_file(dir, "expected", exp, p->outlen + (size_t)n) &&
-        write_file(dir, "input", p->in ? p->in : "", p->inlen) &&
-        write_file(dir, "args", args, alen);
+    bool ok = write_file(prog, "prog.luxia", p->src, strlen(p->src));
+    for (unsigned k = 0; ok && k < p->nfile; k++) {
+        char name[32];
+        snprintf(name, sizeof(name), "%s.luxia", p->file[k].name);
+        ok = write_file(p->file[k].library ? std : prog, name, p->file[k].text,
+                        strlen(p->file[k].text));
+    }
+    ok = ok && write_file(dir, "expected", exp, p->outlen + (size_t)n) &&
+         write_file(dir, "input", p->in ? p->in : "", p->inlen) &&
+         write_file(dir, "args", args, alen);
     free(exp);
     free(args);
     return ok ? 0 : 1;

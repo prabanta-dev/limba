@@ -19,6 +19,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* a unit of a program in more files: the name of its file without
+   .luxia, its text, in the space of the library or of the program */
+typedef struct {
+    char name[16];
+    char *text;
+    bool library;
+} limba_lxgen_file;
+
+#define LIMBA_LXGEN_FILES 9
+
 typedef struct {
     char *src; /* the program, NUL-terminated */
     char *out; /* what it prints, NUL-terminated */
@@ -29,16 +39,21 @@ typedef struct {
     size_t inlen;
     int argc; /* its command line, for arg */
     char **argv;
-    /* the unit Lib the program uses (lib.luxia), NULL for none; a place
-       in it is "lib.luxia:LINE:COLUMN" in end */
-    char *unit;
+    /* the units the program uses: first Lib (lib.luxia; a place in it is
+       "lib.luxia:LINE:COLUMN" in end), then sometimes a web of units of
+       the program and of the library (§ 11) */
+    limba_lxgen_file file[LIMBA_LXGEN_FILES];
+    unsigned nfile;
+    /* the codes of the warnings and notes expected, separated by spaces */
+    char notes[32];
 } limba_lxgen;
 
 /* the program of a seed; false if no attempt ran within the limits */
 bool limba_lxgen_make(uint64_t seed, limba_lxgen *p);
-/* the same program in two files (§ 11): the routines that name nothing
+/* the same program in more files (§ 11): the routines that name nothing
    of the program go into the unit Lib, named directly or as Lib.Name,
-   and Lib's initialisation prints "lib" first */
+   and Lib's initialisation prints "lib" first; often a web of units
+   too, whose values the program prints first */
 bool limba_lxgen_make_units(uint64_t seed, limba_lxgen *p);
 void limba_lxgen_free(limba_lxgen *p);
 
