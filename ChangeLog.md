@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `limba` frees the list of its `-I` directories and checks that it
+  could have it: under asan the command no longer ends with a leak at
+  every compilation of a `.luxia`. `test_luxia` now runs the command of
+  the same build too, on the units in files with `-I` and `--stdlib`,
+  and runs the `.lir` it writes.
+
 - In the IR the file of the program is its name alone, as its units
   are: the same `.lir` from any directory, and a run-time error says
   `t.luxia:4:4` whatever path was given to `limba` (diagnostics keep the

@@ -19,10 +19,15 @@
 #include "luxia/sema.h"
 
 #include <dirent.h>
+#include <errno.h>
+#include <spawn.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 typedef struct {
     const char *src;
@@ -2314,6 +2319,79 @@ static void case_diag(void *ctx, const limba_luxia_diag *d)
                              d->code, d->file ? d->file : "", d->line, d->col);
 }
 
+extern char **environ;
+
+/* the command limba of the same build (limba-asan beside test_luxia-asan)
+   on the units in files, with -I both ways and --stdlib: it ends with 0,
+   a leak included under asan, and its .lir prints what is expected */
+static int test_limba_command(void)
+{
+    char self[4096];
+    ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    if (n <= 0) {
+        fprintf(stderr, "test_luxia: limba command: no /proc/self/exe\n");
+        return 1;
+    }
+    self[n] = 0;
+    char *slash = strrchr(self, '/');
+    const char *suffix = strstr(slash ? slash : self, "test_luxia");
+    suffix = suffix ? suffix + strlen("test_luxia") : "";
+    char limba[4200], out[4200];
+    snprintf(limba, sizeof(limba), "%.*s/limba%s",
+             slash ? (int)(slash - self) : 1, slash ? self : ".", suffix);
+    const char *home = getenv("HOME");
+    snprintf(out, sizeof(out), "%s/tmp", home ? home : ".");
+    mkdir(out, 0777);
+    snprintf(out, sizeof(out), "%s/tmp/limba", home ? home : ".");
+    mkdir(out, 0777);
+    snprintf(out, sizeof(out), "%s/tmp/limba/test_luxia-%ld.lir",
+             home ? home : ".", (long)getpid());
+    char *args[] = {limba,
+                    "-I",
+                    "tests/luxia",
+                    "-Itests/luxia/benchmarks",
+                    "--stdlib=tests/luxia/units/std",
+                    "tests/luxia/units/orbits.luxia",
+                    "-o",
+                    out,
+                    NULL};
+    pid_t pid;
+    int status = -1;
+    if (posix_spawn(&pid, limba, NULL, NULL, args, environ) != 0 ||
+        waitpid(pid, &status, 0) != pid) {
+        fprintf(stderr, "test_luxia: limba command: %s does not run\n", limba);
+        return 1;
+    }
+    int failures = 0;
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        fprintf(stderr, "test_luxia: limba command: %s ended with %d\n", limba,
+                WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+        failures++;
+    }
+    size_t llen, elen, olen = 0;
+    char *lir = slurp(out, &llen);
+    char *exp = slurp("tests/luxia/units/expected/orbits.out", &elen);
+    limba_diag d = {{0}, 0};
+    limba_module *m = lir ? limba_read((const uint8_t *)lir, llen, &d) : NULL;
+    char end[256] = "errors";
+    char *got =
+        m ? run_module(m, NULL, 0, 0, NULL, end, sizeof(end), &olen) : NULL;
+    if (!failures && (!exp || strcmp(end, "ok") || olen != elen ||
+                      (olen && memcmp(got, exp, olen)))) {
+        fprintf(stderr,
+                "test_luxia: limba command: %s ended %s, printed %zu bytes "
+                "(%zu expected)\n",
+                out, end, olen, exp ? elen : 0);
+        failures++;
+    }
+    free(got);
+    free(exp);
+    free(lir);
+    limba_module_free(m);
+    unlink(out);
+    return failures;
+}
+
 /* what the module of a program with units holds: only what is reached
    (no routine of C that no call reaches, § 8.5), names after the unit;
    a unit compiled alone gives nothing */
@@ -2395,7 +2473,8 @@ static int test_unit_files(void)
 
 static int test_units(void)
 {
-    int failures = test_unit_module() + test_unit_files();
+    int failures =
+        test_unit_module() + test_unit_files() + test_limba_command();
     for (size_t i = 0; i < COUNT(unit_cases); i++) {
         const unit_case *c = &unit_cases[i];
         char out_end[2][256] = {"errors", "errors"};

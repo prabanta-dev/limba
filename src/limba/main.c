@@ -99,7 +99,8 @@ static char *slurp(const char *path, size_t *len)
     return buf;
 }
 
-int main(int argc, char **argv)
+/* the command, with room for the directories of -I */
+static int run(int argc, char **argv, const char **dirs)
 {
 #ifdef __GLIBC__
     /* a compiler lives briefly and grows: the heap grows by 64 MiB at a
@@ -111,8 +112,6 @@ int main(int argc, char **argv)
 #endif
     const char *in = NULL, *outpath = NULL, *emit = NULL, *suppress = NULL;
     const char *target = NULL, *restrict_ = NULL, *stdlib = NULL;
-    /* the directories of -I, ended by NULL */
-    const char **dirs = calloc((size_t)argc + 1, sizeof(*dirs));
     int ndirs = 0;
     bool check = false;
     int level = 0;
@@ -245,5 +244,18 @@ int main(int argc, char **argv)
         free(derived);
     }
     limba_module_free(m);
+    return status;
+}
+
+int main(int argc, char **argv)
+{
+    /* the directories of -I, ended by NULL */
+    const char **dirs = calloc((size_t)argc + 1, sizeof(*dirs));
+    if (!dirs) {
+        fprintf(stderr, "limba: out of memory\n");
+        return 1;
+    }
+    int status = run(argc, argv, dirs);
+    free(dirs);
     return status;
 }
