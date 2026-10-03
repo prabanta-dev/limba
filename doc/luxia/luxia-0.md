@@ -51,8 +51,8 @@ The source is UTF-8. A UTF-8 byte order mark at the start of the file is
 skipped; bytes that are not valid UTF-8 are an error. Outside comments,
 character literals and string literals, only ASCII is allowed.
 
-The braces `{ }` and the symbols `@ # $ ! ? % | ~ \` are not allowed
-anywhere outside comments and literals.
+The symbols `@ # $ ! ? % | ~ \` are not allowed anywhere outside
+comments and literals. The braces `{ }` delimit aggregates (§ 6.8).
 
 ### 2.2 Identifiers
 
@@ -272,6 +272,8 @@ array[Colour] of T
   `array[Int64] of T`) is a compile-time error: no such array fits in
   memory; with computed bounds, such a length is "out of memory"
   (§ 10.1).
+- A whole array value is written with an **aggregate** (§ 6.8):
+  `{1, 2, 3}`, `{Red: 1, Green: 2, Blue: 3}`, `{1: 10, else 0}`.
 
 #### 3.7.1 Open arrays
 
@@ -314,6 +316,8 @@ type Vector = array[Int32 range <>] of Float64;
   whole (`a := b`): the program works on its elements.
 - An open-array parameter can be passed on to another open-array
   parameter, with the same bounds.
+- An aggregate passed to an open-array parameter has the bounds given
+  in § 6.8.
 
 ### 3.8 Strings as open arrays
 
@@ -333,7 +337,9 @@ record x, y, z: Float64; end
 
 The layout of a record (the order and the place of its fields) belongs
 to the implementation; with `pragma convention(c, R)` it is that of C
-(§ 3.13).
+(§ 3.13). A whole record value is written with an aggregate that names
+every field, in the order of the declaration: `{x: 1.0; y: 2.0; z:
+0.0}` (§ 6.8).
 
 ### 3.10 Pointers
 
@@ -402,6 +408,9 @@ This follows Ada's treatment of uninitialised objects in its strict form
   component) is not checked in Luxia 0: it keeps the invalid value.
 - A scalar variable needs none of this: reading it before assigning it is
   a compile-time error (definite assignment, § 5.5).
+- An aggregate gives every component a value (§ 6.8): its scalar
+  components are valid values of their subtypes, while a record or
+  array component copied whole carries the invalid values it has.
 
 ### 3.12 Integers of any size
 
@@ -548,7 +557,23 @@ without a type:
 const
   N = 1000;                        // a constant without a type
   Pi: Float64 = 3.141592653589793;
+  Origin: Vector = {x: 0.0; y: 0.0; z: 0.0};
 ```
+
+A constant of a record or array type is a **typed constant**, as in
+Delphi: it is declared with its type and an aggregate (§ 6.8) whose
+components are all known at compile time.
+
+- A typed constant of a record or array type is **not a constant
+  expression**: it is not a bound of an array, a label of `case`, an
+  argument of a pragma, nor a component of another typed constant
+  (`{Origin, Origin}` is an error: the aggregate is written out again,
+  or the value is declared with `var`). It is read as a variable that
+  cannot be assigned, nor passed as `var` or `out`.
+- A typed constant declared in a routine is one for the whole program,
+  as in Delphi; it has its value before any code runs.
+- A typed constant of a scalar type is a value, usable in constant
+  expressions, as any constant.
 
 ## 5. Declarations and scope
 
@@ -587,6 +612,8 @@ several names, the initialiser applies to each.
 
 A variable declared with an initialiser and no type takes the type of
 the initialiser. The type is still static; only its writing is saved.
+An aggregate has no type of its own to give (§ 6.8): `var v := {1, 2}`
+is a compile-time error.
 
 ### 5.4 Visibility
 
@@ -769,6 +796,89 @@ the second operand when the first one decides.
 In the assignment `a[i] := e`, the **target is evaluated first** (with the
 index check), then the value, then the range check of the target.
 
+The components of an aggregate are evaluated from left to right as
+written, `else` last (§ 6.8).
+
+### 6.8 Aggregates
+
+```pascal
+const
+  Origin: Vector = {x: 0.0; y: 0.0; z: 0.0};
+  Months: array[Int32 range 1..3] of String = {"Jan", "Feb", "Mar"};
+var
+  grey: array[Colour] of UInt8 := {Red: 128, Green: 128, Blue: 128};
+  row: array[Int32 range 1..4] of Float64 := {1: 1.0, else 0.0};
+begin
+  v := {x: v.y; y: v.x; z: 0.0};       // swaps x and y
+  Draw({x: 0.0; y: 0.0; z: 1.0});
+```
+
+An **aggregate** writes a whole record or array value between braces.
+
+- **The type comes from the context**, as in Ada: the declared type of a
+  constant or variable, the target of an assignment, a parameter without
+  a mode (`var` and `out` want a variable), the result of a function
+  (`return`), a component of an enclosing aggregate. An aggregate
+  anywhere else has no type: a compile-time error. There is no
+  conversion of an aggregate (`Vector({...})`): every context where it
+  is allowed already gives the type.
+- **A record aggregate names every field, in the order of the
+  declaration**, separated by `;`: `{x: 1.0; y: 2.0; z: 0.0}`. There is
+  no positional form for records: reordering the fields of a record
+  would silently change it.
+- **An array aggregate is positional** (`{1, 2, 3}`) **or by index**
+  (`{Red: 1, Green: 2, Blue: 3}`, also with ranges: `{1..3: 0.0, 4:
+  1.0}`), separated by `,`; the two forms do not mix. The indices and
+  the bounds of the ranges are **constant expressions**; the values may
+  be computed. `else` followed by a value, last, gives that value to
+  the indices not named, also after the positional form (`{1, 2, else
+  0}`), as `else` does in `case` (§ 7.3); an `else` that covers no index
+  is an error. `{}` is an array with no elements.
+- A positional element, an index and a bound are `Simple` expressions
+  (§ 12), with the grammar of the labels of `case`: a comparison, a
+  membership test (`in`) or an expression with `and`, `or` or `xor` as
+  an element is written in parentheses (`{(a < b), true}`); `not a` is
+  a `Simple` and needs none (`{not a, b}`).
+- **Complete**: every field, every index exactly once. A field missing,
+  repeated or not in the record, an index missing (without `else`),
+  repeated or outside the index type are compile-time errors. The
+  positional form for an array with fixed bounds has exactly `length`
+  elements (at most, with `else`).
+- Every component is checked as in an assignment (§ 7.1): the same
+  type, within the range of its subtype; a constant component out of
+  range is a compile-time error, a computed one a range error at run
+  time.
+- **An aggregate is a value**: it is computed whole, then assigned.
+  `v := {x: v.y; y: v.x; z: 0.0}` swaps `x` and `y`, and `a := {a[2],
+  a[1]}` swaps the two elements, whatever the components read or the
+  routines they call do.
+- **Order**: the components are evaluated from left to right as
+  written, `else` last (once); the first that stops the program does
+  (§ 6.7). In an assignment the target is evaluated first, then the
+  aggregate, then the value is copied.
+- **Computed bounds** (`var a: array[Int32 range 1..n] of Int32 := {1, 2,
+  else 0}`): the positional form without `else` has `length(a)`
+  elements, and with `else` at most that many; otherwise it is a range
+  error at run time. The form by index without `else` names exactly the
+  indices from `low(a)` to `high(a)` (range error otherwise); with
+  `else`, an index named outside the bounds is an index error.
+- **An open-array parameter** (`array[I range <>] of T`, § 3.7.1)
+  receives an aggregate with these bounds:
+  - by index, the lowest and the highest index named, without gaps;
+  - positional, `n` elements from `s`, where `s` is 0 if 0 belongs to
+    `I` (the common integers, as Delphi's open arrays), `low(I)`
+    otherwise (an enumeration, `Char`, `Boolean`, a subtype without 0).
+    `Sum({1, 2, 3})` passes an array from 0 to 2. If the last index
+    would pass `high(I)` it is a compile-time error;
+  - `{}`: no elements from `s`, that is `s..pred(s)`, or `succ(s)..s`
+    where `pred(s)` does not exist; for an `I` of one value it is a
+    compile-time error;
+  - `else` is an error in both forms: there are no bounds to fill.
+- `p^ := {...}` assigns a record or an array with fixed bounds; for a
+  pointer to an open array it is an error, as every whole assignment of
+  `p^` (§ 3.10).
+- Records and arrays are still not compared as a whole (§ 6.2).
+
 ## 7. Statements
 
 Every structured statement closes with `end` (as in Modula-2): there is
@@ -795,7 +905,8 @@ P(a, b);                          // call: always with parentheses, even empty
 ### 7.1 Assignment
 
 `designator := expression;`. The value must have the type of the target
-(§ 6.2) and lie in its range.
+(§ 6.2) and lie in its range. An aggregate is computed whole before the
+target receives it (§ 6.8).
 
 ### 7.2 `if`
 
@@ -883,7 +994,7 @@ end;
 
 | Mode | Written | Meaning |
 |---|---|---|
-| in | no keyword | constant inside the routine; passed by copy or by reference at the compiler's choice, as in Ada |
+| in | no keyword | constant inside the routine; passed by copy or by reference at the compiler's choice, as in Ada; the argument may be an aggregate (§ 6.8) |
 | in out | `var` | read and written, by reference |
 | out | `out` | must be assigned before the routine returns |
 
@@ -1616,8 +1727,10 @@ end.
     through all units, **can read or write a variable that the
     initialisation of `V` writes**;
   - a variable whose initial value is a constant of a scalar type or a
-    `String`, and that the initialisation of its unit does not write,
-    has its value before any code runs and orders nothing;
+    `String`, or an aggregate whose components are all such constants
+    (nested aggregates included), and that the initialisation of its
+    unit does not write, wholly or in part, has its value before any
+    code runs and orders nothing; so has a typed constant (§ 4.3);
   - among units left free by these rules, the order of the `uses`,
     depth first, as written (interface, then implementation);
   - if the constraints form a circle, it is a compile-time error that
@@ -1709,7 +1822,9 @@ Simple     = [ "+" | "-" ] Term { ( "+" | "-" | "&" ) Term } .
 Term       = Factor { ( "*" | "/" | "div" | "mod" | "rem" | "shl" | "shr" ) Factor } .
 Factor     = Primary [ "**" Primary ] | "not" Primary | "abs" Primary .
 Primary    = integer | real | char | string | "true" | "false" | "nil"
-           | Designator | "(" Expr ")" | "new" "(" Type ")" .
+           | Designator | "(" Expr ")" | "new" "(" Type ")" | Aggregate .
+Aggregate  = "{" [ Component { ( "," | ";" ) Component } ] "}" .
+Component  = "else" Expr | Simple [ [ ".." Simple ] ":" Expr ] .
 Designator = ident { "." ident | "[" Expr "]" | "^" | "(" [ Arg { "," Arg } ] ")" } .
 Arg        = Expr [ ":" Expr [ ":" Expr ] ] .
 ```
@@ -1733,6 +1848,11 @@ unit from a record (§ 11.3). In the interface of a unit a routine is a
 `Heading`: its body, if it is not external, follows in the
 implementation as a `Routine`.
 
+An `Aggregate` is a record or an array as the type of its context says
+(§ 6.8); the semantic analysis checks the separators (`;` between the
+fields of a record, `,` between the elements of an array) and that the
+indices are constant.
+
 A branch of `case` begins with `when`, and a conditional `exit` or
 `continue` is written `exit when c`; since every statement ends with `;`,
 the two uses of `when` do not conflict.
@@ -1745,8 +1865,8 @@ and tools can anticipate them.
 - Exceptions and handlers (`raise`, `try ... except`), grouping the
   run-time checks as Ada's `Constraint_Error` does.
 - Named association of arguments (`F(x => 1)`), optional.
-- Aggregates for records and arrays; the braces `{ }` are kept free for
-  them and for sets.
+- Comparison of whole records and arrays with `=` and `<>`.
+- Sets; the brackets of Pascal (`[a, b]`) remain free for them.
 - Assignment of whole open arrays, with a length check.
 - Iteration over the Unicode characters of a string.
 - Redefinition of the names of the predefined library.

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The specification describes aggregates (§ 6.8): a whole record
+  (`{x: 1.0; y: 2.0}`, every field named, in order) or array (`{1, 2,
+  3}`, `{Red: 1, Green: 2, Blue: 3}`, `{1: 10, else 0}`) written between
+  braces, with its type from the context, complete, computed whole
+  before it is assigned; typed constants of records and arrays, as in
+  Delphi; open-array parameters, computed bounds and the variables
+  ready at once of units follow (§ 2.1, 3.7, 3.9, 3.11, 4.3, 5.3, 6.7,
+  7.1, 8.1, 11.5, 12, appendix A).
+
 - The random programs in more files now often come with a web of units
   around them: two to four units of the program whose initialisations
   read and write each other's variables (the order is the compiler's to
