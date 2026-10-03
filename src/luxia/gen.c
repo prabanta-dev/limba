@@ -246,7 +246,12 @@ enum {
     E_ARGC,   /* argcount() */
     E_ARG,    /* arg(a) */
     E_HIDX,   /* element a of the array made by new variable var points to */
-    E_HLEN    /* low (op 0), high (1) or length (2) of var^, made by new */
+    E_HLEN,   /* low (op 0), high (1) or length (2) of var^, made by new */
+    E_AGG     /* an aggregate of record or array type t (§ 6.8): the values
+                 args, in the order written; by index (op 1) the index
+                 literals in list a and the high ends in list b (0 for one
+                 index); c the value of else, 0 for none; computed into the
+                 hidden variable var */
 };
 
 /* a call of a function whose result is a record or an array has in var
@@ -687,6 +692,13 @@ static bool is_array(const G *g, uint32_t t)
     return g->ty[t].k == K_ARRAY || g->ty[t].k == K_OPEN || g->ty[t].k == K_DYN;
 }
 
+/* an array type of the program, with variables: not one made for an
+   aggregate given to an open parameter (ehi 1, § 6.8) */
+static bool program_array(const G *g, uint32_t t)
+{
+    return g->ty[t].k == K_ARRAY && !g->ty[t].ehi;
+}
+
 /* the base type of the index of an array type */
 static unsigned index_base(const G *g, uint32_t at)
 {
@@ -1022,6 +1034,8 @@ static uint32_t element(G *g, uint32_t v, int d)
 
 static uint32_t typed_arg(G *g, uint32_t pt, bool write);
 static uint32_t ncells(const G *g, uint32_t t);
+static uint32_t agg_literal(G *g, uint32_t t, int d);
+static uint32_t agg_self(G *g, uint32_t t, int d, uint32_t self);
 static uint32_t field_ref(G *g, uint32_t v, uint32_t f);
 static uint32_t field_type(const G *g, uint32_t rt, uint32_t f);
 static int pick_typed(G *g, uint32_t t, bool write);
@@ -1033,8 +1047,11 @@ static uint32_t call_expr(G *g, uint32_t fn, int d)
     for (uint32_t k = 0; k < np; k++) {
         uint32_t pt = g->v[g->r[fn].par[k]].t;
         if (g->ty[pt].k == K_OPEN) {
-            /* the array its type came from is a global: always there */
-            a[k] = var_ref(g, (uint32_t)pick_argument(g, pt, false));
+            /* the array its type came from is a global: always there; or
+               an aggregate, read only */
+            a[k] = g->v[g->r[fn].par[k]].kind == V_IN && d > 0 && chance(g, 40)
+                       ? agg_literal(g, pt, 1)
+                       : var_ref(g, (uint32_t)pick_argument(g, pt, false));
         } else if (is_record(g, pt) || is_ptr(g, pt)) {
             /* a global of every such type exists; a record may come from
                a call */
@@ -1042,7 +1059,10 @@ static uint32_t call_expr(G *g, uint32_t fn, int d)
                         ? pick_agg_func(g, pt)
                         : -1;
             a[k] = h >= 0 ? call_expr(g, (uint32_t)h, d - 1)
-                          : typed_arg(g, pt, false);
+                   : is_record(g, pt) && d > 0 && chance(g, 20) &&
+                           g->v[g->r[fn].par[k]].kind == V_IN
+                       ? agg_literal(g, pt, d - 1)
+                       : typed_arg(g, pt, false);
         } else {
             a[k] = value_for(g, pt, d - 1);
         }
@@ -1061,10 +1081,20 @@ static uint32_t call_expr(G *g, uint32_t fn, int d)
 /* d := f(...) for a function whose result is a record or an array of
    the type of variable d, and when show, often all of d printed at once,
    so that a wrong copy shows; into out, the count */
+static uint32_t copy_show(G *g, uint32_t e, uint32_t d, bool show,
+                          uint32_t *out);
+
 static uint32_t copy_call(G *g, uint32_t fn, uint32_t d, bool show,
                           uint32_t *out)
 {
-    uint32_t e = call_expr(g, fn, depth(g));
+    return copy_show(g, call_expr(g, fn, depth(g)), d, show, out);
+}
+
+/* d := e, e a record or an array of the type of d, and when show often
+   all of d printed at once */
+static uint32_t copy_show(G *g, uint32_t e, uint32_t d, bool show,
+                          uint32_t *out)
+{
     uint32_t s = new_s(g, S_COPY);
     g->st[s].var = d;
     g->st[s].e = e;
@@ -1099,8 +1129,142 @@ static uint32_t copy_call(G *g, uint32_t fn, uint32_t d, bool show,
 }
 
 /* a record or an array of type t: a visible variable, or a call */
+static uint32_t nil_of(G *g, uint32_t pt);
+
+/* a component of an aggregate of type t: a narrow one gets a value that
+   fits (a variable of its type, or a literal), so that no range check
+   fails at the component, whose place the run does not know */
+static uint32_t agg_component(G *g, uint32_t t, int d)
+{
+    if (is_ptr(g, t)) {
+        int v = chance(g, 50) ? pick_typed(g, t, false) : -1;
+        return v >= 0 ? var_ref(g, (uint32_t)v) : nil_of(g, t);
+    }
+    if (g->ty[t].k == K_RANGE) {
+        int v = chance(g, 50) ? pick_typed(g, t, false) : -1;
+        if (v >= 0 && is_scalar(g, g->v[v].t))
+            return var_ref(g, (uint32_t)v);
+        return lit(g, t, init_value(g, t));
+    }
+    return value_for(g, t, d);
+}
+
+/* a part of variable self of type t, read in an aggregate given to self
+   (§ 6.8: the aggregate is a value); 0 if none fits */
+static uint32_t self_part(G *g, uint32_t self, uint32_t t)
+{
+    uint32_t st = g->v[self].t, n = 0, chosen = 0;
+    if (is_record(g, st)) {
+        for (uint32_t f = 0; f < g->ty[st].elem; f++)
+            if (field_type(g, st, f) == t && below(g, ++n) == 0)
+                chosen = f;
+        return n ? field_ref(g, self, chosen) : 0;
+    }
+    if (g->ty[st].k != K_ARRAY || g->ty[st].elem != t)
+        return 0;
+    uint32_t len = ncells(g, st);
+    uint32_t ix = lit(g, g->ty[st].index, g->ty[st].lo + below(g, len));
+    uint32_t i = new_e(g, E_INDEX, t);
+    g->e[i].var = self;
+    g->e[i].a = ix;
+    return i;
+}
+
+static uint32_t agg_literal(G *g, uint32_t t, int d)
+{
+    return agg_self(g, t, d, UINT32_MAX);
+}
+
+static uint32_t agg_part_of(G *g, uint32_t t, int d, uint32_t self)
+{
+    uint32_t e =
+        self != UINT32_MAX && chance(g, 40) ? self_part(g, self, t) : 0;
+    return e ? e : agg_component(g, t, d);
+}
+
+/* an aggregate of record or fixed array type t, whose components read
+   self often when it is a variable; for an open-array parameter (open
+   its type), positional, of a type of its own from 0 */
+static uint32_t agg_self(G *g, uint32_t t, int d, uint32_t self)
+{
+    uint32_t vals[16], los[16], his[16], n = 0, other = 0;
+    bool named = false, open = g->ty[t].k == K_OPEN;
+    if (open) {
+        /* n elements from 0: the index of an open parameter is an integer
+           type, which has 0 (§ 6.8) */
+        unsigned ib = g->ty[t].index;
+        uint32_t m = 1 + below(g, 4);
+        uint32_t ix =
+            new_type(g, (xt){K_RANGE, (uint8_t)ib, 0, 0, 0, (v128)m - 1, 0, 0});
+        t = new_type(g, (xt){K_ARRAY, g->ty[t].base, ix, g->ty[t].elem, 0,
+                             (v128)m - 1, 0, 1});
+    }
+    if (is_record(g, t)) {
+        for (uint32_t f = 0; f < g->ty[t].elem && n < 16; f++)
+            vals[n++] = agg_part_of(g, field_type(g, t, f), d - 1, self);
+    } else {
+        uint32_t len = ncells(g, t), et = g->ty[t].elem, it = g->ty[t].index;
+        v128 lo = g->ty[t].lo;
+        /* for an open parameter positional only: no bounds for else */
+        unsigned form = len > 16 || open ? 0 : below(g, 4);
+        if (form == 0 || form == 1) {
+            /* positional, all; or some, then else */
+            uint32_t m = form == 0 || len < 2 ? len : 1 + below(g, len - 1);
+            for (uint32_t k = 0; k < m; k++)
+                vals[n++] = agg_part_of(g, et, d - 1, self);
+            if (m < len)
+                other = agg_part_of(g, et, d - 1, self);
+        } else {
+            /* by index, in any order, some as ranges; the rest by else
+               when form is 3 */
+            uint32_t order[16];
+            for (uint32_t k = 0; k < len; k++)
+                order[k] = k;
+            for (uint32_t k = len; k > 1; k--) {
+                uint32_t j = below(g, k), x = order[k - 1];
+                order[k - 1] = order[j];
+                order[j] = x;
+            }
+            /* runs of consecutive indices, from a random cut */
+            uint8_t taken[16] = {0};
+            uint32_t skip = form == 3 && len > 1 ? 1 + below(g, len - 1) : 0;
+            for (uint32_t k = 0; k < skip; k++)
+                taken[order[k]] = 1;
+            for (uint32_t k = 0; k < len; k++) {
+                uint32_t a = order[k];
+                if (taken[a])
+                    continue;
+                uint32_t b = a;
+                while (chance(g, 40) && b + 1 < len && !taken[b + 1])
+                    b++;
+                for (uint32_t j = a; j <= b; j++)
+                    taken[j] = 1;
+                los[n] = lit(g, it, lo + a);
+                his[n] = b > a ? lit(g, it, lo + b) : 0;
+                vals[n++] = agg_part_of(g, et, d - 1, self);
+            }
+            named = true;
+            if (skip)
+                other = agg_part_of(g, et, d - 1, self);
+        }
+    }
+    uint32_t i = new_e(g, E_AGG, t);
+    g->e[i].args = keep_list(g, vals, n);
+    g->e[i].nargs = n;
+    g->e[i].op = named;
+    if (named) {
+        g->e[i].a = keep_list(g, los, n);
+        g->e[i].b = keep_list(g, his, n);
+    }
+    g->e[i].c = other;
+    g->e[i].var = new_v(g, t, V_LOCAL);
+    return i;
+}
+
 static uint32_t agg_expr(G *g, uint32_t t, int d)
 {
+    if (chance(g, 35))
+        return agg_literal(g, t, d);
     int h = d > 0 && chance(g, 40) ? pick_agg_func(g, t) : -1;
     if (h >= 0)
         return call_expr(g, (uint32_t)h, d - 1);
@@ -1287,7 +1451,10 @@ static uint32_t heap_stmt(G *g, uint32_t *out)
             src = pick_typed(g, g->v[d].t, false); /* another, if any */
         uint32_t s = new_s(g, S_COPY);
         g->st[s].var = (uint32_t)d;
-        g->st[s].e = var_ref(g, (uint32_t)src);
+        /* or a whole value, which may read d itself (§ 6.8) */
+        g->st[s].e = chance(g, 40)
+                         ? agg_self(g, g->v[d].t, depth(g), (uint32_t)d)
+                         : var_ref(g, (uint32_t)src);
         out[0] = s;
         return 1;
     }
@@ -2388,7 +2555,7 @@ static uint32_t declare_agg(G *g)
 {
     uint32_t n = 0, t = 0;
     for (uint32_t u = NTYPES; u < g->nty && !sealed(g); u++)
-        if ((g->ty[u].k == K_RECORD || g->ty[u].k == K_ARRAY) &&
+        if ((g->ty[u].k == K_RECORD || program_array(g, u)) &&
             below(g, ++n) == 0)
             t = u;
     if (!n)
@@ -2884,6 +3051,20 @@ static uint32_t stmt(G *g, uint32_t *out)
         if (d >= 0)
             return copy_call(g, (uint32_t)fn, (uint32_t)d, !pure, out);
     }
+    if (chance(g, 8)) {
+        /* a record or an array given whole, which may read itself
+           (§ 6.8) */
+        uint32_t n = 0, d = 0;
+        for (uint32_t i = 0; i < g->nscope; i++) {
+            uint32_t v = g->scope[i], vt = g->v[v].t;
+            if ((is_record(g, vt) || g->ty[vt].k == K_ARRAY) &&
+                writable(g, v) && below(g, ++n) == 0)
+                d = v;
+        }
+        if (n)
+            return copy_show(g, agg_self(g, g->v[d].t, depth(g), d), d, !pure,
+                             out);
+    }
     if (!pure && chance(g, 1)) {
         /* halt(0), halt(k) for k in 2..255 but 141, or a computed status
            that may be outside */
@@ -3233,10 +3414,15 @@ static uint32_t stmt(G *g, uint32_t *out)
                 uint32_t pt = g->v[p].t;
                 if (g->ty[pt].k == K_OPEN) {
                     int v = pick_argument(g, pt, g->v[p].kind == V_VAR);
-                    if (v < 0)
+                    if (g->v[p].kind == V_IN && chance(g, 40))
+                        a[k] = agg_literal(g, pt, 1);
+                    else if (v < 0)
                         ok = false;
                     else
                         a[k] = var_ref(g, (uint32_t)v);
+                } else if (is_record(g, pt) && g->v[p].kind == V_IN &&
+                           chance(g, 15)) {
+                    a[k] = agg_literal(g, pt, depth(g));
                 } else if (is_record(g, pt) || is_ptr(g, pt)) {
                     a[k] = typed_arg(g, pt, g->v[p].kind == V_VAR);
                     ok = a[k] != 0;
@@ -3395,8 +3581,7 @@ static void routine(G *g)
         /* a record or an array of the program */
         uint32_t n = 0;
         for (uint32_t u = NTYPES; u < g->nty; u++)
-            if ((is_record(g, u) || g->ty[u].k == K_ARRAY) &&
-                below(g, ++n) == 0)
+            if ((is_record(g, u) || program_array(g, u)) && below(g, ++n) == 0)
                 g->r[id].rt = u;
     }
     g->r[id].np = (uint8_t)(seal ? 2 + below(g, 3) : below(g, 4));
@@ -3423,7 +3608,7 @@ static void routine(G *g)
         /* sometimes an open array, made from an array of the program */
         uint32_t n = 0, from = 0;
         for (uint32_t u = NTYPES; u < g->nty; u++)
-            if (g->ty[u].k == K_ARRAY && !is_enum(g, g->ty[u].index) &&
+            if (program_array(g, u) && !is_enum(g, g->ty[u].index) &&
                 below(g, ++n) == 0)
                 from = u;
         if (n && chance(g, 30))
@@ -3498,9 +3683,11 @@ static void routine(G *g)
         uint32_t el = new_e(g, E_INDEX, g->ty[at].elem);
         g->e[el].var = (uint32_t)open;
         g->e[el].a = ix;
+        /* the index too: the bounds of the argument show (§ 6.8) */
+        uint32_t items[3] = {var_ref(g, i), new_e(g, E_STR, 0), el};
         uint32_t w = new_s(g, S_WRITE);
-        g->st[w].args = keep_list(g, &el, 1);
-        g->st[w].nargs = 1;
+        g->st[w].args = keep_list(g, items, 3);
+        g->st[w].nargs = 3;
         g->st[s].blk = keep_list(g, &w, 1);
         g->st[s].nblk = 1;
         append(g, &b, &n, s, chance(g, 50));
@@ -3882,6 +4069,31 @@ static void pexpr(G *g, text *o, uint32_t i)
         put_name(o, g, x->var);
         put(o, ")");
         break;
+    case E_AGG: {
+        bool rec = is_record(g, x->t);
+        put(o, "{");
+        for (uint32_t k = 0; k < x->nargs; k++) {
+            if (k)
+                put(o, rec ? "; " : ", ");
+            if (rec) {
+                putf(o, "f%u: ", k);
+            } else if (x->op) {
+                pexpr(g, o, g->ls[g->e[i].a + k]);
+                if (g->ls[g->e[i].b + k]) {
+                    put(o, "..");
+                    pexpr(g, o, g->ls[g->e[i].b + k]);
+                }
+                put(o, ": ");
+            }
+            pexpr(g, o, g->ls[g->e[i].args + k]);
+        }
+        if (g->e[i].c) {
+            put(o, g->e[i].nargs ? ", else " : "else ");
+            pexpr(g, o, g->e[i].c);
+        }
+        put(o, "}");
+        break;
+    }
     case E_IN:
         put(o, "(");
         pexpr(g, o, x->a);
@@ -4865,6 +5077,8 @@ static v128 call(X *x, uint32_t fn, uint32_t args, uint32_t nargs,
     for (uint32_t k = 0; k < nargs; k++) {
         uint32_t a = g->ls[args + k], p = g->r[fn].par[k];
         if (g->ty[g->v[p].t].k == K_OPEN) {
+            if (g->e[a].k == E_AGG)
+                ev(x, a);            /* into its hidden variable, in order */
             target[k] = g->e[a].var; /* by reference: bound below */
         } else if (is_record(g, g->v[p].t)) {
             /* a variable, or the cells of a call: bound below */
@@ -5556,6 +5770,40 @@ static v128 ev(X *x, uint32_t i)
             r = ceil(a);
         }
         return fres(t, r);
+    }
+    case E_AGG: {
+        /* the components from left to right, else last and once, into the
+           hidden variable: a value, then copied where it goes (§ 6.8) */
+        uint32_t at = x->ref[e->var], n = ncells(g, e->t);
+        bool rec = is_record(g, e->t);
+        uint8_t given[64] = {0};
+        uint32_t k = 0;
+        for (uint32_t j = 0; j < e->nargs; j++) {
+            v128 v = ev(x, g->ls[e->args + j]);
+            if (x->trap)
+                return 0;
+            if (rec || !e->op) {
+                x->cell[at + k] = v;
+                given[k++] = 1;
+                continue;
+            }
+            v128 lo = g->e[g->ls[e->a + j]].lit, hi = lo;
+            if (g->ls[e->b + j])
+                hi = g->e[g->ls[e->b + j]].lit;
+            for (v128 q = lo; q <= hi; q++) {
+                x->cell[at + (uint32_t)(q - g->ty[e->t].lo)] = v;
+                given[q - g->ty[e->t].lo] = 1;
+            }
+        }
+        if (e->c) {
+            v128 v = ev(x, e->c);
+            if (x->trap)
+                return 0;
+            for (uint32_t q = 0; q < n && q < 64; q++)
+                if (!given[q])
+                    x->cell[at + q] = v;
+        }
+        return (v128)at;
     }
     case E_CFIELD: {
         v128 c = ev(x, e->a);

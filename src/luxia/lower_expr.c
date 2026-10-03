@@ -843,7 +843,7 @@ static void agg_put(lxl *L, uint32_t vn, limba_id a, limba_ltype t)
    given e; with spans, those whose index (position + base, an i64
    value) falls in one of them are left alone */
 typedef struct {
-    int64_t lo, hi;
+    __int128 lo, hi; /* values of the index, exact */
 } agg_skip;
 
 static void agg_run(lxl *L, limba_id p, limba_ltype et, limba_id pos,
@@ -869,9 +869,9 @@ static void agg_run(lxl *L, limba_id p, limba_ltype et, limba_id pos,
         limba_id i = bin(L, LIMBA_OP_ADD, LIMBA_T_I64, at, base), named = 0;
         for (uint32_t j = 0; j < nskip; j++) {
             limba_id a = cmp(L, false, sg ? LIMBA_CC_SGE : LIMBA_CC_UGE, i,
-                             lxl_iconst(L, LIMBA_T_I64, skip[j].lo));
+                             lxl_iconst(L, LIMBA_T_I64, (int64_t)skip[j].lo));
             limba_id b = cmp(L, false, sg ? LIMBA_CC_SLE : LIMBA_CC_ULE, i,
-                             lxl_iconst(L, LIMBA_T_I64, skip[j].hi));
+                             lxl_iconst(L, LIMBA_T_I64, (int64_t)skip[j].hi));
             limba_id in = bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b);
             named = j ? bin(L, LIMBA_OP_OR, LIMBA_T_I1, named, in) : in;
         }
@@ -990,7 +990,7 @@ static void agg_elems(lxl *L, uint32_t node, limba_id p, limba_ltype t,
         }
         __int128 a = agg_int(L, c->a), b = c->b ? agg_int(L, c->b) : a;
         LIMBA_GROW(skip, nskip, cap);
-        skip[nskip++] = (agg_skip){(int64_t)a, (int64_t)b};
+        skip[nskip++] = (agg_skip){a, b};
         if (!dyn) {
             if (a == b)
                 agg_put(L, c->c,
@@ -1040,12 +1040,11 @@ static void agg_elems(lxl *L, uint32_t node, limba_id p, limba_ltype t,
                 }
             __int128 from = lo;
             for (uint32_t i = 0; i <= nskip; i++) {
-                __int128 to =
-                    i < nskip ? (__int128)skip[i].lo - 1 : lo + len - 1;
+                __int128 to = i < nskip ? skip[i].lo - 1 : lo + len - 1;
                 if (to >= from)
                     agg_span_put(L, p, et, from - lo, to - lo, e);
                 if (i < nskip)
-                    from = (__int128)skip[i].hi + 1;
+                    from = skip[i].hi + 1;
             }
         }
     }
@@ -1463,14 +1462,14 @@ void lxl_assign(lxl *L, uint32_t node, uint32_t target, uint32_t value)
         const lxl_store *st = &L->store[S->sym[target]];
         limba_ltype it = ti(L, t)->index, et = ti(L, t)->elem;
         limba_id lo = lxl_to_i64(L, st->lo, it), hi = lxl_to_i64(L, st->hi, it);
-        limba_id empty = cmp(L, false,
-                             lxl_signed(L, lxs_base(S, it)) ? LIMBA_CC_SLT
-                                                            : LIMBA_CC_ULT,
-                             hi, lo);
+        limba_id empty =
+            cmp(L, false,
+                lxl_signed(L, lxs_base(S, it)) ? LIMBA_CC_SLT : LIMBA_CC_ULT,
+                hi, lo);
         limba_id n = lxl_count(L, empty, lo, hi);
-        limba_id bytes = bin(L, LIMBA_OP_MUL, LIMBA_T_I64, n,
-                             lxl_iconst(L, LIMBA_T_I64,
-                                        (int64_t)ti(L, et)->size));
+        limba_id bytes =
+            bin(L, LIMBA_OP_MUL, LIMBA_T_I64, n,
+                lxl_iconst(L, LIMBA_T_I64, (int64_t)ti(L, et)->size));
         limba_id tmp = lxl_rt(L, LIMBA_RT_MEM_ALLOC, LIMBA_T_PTR, &bytes, 1);
         uint32_t z[3] = {tmp, lxl_iconst(L, LIMBA_T_I8, 0), bytes};
         lxl_emit(L, LIMBA_OP_MEMSET, LIMBA_T_VOID, 0, 0, 0, z, 3);

@@ -1337,6 +1337,8 @@ static const char *index_text(limba_lxs *S, limba_ltype it, __int128 v,
         snprintf(buf, size, "%s", v ? "true" : "false");
     else if (kind(S, it) == LIMBA_LTK_CHAR && v >= 0x20 && v < 0x7f)
         snprintf(buf, size, "'%c'", (char)v);
+    else if (v > INT64_MAX)
+        snprintf(buf, size, "%llu", (unsigned long long)v);
     else
         snprintf(buf, size, "%lld", (long long)v);
     return buf;

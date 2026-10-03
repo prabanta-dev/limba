@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The random programs use aggregates: records and arrays given whole
+  (positional, by index with ranges, with else), often reading the
+  variable they are given to, as results of functions, as arguments of
+  records and open arrays; the procedures print the indices of their
+  open arrays too. Found that way: the indices of an array past Int64
+  (a UInt64 index near its top) were cut to 64 bits, and else filled the
+  wrong elements. The programs of every seed change.
+
 - Aggregates in the compiler (specification § 6.8): `{x: 1.0; y: 2.0}`
   for records, `{1, 2, 3}`, `{Red: 1, Green: 2, Blue: 3}` and `{1..3:
   0.0, else 1.0}` for arrays, with the type of their context (a

@@ -1173,6 +1173,9 @@ static const run_case run_cases[] =
          "x1z\npq\nx1y\npq\n", "trap 101 at 2:45"},
         {"program t; type R = record s: String; n: Int32; end;\nbegin for var k: Int32 := 1 to 3 do var r: R := {s: str(k) & \"a\"; n: k}; r := {s: r.s & str(r.n); n: r.n * 2}; writeln(r.s, \" \", r.n); end; end t.",
          "1a1 2\n2a2 4\n3a3 6\n", "ok"},
+        /* indices past Int64: the runs else fills, exact */
+        {"program t; type U = UInt64 range 18446744073709551610..18446744073709551615; var c: array[U] of Char := {18446744073709551612: 'a', 18446744073709551614..18446744073709551615: 'b', else '.'};\nbegin for var i: U := low(U) to high(U) do write(c[i]); end; writeln(); end t.",
+         "..a.bb\n", "ok"},
         /* Colour(n), the inverse of ord (§ 6.6) */
         {"program t; type Colour = (Red, Green, Blue); var n: Int32 := 2; "
          "begin writeln(ord(Colour(n)), \" \", ord(Colour(1))); n := 3;\n  "
