@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- fasta writes its tables as typed constants: the codes and their
+  weights as aggregates, the odds added up at the start. The same output;
+  the interpreter takes 0.05 % more steps at -O0 and 0.1 % at -O1, the
+  filling of the tables.
+
 - The random programs use aggregates: records and arrays given whole
   (positional, by index with ranges, with else), often reading the
   variable they are given to, as results of functions, as arguments of
