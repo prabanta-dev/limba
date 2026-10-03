@@ -263,7 +263,9 @@ A token other than the one the grammar wants (§ 12). The message is
 "expected …, found …", naming what was wanted and what was found; when a
 structured statement is not closed, a note shows where it was opened. Two
 messages under this code are more specific: "a constant is given with
-'=', not ':='" and "a procedure has no result: declare a function".
+'=', not ':='" and "a procedure has no result: declare a function"; a
+third says that a comparison, `in`, `and`, `or` or `xor` in an element of
+an aggregate goes in parentheses (`{(a < b), true}`, § 6.8).
 
 ```pascal
 program p;
@@ -745,7 +747,10 @@ prog.luxia:2:17: error[L0029]: 300 is out of the range of UInt8
 
 A constant needs a value known at compile time; a value computed at run
 time is declared with `var` (§ 4.3). The labels of a `case` are constants
-too ("the values of a case are known at compile time", § 7.3).
+too ("the values of a case are known at compile time", § 7.3), and so are
+the indices of an aggregate and every component of a typed constant of a
+record or array type, where another typed constant is not a constant
+(§ 4.3, § 6.8).
 
 ```pascal
 program p;
@@ -799,7 +804,8 @@ A constant without a type cannot give a type (§ 4.1, § 5.3): a variable
 declared with a constant initialiser and no type, a `for` whose bounds
 are both constants without a type (§ 7.5), a shift, `not`, `and`, `or`
 or `xor` between constants without a `BitsN` type, `sqrt` and the other
-mathematical functions of a constant where no real type is expected.
+mathematical functions of a constant where no real type is expected, an
+aggregate where nothing gives it a type (§ 6.8).
 
 ```pascal
 program p;
@@ -1650,6 +1656,96 @@ end.
 prog.luxia:2:6: note[L0080]: 'Strings' is a unit of the program; the library has one of the same name, which it keeps for itself
 ```
 
+### L0081 — AGGREGATE WITHOUT A VALUE
+
+Every field of a record and every index of an array gets a value in an aggregate (§ 6.8); for an array, `else` gives one to the indices not named.
+
+```pascal
+program p;
+type
+  Vector = record x, y, z: Float64; end;
+  Row = array[Int32 range 1..4] of Float64;
+var v: Vector := {x: 1.0; z: 2.0};
+begin
+end.
+```
+
+```
+prog.luxia:5:18: error[L0081]: the aggregate gives no value to the field 'y'
+```
+
+### L0082 — GIVEN TWICE
+
+A field or an index gets one value only in an aggregate (§ 6.8).
+
+```pascal
+program p;
+type
+  Vector = record x, y, z: Float64; end;
+  Row = array[Int32 range 1..4] of Float64;
+var r: Row := {1: 1.0, 1: 2.0, else 0.0};
+begin
+end.
+```
+
+```
+prog.luxia:5:24: error[L0082]: the index 1 is given twice
+```
+
+### L0083 — AGGREGATE FORM
+
+An aggregate written in a form it does not take (§ 6.8): a record not named field by field, an array positional and by index at once, `else` not last or covering no index, `;` between the elements of an array or `,` between the fields of a record, `else` for an open-array parameter, an aggregate where the context wants neither a record nor an array.
+
+```pascal
+program p;
+type
+  Vector = record x, y, z: Float64; end;
+  Row = array[Int32 range 1..4] of Float64;
+var r: Row := {1.0, 2.0, 3.0, 4.0, else 0.0};
+begin
+end.
+```
+
+```
+prog.luxia:5:36: error[L0083]: else covers no index: every one is given
+```
+
+### L0084 — AGGREGATE LENGTH
+
+A positional aggregate for an array with fixed bounds has as many elements as the array (at most as many, with `else`); for an open-array parameter, its elements fit the index from where they start, and `{}` needs an index of two values or more (§ 6.8).
+
+```pascal
+program p;
+type
+  Vector = record x, y, z: Float64; end;
+  Row = array[Int32 range 1..4] of Float64;
+var r: Row := {1.0, 2.0, 3.0};
+begin
+end.
+```
+
+```
+prog.luxia:5:15: error[L0084]: Row has 4 elements, the aggregate 3
+```
+
+### L0085 — FIELDS OUT OF ORDER
+
+The fields of a record aggregate follow the order of the declaration of the record (§ 6.8): one form for each value.
+
+```pascal
+program p;
+type
+  Vector = record x, y, z: Float64; end;
+  Row = array[Int32 range 1..4] of Float64;
+var v: Vector := {y: 1.0; x: 2.0; z: 0.0};
+begin
+end.
+```
+
+```
+prog.luxia:5:27: error[L0085]: 'x' comes before 'y' in the record: the fields go in the order of the declaration
+```
+
 ## All the codes
 
 | Code | Name | Meaning |
@@ -1734,3 +1830,8 @@ prog.luxia:2:6: note[L0080]: 'Strings' is a unit of the program; the library has
 | L0078 | HIDES_NOTHING | warning: `pragma hides` that hides nothing |
 | L0079 | LIBRARY_C | a routine of C of the library reached under `restrictions(no_external)` |
 | L0080 | SAME_AS_LIBRARY | note: a unit of the program with the name of one of the library |
+| L0081 | AGG_MISSING | a field or an index without a value in an aggregate |
+| L0082 | AGG_TWICE | a field or an index given twice in an aggregate |
+| L0083 | AGG_FORM | an aggregate in a form it does not take |
+| L0084 | AGG_LENGTH | a positional aggregate longer or shorter than its array |
+| L0085 | AGG_ORDER | the fields of a record aggregate out of order |

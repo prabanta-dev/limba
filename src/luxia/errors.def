@@ -104,3 +104,13 @@ LX_ERROR(79, LIBRARY_C)         /* a routine of C of the library reached
                                    under restrictions(no_external) */
 LX_ERROR(80, SAME_AS_LIBRARY)   /* note: a unit of the program with the
                                    name of one of the library */
+/* aggregates (§ 6.8) */
+LX_ERROR(81, AGG_MISSING)       /* a field or an index without a value */
+LX_ERROR(82, AGG_TWICE)         /* a field or an index given twice */
+LX_ERROR(83, AGG_FORM)          /* a positional record, forms mixed, else
+                                   misplaced or covering nothing, the
+                                   wrong separator, no array or record */
+LX_ERROR(84, AGG_LENGTH)        /* a positional aggregate longer or
+                                   shorter than its array */
+LX_ERROR(85, AGG_ORDER)         /* the fields of a record out of the
+                                   order of its declaration */

@@ -73,6 +73,10 @@ LX_NODE(DEREF, "deref", "n---")
 LX_NODE(CALL, "call", "nl--")        /* callee, arguments */
 LX_NODE(FMT, "fmt", "nnn-")          /* value:width:decimals */
 LX_NODE(NEW, "new", "n---")          /* the type */
+LX_NODE(AGG, "aggregate", "l---")    /* COMP nodes (§ 6.8); flags: the
+                                        separators seen */
+LX_NODE(COMP, "comp", "nnn-")        /* index or field (0: positional),
+                                        high of a range, value; op: else */
 LX_NODE(TBOX, "tbox", "iq--")        /* I range <>: the name of I, the
                                         unit that qualifies it */
 LX_NODE(PRAGMA, "pragma", "nl--")    /* its name, the names of the checks;

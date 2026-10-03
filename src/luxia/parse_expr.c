@@ -156,9 +156,79 @@ bool limba_lxp_starts_expr(unsigned k)
     case LX_KW_FALSE:
     case LX_KW_NIL:
     case LX_KW_NEW:
+    case LX_LBRACE:
         return true;
     }
     return false;
+}
+
+/* a component of an aggregate: else value, value, index: value,
+   low..high: value; the indices and the positional values are Simple,
+   as the labels of case (§ 6.8, § 12) */
+static uint32_t component(limba_lxp *P)
+{
+    limba_loc loc = lxp_loc(P);
+    if (limba_lxp_accept(P, LX_KW_ELSE)) {
+        uint32_t n =
+            lxp_node(P, LXN_COMP, loc, 0, 0, limba_lxp_expr(P, LXP_EXPR), 0);
+        P->t->node[n].op = LX_KW_ELSE;
+        return n;
+    }
+    uint32_t s = limba_lxp_expr(P, LXP_SIMPLE), hi = 0;
+    if (limba_lxp_accept(P, LX_DOTDOT)) {
+        hi = limba_lxp_expr(P, LXP_SIMPLE);
+        limba_lxp_expect(P, LX_COLON,
+                         "after the range of indices: low..high: "
+                         "value");
+    } else if (!limba_lxp_accept(P, LX_COLON)) {
+        switch (lxp_kind(P)) {
+        case LX_EQ:
+        case LX_NE:
+        case LX_LT:
+        case LX_LE:
+        case LX_GT:
+        case LX_GE:
+        case LX_KW_IN:
+        case LX_KW_AND:
+        case LX_KW_OR:
+        case LX_KW_XOR:
+            limba_lxp_error(P, LXE_EXPECTED, P->pos,
+                            "'%s' in an element of an aggregate: put the "
+                            "element in parentheses, as in {(a < b), true}",
+                            limba_lx_kind_text(lxp_kind(P)));
+            /* the rest of the element, to go on */
+            limba_lxp_next(P);
+            limba_lxp_expr(P, LXP_SIMPLE);
+            break;
+        }
+        return lxp_node(P, LXN_COMP, loc, 0, 0, s, 0);
+    }
+    return lxp_node(P, LXN_COMP, loc, s, hi, limba_lxp_expr(P, LXP_EXPR), 0);
+}
+
+/* { component, ... } or { field: value; ... } */
+static uint32_t aggregate(limba_lxp *P)
+{
+    limba_loc loc = lxp_loc(P);
+    limba_lxp_next(P);
+    uint32_t mark = limba_lx_list_begin(P->t);
+    uint16_t seps = 0;
+    if (lxp_kind(P) != LX_RBRACE) {
+        for (;;) {
+            limba_lx_list_push(P->t, component(P));
+            if (limba_lxp_accept(P, LX_COMMA))
+                seps |= LXN_F_COMMA;
+            else if (limba_lxp_accept(P, LX_SEMI))
+                seps |= LXN_F_SEMI;
+            else
+                break;
+        }
+    }
+    limba_lxp_expect(P, LX_RBRACE, "to close the aggregate");
+    uint32_t list = limba_lx_list_end(P->t, mark, loc);
+    uint32_t n = lxp_node(P, LXN_AGG, loc, list, 0, 0, 0);
+    P->t->node[n].flags |= seps;
+    return n;
 }
 
 static uint32_t argument(limba_lxp *P)
@@ -255,6 +325,8 @@ static uint32_t primary(void *ctx)
         n = limba_lxp_expr(P, LXP_EXPR);
         limba_lxp_expect(P, LX_RPAREN, "to close the '('");
         return n;
+    case LX_LBRACE:
+        return aggregate(P);
     case LX_KW_NEW: {
         limba_loc loc = t->loc;
         limba_lxp_next(P);

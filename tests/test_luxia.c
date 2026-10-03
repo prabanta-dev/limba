@@ -74,7 +74,9 @@ static const lex_case lex_cases[] = {
     /* 'ab' is one error, up to the apostrophe that closes it */
     {"'' 'ab'", "char:U+0000 char:U+0061 eof", "L0005@1:1 L0005@1:4"},
     /* characters that start no token; columns count UTF-8 characters */
-    {"a @ b {", "id:a id:b eof", "L0002@1:3 L0002@1:7"},
+    {"a @ b ~", "id:a id:b eof", "L0002@1:3 L0002@1:7"},
+    /* the braces of an aggregate (§ 6.8) */
+    {"{a: 1; b}", "{ id:a : int:1 ; id:b } eof", ""},
     {"\"\xc3\xa8\" @", "str:\"\xc3\xa8\" eof", "L0002@1:5"},
     {"x \xc3\xa8", "id:x eof", "L0002@1:3"},
     {"a\n  @", "id:a eof", "L0002@2:3"},
@@ -538,6 +540,54 @@ static const sema_case sema_cases[] = {
     {"program p; type R = record a: Int32; end; var q: ^R; procedure h(out "
      "v: R); begin v.a := 1; end h; begin q := new(R); h(q^); end.",
      "L0059@1:122"},
+    /* records name every field, in order; once each; arrays positional or by index, complete (§ 6.8) */
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var v: V3 := {y: 1.0; x: 2.0; z: 0.0}; begin end.",
+     "L0085@1:145"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var v: V3 := {x: 1.0; z: 2.0}; begin end.",
+     "L0081@1:136"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var v: V3 := {x: 1.0, y: 2.0, z: 3.0}; begin end.",
+     "L0083@1:136"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var v: V3 := {1.0; 2.0; 3.0}; begin end.",
+     "L0083@1:137"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var v: V3 := {x: 1.0; x: 2.0; y: 0.0; z: 0.0}; begin end.",
+     "L0082@1:145"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var v: V3 := {x: 1.0; y: 2.0; w: 3.0; z: 0.0}; begin end.",
+     "L0040@1:153"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var r: Row := {1.0, 2.0, 3.0}; begin end.",
+     "L0084@1:137"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var r: Row := {1.0, 2.0, 3.0, 4.0, 5.0}; begin end.",
+     "L0084@1:137"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var r: Row := {1.0, 2.0, 3.0, 4.0, else 0.0}; begin end.",
+     "L0083@1:158"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var r: Row := {1: 1.0, 2: 2.0, 4: 4.0}; begin end.",
+     "L0081@1:137"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var r: Row := {1: 1.0, 1: 2.0, else 0.0}; begin end.",
+     "L0082@1:146"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var n: Int32 := 1; r: Row := {n: 1.0, else 0.0}; begin end.",
+     "L0030@1:153"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var r: Row := {1, 2: 1.0, else 0.0}; begin end.",
+     "L0083@1:141"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var r: Row := {else 0.0, 1: 1.0}; begin end.",
+     "L0083@1:138"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var r: Row := {5: 1.0, else 0.0}; begin end.",
+     "L0029@1:138"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var c: Int32 := {1}; begin end.",
+     "L0083@1:139"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var g: array[Colour] of Int32 := {Red: 1; Green: 2; Blue: 3}; begin end.",
+     "L0083@1:156"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; const O: V3 = {x: 0.0; y: 0.0; z: 0.0}; C: array[Int32 range 1..2] of V3 = {O, O}; begin end.",
+     "L0030@1:198"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; var n: Float64 := 1.0; const O: V3 = {x: n; y: 0.0; z: 0.0}; begin end.",
+     "L0030@1:160"},
+    {"program p; type V3 = record x, y, z: Float64; end; Colour = (Red, Green, Blue); Row = array[Int32 range 1..4] of Float64; const O: V3 = {x: 0.0; y: 0.0; z: 0.0}; procedure P(); begin O.x := 1.0; end; begin end.",
+     "L0034@1:184"},
+    /* a comparison as an element goes in parentheses (§ 6.8) */
+    {"program p; var c: array[Int32 range 1..2] of Boolean := {1 < 2, true}; begin end.",
+     "L0010@1:60"},
+    /* an aggregate for an open array: from 0 if the index has it, no
+       further than its last value (§ 6.8) */
+    {"program p; procedure P(w: array[Int8 range <>] of Int32); begin end P; begin P({0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}); end.",
+     "L0084@1:80"},
     /* p^.x and p^[i]: one form, p.x and p[i] (§ 3.10) */
     {"program p; type R = record a: Int32; end; var q: ^R; begin q := "
      "new(R); q^.a := 1; end.",
@@ -1098,6 +1148,31 @@ static const run_case run_cases[] =
         {"program t; var n: UInt64 := high(UInt64); begin\n  var a: "
          "array[UInt64 range 0..n] of Byte;\nend t.",
          "", "trap 7"},
+        /* an aggregate is a value, computed whole, then assigned (§ 6.8): the target inside it, written by a call, a var parameter, a global seen through a parameter or an open array */
+        {"program t; type V2 = record x, y: Float64; end; var v: V2 := {x: 1.0; y: 2.0}; a: array[Int32 range 1..2] of Int32 := {10, 20};\nbegin v := {x: v.y; y: v.x}; a := {a[2], a[1]}; writeln(v.x, \" \", v.y, \" \", a[1], \" \", a[2]); end t.",
+         "2.0 1.0 20 10\n", "ok"},
+        {"program t; type V2 = record x, y: Float64; end; var g: V2;\nfunction F(): Float64; begin g.x := 5.0; return 2.0; end F;\nbegin g := {x: 1.0; y: F()}; writeln(g.x, \" \", g.y); end t.",
+         "1.0 2.0\n", "ok"},
+        {"program t; type V2 = record x, y: Float64; end; var g: V2 := {x: 1.0; y: 2.0};\nprocedure S(var r: V2); begin r := {x: g.y; y: g.x}; end S;\nbegin S(g); writeln(g.x, \" \", g.y); end t.",
+         "2.0 1.0\n", "ok"},
+        {"program t; type V2 = record x, y: Float64; end; var g: V2 := {x: 1.0; y: 2.0};\nprocedure D(r: V2); begin g := {x: r.y; y: r.x}; end D;\nbegin D(g); writeln(g.x, \" \", g.y); end t.",
+         "2.0 1.0\n", "ok"},
+        {"program t; var q: array[Int32 range 1..2] of Int32 := {1, 2};\nprocedure P(a: array[Int32 range <>] of Int32); begin q := {a[2], a[1]}; end P;\nbegin P(q); writeln(q[1], \" \", q[2]); end t.",
+         "2 1\n", "ok"},
+        {"program t; var a: Int32 := 1; b: Int32 := 2; c: array[Int32 range 1..2] of Boolean := {(a < b), true};\n  d: array[Int32 range 1..2] of Boolean := {not c[1], c[2]};\nbegin writeln(c[1], \" \", d[1], \" \", d[2]); end t.",
+         "true false true\n", "ok"},
+        {"program t; function F(k: Int32): Int32; begin write(k, \" \"); return k; end F;\nvar a: array[Int32 range 1..4] of Int32 := {2: F(1), 1: F(2), else F(3)};\nbegin writeln(a[1], a[2], a[3], a[4]); end t.",
+         "1 2 3 2133\n", "ok"},
+        {"program t; var z: Int32 := 0; i: Int32 := 5;\n  a: array[Int32 range 1..2] of Int32 := {1, 2};\n  b: array[Int32 range 1..2] of Int32 := {10 div z, a[i]};\nbegin end t.",
+         "", "trap 11 at 3:46"},
+        {"program t; type V2 = record x, y: Float64; end; P2 = record name: String; at: V2; end;\nconst Months: array[Int32 range 1..3] of String = {\"gen\", \"feb\", \"mar\"};\nfunction M(k: Int32): P2; const Base: V2 = {x: 0.5; y: 0.25}; begin return {name: Months[k] & \"!\"; at: {x: Base.x * Float64(k); y: Base.y}}; end M;\nbegin for var k: Int32 := 1 to 3 do var p: P2 := M(k); writeln(p.name, \" \", p.at.x, \" \", p.at.y); end; end t.",
+         "gen! 0.5 0.25\nfeb! 1.0 0.25\nmar! 1.5 0.25\n", "ok"},
+        {"program t; type Colour = (Red, Green, Blue); B = array[Boolean range <>] of Int32; E = array[Colour range <>] of Int32;\n  U = array[UInt32 range <>] of Int32; I = array[Int32 range <>] of Int32; P = array[Int32 range 1..9] of Int32;\nprocedure WB(w: B); begin writeln(low(w), \" \", high(w), \" \", length(w)); end WB;\nprocedure WE(w: E); begin writeln(ord(low(w)), \" \", ord(high(w)), \" \", length(w)); end WE;\nprocedure WU(w: U); begin writeln(low(w), \" \", high(w), \" \", length(w)); end WU;\nprocedure WI(w: I); begin writeln(low(w), \" \", high(w), \" \", length(w)); end WI;\nbegin WB({}); WE({}); WU({}); WI({}); WI({7, 8, 9}); WI({-2: 1, -1: 2}); WE({4, 5}); end t.",
+         "true false 0\n1 0 0\n1 0 0\n0 -1 0\n0 2 3\n-2 -1 2\n0 1 2\n", "ok"},
+        {"program t; procedure Q(n: Int32);\nvar a: array[Int32 range 1..n] of String := {\"x\" & \"1\", \"y\", else \"z\"};\nbegin writeln(a[1], a[n]); a := {1: \"p\", else \"q\"}; writeln(a[1], a[n]); end Q;\nbegin Q(3); Q(2); Q(1); end t.",
+         "x1z\npq\nx1y\npq\n", "trap 101 at 2:45"},
+        {"program t; type R = record s: String; n: Int32; end;\nbegin for var k: Int32 := 1 to 3 do var r: R := {s: str(k) & \"a\"; n: k}; r := {s: r.s & str(r.n); n: r.n * 2}; writeln(r.s, \" \", r.n); end; end t.",
+         "1a1 2\n2a2 4\n3a3 6\n", "ok"},
         /* Colour(n), the inverse of ord (§ 6.6) */
         {"program t; type Colour = (Red, Green, Blue); var n: Int32 := 2; "
          "begin writeln(ord(Colour(n)), \" \", ord(Colour(1))); n := 3;\n  "
@@ -2233,6 +2308,26 @@ static const unit_case unit_cases[] = {
      "42\n",
      "ok",
      ""},
+    /* a table of constants is ready at once (§ 11.5): R reads S.table
+       before S is initialised; written by its unit, it orders */
+    {{{"p.luxia", "program P; uses R; begin writeln(R.rv); end."},
+      {"r.luxia", "unit R;\ninterface\nvar rv: Int64;\nimplementation\nuses "
+                  "S;\nbegin\n  rv := S.table[2] + 1;\nend R."},
+      {"s.luxia", "unit S;\ninterface\nvar table: array[Int32 range 1..3] of "
+                  "Int64 := {40, 41, 42};\nvar t: Int64;\nimplementation\nuses "
+                  "R;\nbegin\n  t := R.rv;\nend S."}},
+     "42\n",
+     "ok",
+     ""},
+    {{{"p.luxia", "program P; uses R; begin writeln(R.rv); end."},
+      {"r.luxia", "unit R;\ninterface\nvar rv: Int64;\nimplementation\nuses "
+                  "S;\nbegin\n  rv := S.table[2] + 1;\nend R."},
+      {"s.luxia", "unit S;\ninterface\nvar table: array[Int32 range 1..3] of "
+                  "Int64 := {40, 41, 42};\nvar t: Int64;\nimplementation\nuses "
+                  "R;\nbegin\n  t := R.rv;\n  table[1] := 0;\nend S."}},
+     "",
+     "errors",
+     "L0076@r.luxia:1:6"},
     /* files: not found, named as another unit, a program */
     {{{"p.luxia", "program P; uses Nowhere, Wrong, Q; begin end."},
       {"wrong.luxia", "unit Other; interface implementation end Other."},

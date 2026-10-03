@@ -8,7 +8,10 @@
  */
 #include "sema.h"
 
+#include "common/xalloc.h"
+
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static limba_ltype set(limba_lxs *S, uint32_t node, limba_ltype t)
@@ -488,7 +491,7 @@ static limba_ltype through_pointer(limba_lxs *S, limba_ltype t)
     return t;
 }
 
-static limba_ltype select(limba_lxs *S, uint32_t node, uint32_t scope)
+static limba_ltype select_expr(limba_lxs *S, uint32_t node, uint32_t scope)
 {
     limba_lx_node *x = lxs_node(S, node);
     uint32_t base = x->a, fname = x->b;
@@ -665,8 +668,10 @@ static limba_ltype routine_call(limba_lxs *S, uint32_t node, uint32_t scope,
         limba_param p = S->ts.param[first + i];
         char ta[128], tb[128];
         if (kind(S, p.type) == LIMBA_LTK_OPEN) {
-            /* the same elements, an index of the same base (§ 4.5) */
-            limba_ltype at = lxs_expr(S, a, scope, 0);
+            /* the same elements, an index of the same base (§ 4.5); an
+               aggregate takes its bounds from the parameter (§ 6.8) */
+            limba_ltype at = lxs_expr(
+                S, a, scope, lxs_node(S, a)->kind == LXN_AGG ? p.type : 0);
             unsigned ak = at ? kind(S, at) : 0;
             const limba_typeinfo *pt = lxs_ty(S, p.type);
             if (at &&
@@ -694,7 +699,8 @@ static limba_ltype routine_call(limba_lxs *S, uint32_t node, uint32_t scope,
             pointer_arg(S, a, LXS_IN);
             continue;
         } else {
-            limba_ltype at = lxs_expr(S, a, scope, 0);
+            limba_ltype at = lxs_expr(
+                S, a, scope, lxs_node(S, a)->kind == LXN_AGG ? p.type : 0);
             if (at && !untyped(S, at) && !lxs_compatible(S, at, p.type))
                 lxs_error(S, LXE_TYPE_MISMATCH, a,
                           "this is %s, the parameter is %s",
@@ -1300,6 +1306,389 @@ static limba_ltype membership(limba_lxs *S, uint32_t node, uint32_t scope)
     return S->ts.bool_;
 }
 
+/* ---- aggregates (§ 6.8) ---- */
+
+/* a component known at compile time: a constant, or an aggregate of
+   constants */
+static bool agg_known(const limba_lxs *S, uint32_t node)
+{
+    const limba_lx_node *x = &S->t->node[node];
+    if (x->kind == LXN_AGG)
+        return x->flags & LXN_F_CONST;
+    return S->val[node] != 0;
+}
+
+/* the value of component comp, of type t */
+static void agg_value(limba_lxs *S, uint32_t comp, uint32_t scope,
+                      limba_ltype t, bool *known)
+{
+    uint32_t v = lxs_node(S, comp)->c;
+    lxs_expr(S, v, scope, t);
+    lxs_assign_to(S, v, t, "the aggregate");
+    if (!agg_known(S, v))
+        *known = false;
+}
+
+/* an index for a message: false, 'c', or its number */
+static const char *index_text(limba_lxs *S, limba_ltype it, __int128 v,
+                              char *buf, size_t size)
+{
+    if (kind(S, it) == LIMBA_LTK_BOOL)
+        snprintf(buf, size, "%s", v ? "true" : "false");
+    else if (kind(S, it) == LIMBA_LTK_CHAR && v >= 0x20 && v < 0x7f)
+        snprintf(buf, size, "'%c'", (char)v);
+    else
+        snprintf(buf, size, "%lld", (long long)v);
+    return buf;
+}
+
+static limba_ltype agg_record(limba_lxs *S, uint32_t node, uint32_t scope,
+                              limba_ltype t)
+{
+    limba_lx_node *x = lxs_node(S, node);
+    uint32_t list = x->a, n = lxs_node(S, list)->b;
+    const limba_typeinfo *ti = lxs_ty(S, t);
+    uint32_t first = ti->first, count = ti->count;
+    if (x->flags & LXN_F_COMMA)
+        lxs_error(S, LXE_AGG_FORM, node,
+                  "the fields of a record aggregate are separated by ';'");
+    uint8_t *given = limba_xcalloc(count ? count : 1, 1);
+    bool known = true;
+    int prev = -1;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t comp = limba_lx_list_at(S->t, list, i);
+        limba_lx_node *c = lxs_node(S, comp);
+        const limba_lx_node *f = c->a ? lxs_node(S, c->a) : NULL;
+        if (c->op == LX_KW_ELSE || !f || f->kind != LXN_REF ||
+            (f->flags & LXN_F_QUAL) || c->b) {
+            /* once: the rest of the aggregate says nothing more */
+            lxs_error(S, LXE_AGG_FORM, comp,
+                      "a record aggregate names every field, in order: "
+                      "{x: 1.0; y: 2.0}");
+            for (uint32_t j = i; j < n; j++)
+                lxs_expr(S, lxs_node(S, limba_lx_list_at(S->t, list, j))->c,
+                         scope, 0);
+            free(given);
+            return set(S, node, t);
+        }
+        uint32_t k = 0;
+        while (k < count && S->ts.field[first + k].name != f->a)
+            k++;
+        size_t ln;
+        const char *nm = lxs_name(S, f->a, &ln);
+        if (k == count) {
+            char tb[128];
+            lxs_error(S, LXE_NO_FIELD, c->a, "%s has no field '%.*s'",
+                      lxs_tname(S, t, tb), (int)ln, nm);
+            lxs_expr(S, c->c, scope, 0);
+            known = false;
+            continue;
+        }
+        if (given[k]) {
+            lxs_error(S, LXE_AGG_TWICE, c->a, "the field '%.*s' is given twice",
+                      (int)ln, nm);
+        } else if ((int)k < prev) {
+            size_t lp;
+            const char *np =
+                lxs_name(S, S->ts.field[first + (uint32_t)prev].name, &lp);
+            lxs_error(S, LXE_AGG_ORDER, c->a,
+                      "'%.*s' comes before '%.*s' in the record: the fields "
+                      "go in the order of the declaration",
+                      (int)ln, nm, (int)lp, np);
+        }
+        given[k] = 1;
+        prev = (int)k;
+        c->d = k + 1;
+        agg_value(S, comp, scope, S->ts.field[first + k].type, &known);
+    }
+    for (uint32_t k = 0; k < count; k++)
+        if (!given[k]) {
+            size_t ln;
+            const char *nm = lxs_name(S, S->ts.field[first + k].name, &ln);
+            lxs_error(S, LXE_AGG_MISSING, node,
+                      "the aggregate gives no value to the field '%.*s'",
+                      (int)ln, nm);
+            known = false;
+        }
+    free(given);
+    if (known)
+        x->flags |= LXN_F_CONST;
+    return set(S, node, t);
+}
+
+typedef struct {
+    __int128 lo, hi;
+    uint32_t node;
+} agg_span;
+
+static int agg_by_lo(const void *a, const void *b)
+{
+    const agg_span *p = a, *q = b;
+    return p->lo < q->lo ? -1 : p->lo > q->lo;
+}
+
+/* an array aggregate for t: an array with fixed or computed bounds, or an
+   open-array parameter, whose aggregate gets an array type of its own
+   with the bounds of § 6.8 */
+static limba_ltype agg_array(limba_lxs *S, uint32_t node, uint32_t scope,
+                             limba_ltype t)
+{
+    limba_lx_node *x = lxs_node(S, node);
+    uint32_t list = x->a, n = lxs_node(S, list)->b;
+    const limba_typeinfo *ti = lxs_ty(S, t);
+    bool open = ti->kind == LIMBA_LTK_OPEN;
+    bool dyn = !open && (ti->flags & LIMBA_TF_DYNAMIC);
+    limba_ltype it = ti->index, et = ti->elem, base = lxs_base(S, it);
+    char ib[64], tb[128];
+    if (x->flags & LXN_F_SEMI)
+        lxs_error(S, LXE_AGG_FORM, node,
+                  "the elements of an array aggregate are separated by ','");
+    uint32_t npos = 0, nnamed = 0, other = 0;
+    bool known = true, ok = true;
+    agg_span *sp = NULL;
+    uint32_t nsp = 0, cap = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t comp = limba_lx_list_at(S->t, list, i);
+        limba_lx_node *c = lxs_node(S, comp);
+        if (c->op == LX_KW_ELSE) {
+            if (other || i + 1 < n) {
+                lxs_error(S, LXE_AGG_FORM, comp,
+                          "else comes once, after the other elements");
+                ok = false;
+            } else if (open) {
+                lxs_error(S, LXE_AGG_FORM, comp,
+                          "an aggregate for an open array has no bounds for "
+                          "else to fill");
+                ok = false;
+            }
+            other = comp;
+        } else if (c->a) {
+            if (npos) {
+                lxs_error(S, LXE_AGG_FORM, comp,
+                          "an aggregate is positional or by index, not both");
+                ok = false;
+            }
+            nnamed++;
+            __int128 v[2] = {0, 0};
+            bool good = true;
+            uint32_t ends[2] = {c->a, c->b};
+            for (int j = 0; j < 2; j++) {
+                if (!ends[j]) {
+                    v[1] = v[0];
+                    continue;
+                }
+                lxs_expr(S, ends[j], scope, it);
+                lxs_assign_to(S, ends[j], it, "the index");
+                if (!S->val[ends[j]]) {
+                    if (S->type[ends[j]])
+                        lxs_error(S, LXE_NOT_CONSTANT, ends[j],
+                                  "an index of an aggregate is known at "
+                                  "compile time");
+                    good = false;
+                } else if (!lxs_value_to_int(S, S->val[ends[j]], &v[j])) {
+                    good = false;
+                }
+            }
+            if (good && v[0] > v[1]) {
+                lxs_error(S, LXE_AGG_FORM, comp,
+                          "the range of indices %s..%s is empty",
+                          index_text(S, it, v[0], ib, sizeof(ib)),
+                          index_text(S, it, v[1], tb, sizeof(tb)));
+                good = false;
+            }
+            if (good) {
+                LIMBA_GROW(sp, nsp, cap);
+                sp[nsp++] = (agg_span){v[0], v[1], comp};
+            } else {
+                ok = false;
+            }
+        } else {
+            if (nnamed) {
+                lxs_error(S, LXE_AGG_FORM, comp,
+                          "an aggregate is positional or by index, not both");
+                ok = false;
+            }
+            npos++;
+        }
+        agg_value(S, comp, scope, et, &known);
+    }
+    /* the indices given: twice, missing */
+    if (nsp)
+        qsort(sp, nsp, sizeof(*sp), agg_by_lo);
+    for (uint32_t i = 1; i < nsp; i++)
+        if (sp[i].lo <= sp[i - 1].hi) {
+            lxs_error(S, LXE_AGG_TWICE, sp[i].node,
+                      "the index %s is given twice",
+                      index_text(S, it, sp[i].lo, ib, sizeof(ib)));
+            ok = false;
+        }
+    limba_ltype result = t;
+    if (open && ok) {
+        /* the bounds: those named, or n elements from 0 or low(I) */
+        const limba_typeinfo *ix = lxs_ty(S, it), *bx = lxs_ty(S, base);
+        __int128 lo, hi;
+        if (nsp) {
+            lo = sp[0].lo;
+            hi = sp[nsp - 1].hi;
+            for (uint32_t i = 1; i < nsp && ok; i++)
+                if (sp[i].lo > sp[i - 1].hi + 1) {
+                    lxs_error(
+                        S, LXE_AGG_MISSING, node,
+                        "the aggregate gives no value to the index %s",
+                        index_text(S, it, sp[i - 1].hi + 1, ib, sizeof(ib)));
+                    ok = false;
+                }
+        } else {
+            __int128 s = ix->lo <= 0 && 0 <= ix->hi ? 0 : ix->lo;
+            if (npos) {
+                lo = s;
+                hi = s + (__int128)npos - 1;
+                if (hi > ix->hi) {
+                    lxs_error(S, LXE_AGG_LENGTH, node,
+                              "%u elements from %s pass the last index of "
+                              "%s",
+                              npos, index_text(S, it, s, ib, sizeof(ib)),
+                              lxs_tname(S, it, tb));
+                    ok = false;
+                }
+            } else if (s > bx->lo) {
+                lo = s;
+                hi = s - 1;
+            } else if (s < bx->hi) {
+                lo = s + 1;
+                hi = s;
+            } else {
+                lxs_error(S, LXE_AGG_LENGTH, node,
+                          "an empty aggregate needs an index of two values "
+                          "or more: %s has one",
+                          lxs_tname(S, base, tb));
+                ok = false;
+                lo = hi = 0;
+            }
+        }
+        if (ok) {
+            bool fits;
+            limba_ltype idx = limba_types_range(&S->ts, base, lo, hi);
+            result = limba_types_array(&S->ts, idx, et, false, &fits);
+        }
+    } else if (!dyn && ok) {
+        const limba_typeinfo *ix = lxs_ty(S, it);
+        __int128 len = ix->hi - ix->lo + 1;
+        if (nsp) {
+            __int128 next = ix->lo;
+            bool gap = false;
+            for (uint32_t i = 0; i < nsp; i++) {
+                if (sp[i].lo > next && !gap && !other) {
+                    lxs_error(S, LXE_AGG_MISSING, node,
+                              "the aggregate gives no value to the index %s",
+                              index_text(S, it, next, ib, sizeof(ib)));
+                    ok = false;
+                }
+                if (sp[i].lo > next)
+                    gap = true;
+                if (sp[i].hi >= next)
+                    next = sp[i].hi + 1;
+            }
+            if (next <= ix->hi) {
+                if (!gap && !other) {
+                    lxs_error(S, LXE_AGG_MISSING, node,
+                              "the aggregate gives no value to the index %s",
+                              index_text(S, it, next, ib, sizeof(ib)));
+                    ok = false;
+                }
+                gap = true;
+            }
+            if (other && !gap) {
+                lxs_error(S, LXE_AGG_FORM, other,
+                          "else covers no index: every one is given");
+                ok = false;
+            }
+        } else if (!nnamed && ok) {
+            if ((__int128)npos > len || (!other && (__int128)npos < len)) {
+                lxs_error(S, LXE_AGG_LENGTH, node,
+                          "%s has %lld elements, the aggregate %u",
+                          lxs_tname(S, t, tb), (long long)len, npos);
+                ok = false;
+            } else if (other && (__int128)npos == len) {
+                lxs_error(S, LXE_AGG_FORM, other,
+                          "else covers no index: every one is given");
+                ok = false;
+            }
+        }
+    }
+    free(sp);
+    if (known && ok)
+        x->flags |= LXN_F_CONST;
+    return set(S, node, result);
+}
+
+static limba_ltype aggregate(limba_lxs *S, uint32_t node, uint32_t scope,
+                             limba_ltype expected)
+{
+    limba_lx_node *x = lxs_node(S, node);
+    unsigned k = expected ? kind(S, expected) : 0;
+    if (k == LIMBA_LTK_RECORD)
+        return agg_record(S, node, scope, expected);
+    if (k == LIMBA_LTK_ARRAY || k == LIMBA_LTK_OPEN)
+        return agg_array(S, node, scope, expected);
+    if (!expected) {
+        lxs_error(S, LXE_NEED_TYPE, node,
+                  "an aggregate has no type of its own: it takes the one of "
+                  "where it stands (a declaration with a type, the target, "
+                  "the parameter, the result)");
+    } else if (k != LIMBA_LTK_ERROR) {
+        char tb[128];
+        lxs_error(S, LXE_AGG_FORM, node,
+                  "an aggregate is a record or an array, not %s",
+                  lxs_tname(S, expected, tb));
+    }
+    for (uint32_t i = 0; i < lxs_node(S, x->a)->b; i++)
+        lxs_expr(S, lxs_node(S, limba_lx_list_at(S->t, x->a, i))->c, scope, 0);
+    return set(S, node, 0);
+}
+
+static bool holds_big(const limba_lxs *S, limba_ltype t)
+{
+    const limba_typeinfo *x = lxs_ty(S, t);
+    if (x->kind == LIMBA_LTK_BIGINT)
+        return true;
+    if (x->kind == LIMBA_LTK_ARRAY)
+        return holds_big(S, x->elem);
+    if (x->kind == LIMBA_LTK_RECORD)
+        for (uint32_t i = 0; i < x->count; i++)
+            if (holds_big(S, S->ts.field[x->first + i].type))
+                return true;
+    return false;
+}
+
+bool lxs_agg_ready(const limba_lxs *S, uint32_t node, limba_ltype t)
+{
+    const limba_lx_node *x = &S->t->node[node];
+    return x->kind == LXN_AGG && (x->flags & LXN_F_CONST) && t &&
+           !holds_big(S, t);
+}
+
+bool lxs_typed_const(limba_lxs *S, uint32_t d, limba_sym s, limba_ltype t)
+{
+    unsigned k = t ? kind(S, t) : 0;
+    if (k != LIMBA_LTK_RECORD && k != LIMBA_LTK_ARRAY)
+        return false;
+    uint32_t v = lxs_node(S, d)->c;
+    if (S->type[v] && !agg_known(S, v))
+        lxs_error(S, LXE_NOT_CONSTANT, v,
+                  "a typed constant needs every component known at compile "
+                  "time (a typed constant is not one): write the aggregate "
+                  "out, or declare a var");
+    if (s) {
+        S->st.sym[s].flags |= LXS_TCONST;
+        S->st.sym[s].type = t;
+        S->st.sym[s].value = 0;
+        LIMBA_GROW(S->tconsts, S->ntconsts, S->captconsts);
+        S->tconsts[S->ntconsts++] = d;
+    }
+    return true;
+}
+
 limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
                      limba_ltype expected)
 {
@@ -1335,7 +1724,7 @@ limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
     case LXN_IN:
         return membership(S, node, scope);
     case LXN_SEL:
-        return select(S, node, scope);
+        return select_expr(S, node, scope);
     case LXN_INDEX:
         return index_expr(S, node, scope);
     case LXN_DEREF: {
@@ -1391,6 +1780,8 @@ limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
         limba_ltype t = lxs_type(S, x->a, scope, 0);
         return set(S, node, t ? limba_types_pointer(&S->ts, t) : 0);
     }
+    case LXN_AGG:
+        return aggregate(S, node, scope, expected);
     case LXN_FMT:
         if (!S->sym[node])
             lxs_error(

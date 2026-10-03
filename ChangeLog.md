@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Aggregates in the compiler (specification § 6.8): `{x: 1.0; y: 2.0}`
+  for records, `{1, 2, 3}`, `{Red: 1, Green: 2, Blue: 3}` and `{1..3:
+  0.0, else 1.0}` for arrays, with the type of their context (a
+  declaration, the target, a parameter, the result, an enclosing
+  aggregate), complete and checked, computed whole in a slot of their own
+  and then copied, straight into a local just declared, a typed
+  constant or a variable ready at once. Typed constants of records and
+  arrays are globals filled before any code; an aggregate for an
+  open-array parameter takes the bounds of § 6.8; arrays with computed
+  bounds are checked at run time. A unit's table of constants orders no
+  initialisation. Five new codes, L0081 to L0085.
+
 - The specification describes aggregates (§ 6.8): a whole record
   (`{x: 1.0; y: 2.0}`, every field named, in order) or array (`{1, 2,
   3}`, `{Red: 1, Green: 2, Blue: 3}`, `{1: 10, else 0}`) written between

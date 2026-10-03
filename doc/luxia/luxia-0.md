@@ -871,7 +871,8 @@ An **aggregate** writes a whole record or array value between braces.
     `Sum({1, 2, 3})` passes an array from 0 to 2. If the last index
     would pass `high(I)` it is a compile-time error;
   - `{}`: no elements from `s`, that is `s..pred(s)`, or `succ(s)..s`
-    where `pred(s)` does not exist; for an `I` of one value it is a
+    where `pred(s)` does not exist in the base type of `I`; if that base
+    type has a single value (an enumeration of one value), it is a
     compile-time error;
   - `else` is an error in both forms: there are no bounds to fill.
 - `p^ := {...}` assigns a record or an array with fixed bounds; for a

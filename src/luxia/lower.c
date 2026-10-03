@@ -503,6 +503,8 @@ static void dynamic(lxl *L, limba_sym s, uint32_t tnode)
     L->dyns[L->ndyns++] = s;
 }
 
+static bool ready_decl(lxl *L, uint32_t d);
+
 /* the names of a VAR node: storage, then the initial value */
 static void var_decl(lxl *L, uint32_t d)
 {
@@ -535,6 +537,18 @@ static void var_decl(lxl *L, uint32_t d)
                     uint32_t o[2] = {v, lxl_var_addr(L, s)};
                     lxl_emit(L, LIMBA_OP_STORE, LIMBA_T_VOID, 0, 0, 0, o, 2);
                 }
+            } else if (nd(L, init)->kind == LXN_AGG &&
+                       (ti(L, t)->flags & LIMBA_TF_DYNAMIC)) {
+                /* a declaration: straight into its elements (§ 6.8) */
+                limba_ltype it = ti(L, t)->index;
+                lxl_agg_fill_dyn(L, init, st->addr, t,
+                                 lxl_to_i64(L, st->lo, it),
+                                 lxl_to_i64(L, st->hi, it));
+            } else if (nd(L, init)->kind == LXN_AGG &&
+                       (st->kind != LXL_GLOBAL || ready_decl(L, d))) {
+                /* a local just declared, or a variable ready at once:
+                   nothing can see it yet, straight in (§ 6.8) */
+                lxl_agg_fill(L, init, lxl_var_addr(L, s), t);
             } else {
                 limba_id dst = lxl_var_addr(L, s);
                 lxl_copy(L, dst, lxl_addr(L, init), t);
@@ -1275,11 +1289,15 @@ static bool reached(const lxl *L, limba_sym s)
 static bool ready_decl(lxl *L, uint32_t d)
 {
     const limba_lx_node *x = nd(L, d);
-    if (!x->c || !L->S->val[x->c] || !list_n(L, x->a))
+    if (!x->c || !list_n(L, x->a))
         return false;
     limba_sym s = L->S->sym[list_at(L, x->a, 0)];
     limba_ltype t = s ? L->S->st.sym[s].type : 0;
     if (!t)
+        return false;
+    if (lxs_agg_ready(L->S, x->c, t))
+        return true; /* an aggregate of constants (§ 11.5) */
+    if (!L->S->val[x->c])
         return false;
     unsigned k = ti(L, t)->kind;
     return k != LIMBA_LTK_RECORD && k != LIMBA_LTK_ARRAY &&
@@ -1436,6 +1454,23 @@ limba_module *limba_lxl_program_each(limba_lxs *S,
             L->kept_externs = L->m->nexterns;
         }
     }
+    /* the typed constants of records and arrays, those of routines too:
+       globals, filled first in main (§ 4.3) */
+    for (uint32_t i = 0; i < S->ntconsts; i++) {
+        limba_sym s = S->sym[nd(L, S->tconsts[i])->a];
+        limba_ltype t = s ? S->st.sym[s].type : 0;
+        if (!t)
+            continue;
+        limba_id g = LIMBA_NONE;
+        for (unsigned k = 0; g == LIMBA_NONE && k < 1000; k++) {
+            char suffix[24];
+            snprintf(suffix, sizeof(suffix), k ? ".const%u" : "", k);
+            g = limba_global_add(L->m, ir_name(L, s, suffix), lxl_type(L, t),
+                                 0);
+        }
+        L->store[s].kind = LXL_GLOBAL;
+        L->store[s].global = g;
+    }
     /* the routines not reached: their errors (a missing return, a
        variable read before a value), then they go */
     L->dry = true;
@@ -1455,6 +1490,12 @@ limba_module *limba_lxl_program_each(limba_lxs *S,
        program's body last */
     L->result = 0;
     begin_function(L, main_fid);
+    for (uint32_t i = 0; i < S->ntconsts; i++) {
+        const limba_lx_node *x = nd(L, S->tconsts[i]);
+        limba_sym s = S->sym[x->a];
+        if (s && S->st.sym[s].type && L->store[s].kind == LXL_GLOBAL)
+            lxl_agg_fill(L, x->c, lxl_var_addr(L, s), S->st.sym[s].type);
+    }
     for (uint32_t k = 0; k < nu; k++) {
         uint32_t u = files[k];
         L->suppress = off[u];

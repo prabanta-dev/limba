@@ -183,6 +183,12 @@ void lxl_at(lxl *L, uint32_t node);
 /* expressions (lower_expr.c) */
 limba_id lxl_value(lxl *L, uint32_t node);
 limba_id lxl_addr(lxl *L, uint32_t node);
+/* aggregate node of type t into the memory at dst, component by component
+   (§ 6.8); for an array with computed bounds, its elements at p and its
+   bounds lo, hi (i64 values) */
+void lxl_agg_fill(lxl *L, uint32_t node, limba_id dst, limba_ltype t);
+void lxl_agg_fill_dyn(lxl *L, uint32_t node, limba_id p, limba_ltype t,
+                      limba_id lo, limba_id hi);
 void lxl_branch(lxl *L, uint32_t node, limba_id t, limba_id f);
 /* v, of type from, as a value of type to: range checks and widths */
 limba_id lxl_coerce(lxl *L, limba_id v, limba_ltype from, limba_ltype to);

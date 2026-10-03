@@ -27,6 +27,11 @@ static limba_lx_node *nd(const lxl *L, uint32_t node)
     return &L->S->t->node[node];
 }
 
+static uint32_t list_at(const lxl *L, uint32_t list, uint32_t i)
+{
+    return limba_lx_list_at(L->S->t, list, i);
+}
+
 bool lxl_signed(const lxl *L, limba_ltype t)
 {
     const limba_typeinfo *x = ti(L, t);
@@ -792,6 +797,285 @@ static limba_id index_addr(lxl *L, uint32_t node)
     return addr(L, p, off, (int64_t)esize, 0);
 }
 
+/* ---- aggregates (§ 6.8) ---- */
+
+/* a value of an aggregate, computed once: a scalar, or the address of a
+   record or an array */
+typedef struct {
+    limba_id v, src;
+    limba_ltype t;
+} agg_val;
+
+static agg_val agg_eval(lxl *L, uint32_t vn, limba_ltype t)
+{
+    agg_val r = {LIMBA_NONE, LIMBA_NONE, t};
+    if (nd(L, vn)->kind == LXN_AGG) {
+        r.src = lxl_temp(L, t, vn);
+        lxl_agg_fill(L, vn, r.src, t);
+    } else if (!lxl_scalar(L, t)) {
+        r.src = lxl_addr(L, vn);
+    } else {
+        r.v = lxl_value(L, vn);
+        lxl_at(L, vn); /* a range is checked at the component */
+        r.v = lxl_coerce(L, r.v, ntype(L, vn), t);
+    }
+    return r;
+}
+
+static void agg_store(lxl *L, agg_val e, limba_id a)
+{
+    if (e.src != LIMBA_NONE)
+        lxl_copy(L, a, e.src, e.t);
+    else
+        store(L, e.v, a);
+}
+
+/* component value vn into the memory at a: an aggregate straight in */
+static void agg_put(lxl *L, uint32_t vn, limba_id a, limba_ltype t)
+{
+    if (nd(L, vn)->kind == LXN_AGG)
+        lxl_agg_fill(L, vn, a, t);
+    else
+        agg_store(L, agg_eval(L, vn, t), a);
+}
+
+/* the element positions from pos (an i64 value), count of them, all
+   given e; with spans, those whose index (position + base, an i64
+   value) falls in one of them are left alone */
+typedef struct {
+    int64_t lo, hi;
+} agg_skip;
+
+static void agg_run(lxl *L, limba_id p, limba_ltype et, limba_id pos,
+                    limba_id count, agg_val e, const agg_skip *skip,
+                    uint32_t nskip, limba_id base, bool sg)
+{
+    int64_t esize = (int64_t)ti(L, et)->size;
+    limba_id head = limba_ssa_block(L->ssa), body = limba_ssa_block(L->ssa),
+             out = limba_ssa_block(L->ssa);
+    uint32_t k = limba_ssa_var(L->ssa, LIMBA_T_I64);
+    limba_ssa_def(L->ssa, k, L->cur, lxl_iconst(L, LIMBA_T_I64, 0));
+    limba_ssa_br(L->ssa, L->cur, head);
+    L->cur = head;
+    limba_id kv = limba_ssa_use(L->ssa, k, head, UINT32_MAX);
+    limba_id more = cmp(L, false, LIMBA_CC_SLT, kv, count);
+    limba_ssa_cbr(L->ssa, head, more, body, out);
+    limba_ssa_seal(L->ssa, body);
+    L->cur = body;
+    limba_id at = bin(L, LIMBA_OP_ADD, LIMBA_T_I64, pos, kv);
+    limba_id next = LIMBA_NONE;
+    if (nskip) {
+        /* an index named elsewhere keeps its value */
+        limba_id i = bin(L, LIMBA_OP_ADD, LIMBA_T_I64, at, base), named = 0;
+        for (uint32_t j = 0; j < nskip; j++) {
+            limba_id a = cmp(L, false, sg ? LIMBA_CC_SGE : LIMBA_CC_UGE, i,
+                             lxl_iconst(L, LIMBA_T_I64, skip[j].lo));
+            limba_id b = cmp(L, false, sg ? LIMBA_CC_SLE : LIMBA_CC_ULE, i,
+                             lxl_iconst(L, LIMBA_T_I64, skip[j].hi));
+            limba_id in = bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b);
+            named = j ? bin(L, LIMBA_OP_OR, LIMBA_T_I1, named, in) : in;
+        }
+        limba_id put = limba_ssa_block(L->ssa);
+        next = limba_ssa_block(L->ssa);
+        limba_ssa_cbr(L->ssa, L->cur, named, next, put);
+        limba_ssa_seal(L->ssa, put);
+        L->cur = put;
+    }
+    agg_store(L, e, addr(L, p, at, esize, 0));
+    if (next != LIMBA_NONE) {
+        limba_ssa_br(L->ssa, L->cur, next);
+        limba_ssa_seal(L->ssa, next);
+        L->cur = next;
+    }
+    limba_ssa_def(
+        L->ssa, k, L->cur,
+        bin(L, LIMBA_OP_ADD, LIMBA_T_I64, kv, lxl_iconst(L, LIMBA_T_I64, 1)));
+    limba_ssa_br(L->ssa, L->cur, head);
+    limba_ssa_seal(L->ssa, head);
+    limba_ssa_seal(L->ssa, out);
+    L->cur = out;
+}
+
+/* constant positions from..to (inclusive) given e: a few written out, more
+   in a loop */
+static void agg_span_put(lxl *L, limba_id p, limba_ltype et, __int128 from,
+                         __int128 to, agg_val e)
+{
+    int64_t esize = (int64_t)ti(L, et)->size;
+    if (to - from < 8) {
+        for (__int128 j = from; j <= to; j++)
+            agg_store(L, e,
+                      addr(L, p, lxl_iconst(L, LIMBA_T_I64, 0), 0,
+                           (int64_t)j * esize));
+        return;
+    }
+    agg_run(L, p, et, lxl_iconst(L, LIMBA_T_I64, (int64_t)from),
+            lxl_iconst(L, LIMBA_T_I64, (int64_t)(to - from + 1)), e, NULL, 0,
+            LIMBA_NONE, false);
+}
+
+static __int128 agg_int(lxl *L, uint32_t node)
+{
+    __int128 v = 0;
+    lxs_value_to_int(L->S, L->S->val[node], &v);
+    return v;
+}
+
+/* the elements of array aggregate node into p: fixed bounds (lo, len), or
+   computed ones (dlo, dhi: i64 values, dlo != LIMBA_NONE) */
+static void agg_elems(lxl *L, uint32_t node, limba_id p, limba_ltype t,
+                      limba_id dlo, limba_id dhi)
+{
+    const limba_typeinfo *x = ti(L, t);
+    limba_ltype et = x->elem, it = x->index;
+    bool sg = lxl_signed(L, lxs_base(L->S, it));
+    int64_t esize = (int64_t)ti(L, et)->size;
+    bool dyn = dlo != LIMBA_NONE;
+    __int128 lo = dyn ? 0 : ti(L, it)->lo,
+             len = dyn ? 0 : ti(L, it)->hi - lo + 1;
+    uint32_t list = nd(L, node)->a, n = nd(L, list)->b, npos = 0, other = 0;
+    bool named = false;
+    __int128 nlo = 0, nhi = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        const limba_lx_node *c = nd(L, list_at(L, list, i));
+        if (c->op == LX_KW_ELSE) {
+            other = list_at(L, list, i);
+        } else if (c->a) {
+            __int128 a = agg_int(L, c->a), b = c->b ? agg_int(L, c->b) : a;
+            if (!named || a < nlo)
+                nlo = a;
+            if (!named || b > nhi)
+                nhi = b;
+            named = true;
+        } else {
+            npos++;
+        }
+    }
+    limba_id dlen = LIMBA_NONE;
+    if (dyn) {
+        /* the length, and what the aggregate needs of the bounds, checked
+           before any component (§ 6.8) */
+        limba_id empty =
+            cmp(L, false, sg ? LIMBA_CC_SLT : LIMBA_CC_ULT, dhi, dlo);
+        dlen = lxl_count(L, empty, dlo, dhi);
+        lxl_at(L, node);
+        if (!named) {
+            limba_id np = lxl_iconst(L, LIMBA_T_I64, npos);
+            lxl_check(
+                L, cmp(L, false, other ? LIMBA_CC_SLE : LIMBA_CC_EQ, np, dlen),
+                LXR_RANGE);
+        } else if (!other) {
+            limba_id a = cmp(L, false, LIMBA_CC_EQ, dlo,
+                             lxl_iconst(L, LIMBA_T_I64, (int64_t)nlo));
+            limba_id b = cmp(L, false, LIMBA_CC_EQ, dhi,
+                             lxl_iconst(L, LIMBA_T_I64, (int64_t)nhi));
+            lxl_check(L, bin(L, LIMBA_OP_AND, LIMBA_T_I1, a, b), LXR_RANGE);
+        }
+    }
+    agg_skip *skip = NULL;
+    uint32_t nskip = 0, cap = 0, k = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t comp = list_at(L, list, i);
+        const limba_lx_node *c = nd(L, comp);
+        if (c->op == LX_KW_ELSE)
+            continue;
+        if (!c->a) {
+            /* positional: the k-th element */
+            agg_put(L, c->c,
+                    addr(L, p, lxl_iconst(L, LIMBA_T_I64, 0), 0,
+                         (int64_t)k * esize),
+                    et);
+            k++;
+            continue;
+        }
+        __int128 a = agg_int(L, c->a), b = c->b ? agg_int(L, c->b) : a;
+        LIMBA_GROW(skip, nskip, cap);
+        skip[nskip++] = (agg_skip){(int64_t)a, (int64_t)b};
+        if (!dyn) {
+            if (a == b)
+                agg_put(L, c->c,
+                        addr(L, p, lxl_iconst(L, LIMBA_T_I64, 0), 0,
+                             (int64_t)(a - lo) * esize),
+                        et);
+            else
+                agg_span_put(L, p, et, a - lo, b - lo, agg_eval(L, c->c, et));
+            continue;
+        }
+        /* computed bounds: each end within them, at the index */
+        limba_id ai = lxl_iconst(L, LIMBA_T_I64, (int64_t)a);
+        limba_id bi = lxl_iconst(L, LIMBA_T_I64, (int64_t)b);
+        lxl_at(L, c->a);
+        limba_id in1 =
+            bin(L, LIMBA_OP_AND, LIMBA_T_I1,
+                cmp(L, false, sg ? LIMBA_CC_SGE : LIMBA_CC_UGE, ai, dlo),
+                cmp(L, false, sg ? LIMBA_CC_SLE : LIMBA_CC_ULE, bi, dhi));
+        lxl_check(L, in1, LXR_INDEX);
+        limba_id pos = bin(L, LIMBA_OP_SUB, LIMBA_T_I64, ai, dlo);
+        if (a == b)
+            agg_put(L, c->c, addr(L, p, pos, esize, 0), et);
+        else
+            agg_run(L, p, et, pos,
+                    lxl_iconst(L, LIMBA_T_I64, (int64_t)(b - a + 1)),
+                    agg_eval(L, c->c, et), NULL, 0, LIMBA_NONE, sg);
+    }
+    if (other) {
+        agg_val e = agg_eval(L, nd(L, other)->c, et);
+        if (dyn && !named) {
+            limba_id np = lxl_iconst(L, LIMBA_T_I64, npos);
+            agg_run(L, p, et, np, bin(L, LIMBA_OP_SUB, LIMBA_T_I64, dlen, np),
+                    e, NULL, 0, LIMBA_NONE, sg);
+        } else if (dyn) {
+            agg_run(L, p, et, lxl_iconst(L, LIMBA_T_I64, 0), dlen, e, skip,
+                    nskip, dlo, sg);
+        } else if (!named) {
+            agg_span_put(L, p, et, npos, len - 1, e);
+        } else {
+            /* the runs between the indices named */
+            for (uint32_t i = 1; i < nskip; i++)
+                for (uint32_t j = i; j > 0 && skip[j].lo < skip[j - 1].lo;
+                     j--) {
+                    agg_skip s2 = skip[j];
+                    skip[j] = skip[j - 1];
+                    skip[j - 1] = s2;
+                }
+            __int128 from = lo;
+            for (uint32_t i = 0; i <= nskip; i++) {
+                __int128 to =
+                    i < nskip ? (__int128)skip[i].lo - 1 : lo + len - 1;
+                if (to >= from)
+                    agg_span_put(L, p, et, from - lo, to - lo, e);
+                if (i < nskip)
+                    from = (__int128)skip[i].hi + 1;
+            }
+        }
+    }
+    free(skip);
+}
+
+void lxl_agg_fill(lxl *L, uint32_t node, limba_id dst, limba_ltype t)
+{
+    const limba_typeinfo *x = ti(L, t);
+    if (x->kind == LIMBA_LTK_RECORD) {
+        uint32_t list = nd(L, node)->a;
+        for (uint32_t i = 0; i < nd(L, list)->b; i++) {
+            const limba_lx_node *c = nd(L, list_at(L, list, i));
+            const limba_field *f = &L->S->ts.field[x->first + c->d - 1];
+            agg_put(L, c->c,
+                    addr(L, dst, lxl_iconst(L, LIMBA_T_I64, 0), 0,
+                         (int64_t)f->offset),
+                    f->type);
+        }
+        return;
+    }
+    agg_elems(L, node, dst, t, LIMBA_NONE, LIMBA_NONE);
+}
+
+void lxl_agg_fill_dyn(lxl *L, uint32_t node, limba_id p, limba_ltype t,
+                      limba_id lo, limba_id hi)
+{
+    agg_elems(L, node, p, t, lo, hi);
+}
+
 limba_id lxl_addr(lxl *L, uint32_t node)
 {
     limba_lx_node *x = nd(L, node);
@@ -826,6 +1110,14 @@ limba_id lxl_addr(lxl *L, uint32_t node)
         limba_id r;
         lxl_call(L, node, &r);
         return r;
+    }
+    case LXN_AGG: {
+        /* a value: computed whole in a slot of its own, then copied
+           (§ 6.8) */
+        limba_ltype t = ntype(L, node);
+        limba_id tmp = lxl_temp(L, t, node);
+        lxl_agg_fill(L, node, tmp, t);
+        return tmp;
     }
     }
     return lxl_emit(L, LIMBA_OP_NULLV, LIMBA_T_PTR, 0, 0, 0, NULL, 0);
@@ -1164,6 +1456,32 @@ void lxl_assign(lxl *L, uint32_t node, uint32_t target, uint32_t value)
     limba_ltype t = ntype(L, target);
     /* the target first, its index checked, then the value (luxia_0.md
        § 6: from left to right) */
+    if (!lxl_scalar(L, t) && nd(L, value)->kind == LXN_AGG &&
+        (ti(L, t)->flags & LIMBA_TF_DYNAMIC)) {
+        /* computed bounds: the value whole in a block of its own, then
+           moved into the elements, their old Strings released (§ 6.8) */
+        const lxl_store *st = &L->store[S->sym[target]];
+        limba_ltype it = ti(L, t)->index, et = ti(L, t)->elem;
+        limba_id lo = lxl_to_i64(L, st->lo, it), hi = lxl_to_i64(L, st->hi, it);
+        limba_id empty = cmp(L, false,
+                             lxl_signed(L, lxs_base(S, it)) ? LIMBA_CC_SLT
+                                                            : LIMBA_CC_ULT,
+                             hi, lo);
+        limba_id n = lxl_count(L, empty, lo, hi);
+        limba_id bytes = bin(L, LIMBA_OP_MUL, LIMBA_T_I64, n,
+                             lxl_iconst(L, LIMBA_T_I64,
+                                        (int64_t)ti(L, et)->size));
+        limba_id tmp = lxl_rt(L, LIMBA_RT_MEM_ALLOC, LIMBA_T_PTR, &bytes, 1);
+        uint32_t z[3] = {tmp, lxl_iconst(L, LIMBA_T_I8, 0), bytes};
+        lxl_emit(L, LIMBA_OP_MEMSET, LIMBA_T_VOID, 0, 0, 0, z, 3);
+        lxl_agg_fill_dyn(L, value, tmp, t, lo, hi);
+        lxl_live(L, st->addr);
+        lxl_rc(L, LIMBA_OP_RELEASE, st->addr, et, n);
+        uint32_t m[3] = {st->addr, tmp, bytes};
+        lxl_emit(L, LIMBA_OP_MEMCPY, LIMBA_T_VOID, 0, 0, 0, m, 3);
+        lxl_rt(L, LIMBA_RT_MEM_FREE, LIMBA_T_VOID, &tmp, 1);
+        return;
+    }
     if (!lxl_scalar(L, t)) {
         limba_id dst = lxl_addr(L, target);
         limba_id src = lxl_addr(L, value);

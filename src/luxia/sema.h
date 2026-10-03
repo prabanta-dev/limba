@@ -31,6 +31,10 @@
 #define LXS_TOP 8u        /* declared at the level of the program */
 #define LXS_CBORDER 16u   /* a name of the boundary with C (§ 3.13, § 9.9) */
 #define LXS_CPLATFORM 32u /* a C type by name: binds to the platform */
+#define LXS_TCONST                                                             \
+    64u /* a typed constant of a record or array type:                         \
+           read as a variable, filled before any code                          \
+           (§ 4.3) */
 
 /* the platforms whose C the C types by name follow (limba --target) */
 enum { LXS_X86_64_LINUX, LXS_AARCH64_LINUX, LXS_X86_64_WINDOWS };
@@ -208,6 +212,9 @@ typedef struct {
     /* per symbol: a routine or a variable some initialisation reaches,
        through the calls (§ 7 of the proposal: only that goes in the IR) */
     uint8_t *reached;
+    /* the typed constants of records and arrays (§ 4.3), CONST nodes */
+    uint32_t *tconsts;
+    uint32_t ntconsts, captconsts;
 } limba_lxs;
 
 void limba_lxs_init(limba_lxs *S, limba_lx_ast *t, limba_lx *lx,
@@ -331,6 +338,12 @@ bool lxs_assign_to(limba_lxs *S, uint32_t node, limba_ltype target,
                    const char *what);
 /* a variable that may be written (for :=, var and out arguments) */
 bool lxs_writable(limba_lxs *S, uint32_t node, bool report);
+/* the constant d of type t, declared with an aggregate: a typed constant
+   (§ 4.3) if t is a record or an array; false if t is neither */
+bool lxs_typed_const(limba_lxs *S, uint32_t d, limba_sym s, limba_ltype t);
+/* node is an aggregate of constants, of a type t with no BigInt: a
+   variable it initialises is ready at once (§ 11.5) */
+bool lxs_agg_ready(const limba_lxs *S, uint32_t node, limba_ltype t);
 /* a call as a statement: it must be a procedure */
 limba_ltype lxs_call_stmt(limba_lxs *S, uint32_t node, uint32_t scope);
 

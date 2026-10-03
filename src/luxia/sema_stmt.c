@@ -65,6 +65,12 @@ static void local_const(limba_lxs *S, uint32_t d, uint32_t scope)
     limba_ltype t = x->b ? lxs_type(S, x->b, scope, 0) : 0;
     uint32_t errors = S->rep->errors;
     limba_ltype vt = lxs_expr(S, x->c, scope, t);
+    if (t && (lxs_ty(S, t)->kind == LIMBA_LTK_RECORD ||
+              lxs_ty(S, t)->kind == LIMBA_LTK_ARRAY)) {
+        lxs_typed_const(S, d, lxs_declare(S, scope, x->a, LIMBA_LSYM_CONST, d),
+                        t);
+        return;
+    }
     uint32_t v = S->val[x->c];
     if (!v && vt && S->rep->errors == errors)
         lxs_error(S, LXE_NOT_CONSTANT, x->c,

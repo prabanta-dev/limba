@@ -322,6 +322,7 @@ void limba_lxs_free(limba_lxs *S)
     free(S->sym);
     free(S->val);
     free(S->spelling);
+    free(S->tconsts);
     lxs_unit_free(S);
     limba_types_free(&S->ts);
     limba_symtab_free(&S->st);
@@ -527,6 +528,8 @@ static void resolve_const(limba_lxs *S, limba_sym s)
     limba_ltype t = x->b ? lxs_type(S, x->b, scope, 0) : 0;
     uint32_t errors = S->rep->errors;
     limba_ltype vt = lxs_expr(S, x->c, scope, t);
+    if (lxs_typed_const(S, d, s, t))
+        return;
     if (!S->val[x->c]) {
         if (vt && S->rep->errors == errors)
             lxs_error(S, LXE_NOT_CONSTANT, x->c,

@@ -576,6 +576,8 @@ static bool ready(const limba_lxs *S, limba_sym s)
 {
     const limba_symbol *y = &S->st.sym[s];
     const limba_lx_node *d = &S->t->node[y->node];
+    if (d->kind == LXN_VAR && d->c && lxs_agg_ready(S, d->c, y->type))
+        return true; /* an aggregate of constants (§ 11.5) */
     if (d->kind != LXN_VAR || !d->c || !S->val[d->c] || !y->type)
         return false;
     unsigned k = S->ts.t[y->type].kind;

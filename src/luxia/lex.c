@@ -477,6 +477,12 @@ static void token(lexer *L)
     case '^':
         kind = LX_CARET;
         break;
+    case '{':
+        kind = LX_LBRACE; /* an aggregate (§ 6.8) */
+        break;
+    case '}':
+        kind = LX_RBRACE;
+        break;
     default:
         if (is_alpha(c)) {
             name(L);
