@@ -1302,6 +1302,109 @@ static uint32_t agg_part(G *g, unsigned t, int d)
     return i;
 }
 
+/* ---- records and arrays compared whole (§ 6.2) ---- */
+
+/* a variable visible here that is a record or an array: fixed, open (a
+   parameter) or computed; -1 if none */
+static int pick_whole(G *g)
+{
+    uint32_t n = 0, chosen = 0;
+    for (uint32_t i = 0; i < g->nscope; i++) {
+        uint32_t v = g->scope[i], vt = g->v[v].t;
+        if (is_const(g, v) || !(is_record(g, vt) || is_array(g, vt)) ||
+            (g->ty[vt].k == K_ARRAY && !program_array(g, vt)))
+            continue;
+        /* open and computed arrays, where lengths count, weigh more */
+        uint32_t wt = g->ty[vt].k == K_OPEN || g->ty[vt].k == K_DYN ? 4 : 1;
+        n += wt;
+        if (below(g, n) < wt)
+            chosen = v;
+    }
+    return n ? (int)chosen : -1;
+}
+
+/* an aggregate of the components of variable w of record or fixed array
+   type t, in order, one of them often another value: a copy of w, or w
+   changed in one place */
+static uint32_t agg_copy(G *g, uint32_t t, uint32_t w, int d)
+{
+    uint32_t vals[16], n = ncells(g, t);
+    uint32_t change = chance(g, 50) ? below(g, n) : UINT32_MAX;
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t ct = is_record(g, t) ? field_type(g, t, k) : g->ty[t].elem;
+        if (k == change) {
+            vals[k] = agg_component(g, ct, d);
+        } else if (is_record(g, t)) {
+            vals[k] = field_ref(g, w, k);
+        } else {
+            /* the literal first: new_e may move g->e */
+            uint32_t ix = lit(g, g->ty[t].index, g->ty[t].lo + k);
+            vals[k] = new_e(g, E_INDEX, ct);
+            g->e[vals[k]].var = w;
+            g->e[vals[k]].a = ix;
+        }
+    }
+    uint32_t i = new_e(g, E_AGG, t);
+    g->e[i].args = keep_list(g, vals, n);
+    g->e[i].nargs = n;
+    g->e[i].var = new_v(g, t, V_LOCAL);
+    return i;
+}
+
+/* a fixed array variable visible here that could be given to an open
+   parameter of type ot (the same elements, an index of the same base);
+   -1 if none */
+static int pick_passable(G *g, uint32_t ot)
+{
+    uint32_t n = 0, chosen = 0;
+    for (uint32_t i = 0; i < g->nscope; i++) {
+        uint32_t v = g->scope[i], vt = g->v[v].t;
+        if (is_const(g, v) || !program_array(g, vt) ||
+            g->ty[vt].elem != g->ty[ot].elem ||
+            index_base(g, vt) != g->ty[ot].index)
+            continue;
+        if (below(g, ++n) == 0)
+            chosen = v;
+    }
+    return n ? (int)chosen : -1;
+}
+
+/* w = x or w <> x, w a record or an array, x of its type: itself, a copy
+   of it changed in one place or not, an aggregate, another variable, a
+   call; on either side */
+static uint32_t whole_cmp(G *g, uint32_t w, int d)
+{
+    uint32_t t = g->v[w].t, a = var_ref(g, w), b = 0;
+    unsigned k = g->ty[t].k;
+    if (k == K_OPEN || k == K_DYN) {
+        /* an aggregate of its own length, positional (§ 6.2, § 6.8); for
+           an open one, a fixed array that could be passed to it; itself */
+        uint32_t ot =
+            k == K_OPEN
+                ? t
+                : new_type(g, (xt){K_OPEN, g->ty[t].base, index_base(g, t),
+                                   g->ty[t].elem, 0, 0, 0, 0});
+        int f = k == K_OPEN && chance(g, 40) ? pick_passable(g, ot) : -1;
+        b = f >= 0          ? var_ref(g, (uint32_t)f)
+            : chance(g, 70) ? agg_literal(g, ot, d - 1)
+                            : var_ref(g, w);
+    } else if (chance(g, 35)) {
+        b = agg_copy(g, t, w, d - 1);
+    } else if (chance(g, 25)) {
+        b = agg_literal(g, t, d - 1);
+    } else {
+        int h = d > 0 && chance(g, 40) ? pick_agg_func(g, t) : -1;
+        b = h >= 0 ? call_expr(g, (uint32_t)h, d - 1)
+                   : var_ref(g, (uint32_t)pick_typed(g, t, false));
+    }
+    if (chance(g, 50)) {
+        uint32_t c = a;
+        a = b;
+        b = c;
+    }
+    return binop(g, chance(g, 50) ? O_EQ : O_NE, T_BOOL, a, b);
+}
+
 static uint32_t conv(G *g, uint32_t t, uint32_t a)
 {
     uint32_t i = new_e(g, E_CONV, t);
@@ -2294,6 +2397,9 @@ static uint32_t expr(G *g, unsigned t, int d, bool need_var)
         return conv(g, t, expr(g, int_type(g), d - 1, true));
     }
     if (f == 'L') {
+        int w = chance(g, 14) ? pick_whole(g) : -1;
+        if (w >= 0)
+            return whole_cmp(g, (uint32_t)w, d);
         int p = chance(g, 10) ? pick_typed(g, 2, false) : -1;
         if (p >= 0) {
             uint32_t pt = g->v[p].t;
@@ -3064,6 +3170,26 @@ static uint32_t stmt(G *g, uint32_t *out)
         if (n)
             return copy_show(g, agg_self(g, g->v[d].t, depth(g), d), d, !pure,
                              out);
+    }
+    if (!pure && chance(g, 6)) {
+        /* records and arrays compared whole, the results printed, so
+           that a wrong one shows (§ 6.2) */
+        uint32_t items[5], k = 0;
+        for (uint32_t j = 0, n = 1 + below(g, 3); j < n; j++) {
+            int w = pick_whole(g);
+            if (w < 0)
+                break;
+            if (k)
+                items[k++] = new_e(g, E_STR, 0);
+            items[k++] = whole_cmp(g, (uint32_t)w, depth(g));
+        }
+        if (k) {
+            uint32_t s = new_s(g, S_WRITE);
+            g->st[s].args = keep_list(g, items, k);
+            g->st[s].nargs = k;
+            out[0] = s;
+            return 1;
+        }
     }
     if (!pure && chance(g, 1)) {
         /* halt(0), halt(k) for k in 2..255 but 141, or a computed status
@@ -5303,10 +5429,79 @@ static v128 big_binary(X *x, uint32_t i, unsigned op, v128 l, v128 r)
     }
 }
 
+/* the cells of a record or an array operand a evaluated to base: how
+   many (an open or computed array has its own bounds) */
+static uint32_t whole_cells(X *x, uint32_t a)
+{
+    const xe *e = &x->g->e[a];
+    unsigned k = x->g->ty[e->t].k;
+    if (e->k == E_VAR && (k == K_OPEN || k == K_DYN))
+        return x->ahi[e->var] < x->alo[e->var]
+                   ? 0
+                   : (uint32_t)(x->ahi[e->var] - x->alo[e->var]) + 1;
+    return ncells(x->g, e->t);
+}
+
+/* two scalars of type t equal, as = says (§ 6.2) */
+static bool scalar_eq(X *x, uint32_t i, uint32_t t, v128 a, v128 b)
+{
+    unsigned bt = base(x->g, t);
+    if (x->g->ty[t].k == K_PTR)
+        return a == b;
+    if (bt == T_STR) {
+        const struct xstr *p = &x->g->str[(uint32_t)a],
+                          *q = &x->g->str[(uint32_t)b];
+        return p->n == q->n && !memcmp(p->b, q->b, p->n);
+    }
+    if (bt == T_BIG)
+        return big_binary(x, i, O_EQ, a, b) != 0;
+    if (fam(bt) == 'F')
+        return fval(a) == fval(b);
+    return a == b;
+}
+
+/* l = r or l <> r between records or arrays (§ 6.2): the left operand is
+   its value before the right one runs; the same number of cells, then
+   each, the left one and the right one checked (§ 3.11), up to the first
+   difference */
+static v128 whole_eq(X *x, uint32_t i)
+{
+    G *g = x->g;
+    const xe *e = &g->e[i];
+    uint32_t lt = g->e[e->a].t;
+    v128 l = ev(x, e->a);
+    if (x->trap)
+        return 0;
+    uint32_t nl = whole_cells(x, e->a);
+    v128 *snap = limba_xmalloc(((size_t)nl + 1) * sizeof(*snap));
+    if (nl)
+        memcpy(snap, &x->cell[(uint32_t)l], nl * sizeof(*snap));
+    v128 r = ev(x, e->b);
+    uint32_t nr = x->trap ? 0 : whole_cells(x, e->b);
+    bool same = !x->trap && nl == nr;
+    for (uint32_t k = 0; same && k < nl; k++) {
+        uint32_t ct = is_record(g, lt) ? field_type(g, lt, k) : g->ty[lt].elem;
+        valid(x, i, ct, snap[k]);
+        if (!x->trap)
+            valid(x, i, ct, x->cell[(uint32_t)r + k]);
+        if (x->trap)
+            break;
+        same = scalar_eq(x, i, ct, snap[k], x->cell[(uint32_t)r + k]);
+    }
+    free(snap);
+    if (x->trap)
+        return 0;
+    return (e->op == O_EQ) == same;
+}
+
 static v128 binary(X *x, uint32_t i)
 {
     const xe *e = &x->g->e[i];
     unsigned op = e->op, t = base(x->g, e->t);
+    uint32_t at = x->g->e[e->a].t;
+    if ((op == O_EQ || op == O_NE) &&
+        (is_record(x->g, at) || is_array(x->g, at)))
+        return whole_eq(x, i);
     if (t == T_BOOL && (op == O_AND || op == O_OR)) {
         v128 l = ev(x, e->a);
         if (x->trap)

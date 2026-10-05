@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The random programs compare records and arrays whole, in conditions
+  and in lines printed for that: a variable with itself, with a copy of
+  it changed in one place or not, with an aggregate, another variable or
+  a call, on either side; open and computed arrays with aggregates of
+  their own length and with the arrays they could be given. The programs
+  of every seed change.
+
 - Records and arrays compared whole in the compiler (specification
   § 6.2): `=` and `<>` between values of the same type, an open operand
   (a parameter, `p^` of an array made by new) with any array that could
