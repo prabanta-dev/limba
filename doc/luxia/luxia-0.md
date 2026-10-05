@@ -312,8 +312,9 @@ type Vector = array[Int32 range <>] of Float64;
 - Modes: without a mode the elements are read-only; with `var` (or `out`)
   the elements can be written, while the bounds remain those of the
   argument. The array is always passed by address: no copy is made.
-- In Luxia 0 an open-array parameter is neither assigned nor read as a
-  whole (`a := b`): the program works on its elements.
+- In Luxia 0 an open-array parameter is not assigned as a whole
+  (`a := b`): the program works on its elements. It is **compared** as a
+  whole (`a = b`, § 6.2).
 - An open-array parameter can be passed on to another open-array
   parameter, with the same bounds.
 - An aggregate passed to an open-array parameter has the bounds given
@@ -356,8 +357,8 @@ every field, in the order of the declaration: `{x: 1.0; y: 2.0; z:
   `p[i]` is checked against those bounds (index error), after the `nil`
   and the dangling checks; `low(p^)`, `high(p^)` and `length(p^)` give
   them, in the base type of `I`. As for an open-array parameter, `p^` is
-  neither assigned nor read as a whole: the program works on its
-  elements, or copies them with `move`, treats them with `translate`,
+  not assigned as a whole, only compared (§ 6.2): the program works on
+  its elements, or copies them with `move`, treats them with `translate`,
   `reverse` and `occurrences` (§ 9.5), and reads and writes them with
   `readbytes` and `writebytes` (§ 9.1, § 9.2).
 - There is no pointer arithmetic and no way to take the address of a
@@ -404,6 +405,9 @@ This follows Ada's treatment of uninitialised objects in its strict form
   an invalid value is a range error, reported at the `.`, `^` or `[`.
 - A copy (`r := p^`) carries the invalid values with it; they are found
   when the component is read.
+- A **comparison** of records or arrays (`r = s`, § 6.2) reads their
+  components: an invalid value it reaches is a range error, reported at
+  the operator.
 - A value read by another route (a scalar `var` parameter bound to a
   component) is not checked in Luxia 0: it keeps the invalid value.
 - A scalar variable needs none of this: reading it before assigning it is
@@ -690,8 +694,60 @@ primary: `2 ** -1` is written `2 ** (-1)`, as in Ada.
 | `CBool` | yes | yes, `false < true` |
 | pointers (and `nil`) | yes | no |
 | `CPointer` and opaque pointer types (and `nil`) | yes | no |
+| records, arrays | yes, component by component (below) | no |
 
-Records and arrays are not compared as a whole.
+**Records and arrays** are compared whole with `=` and `<>`, as in Ada:
+
+```pascal
+if p = q then ...                         // every field
+if p = {x: 0.0; y: 0.0; z: 0.0} then ...  // an aggregate, typed by p
+function Same(s, t: Samples): Boolean;    // Samples = array[Int32 range <>] of Float64
+begin
+  return s = t;                           // same length, same elements
+end Same;
+```
+
+- The operands have the **same type**, as in every comparison. Types are
+  told apart by name: two arrays declared in two places with the same
+  shape have different types, so two arrays with computed bounds (each
+  declaration its own anonymous type) are compared only through an
+  open-array parameter, or each with an aggregate; two variables of the
+  **same** declaration (`var a, b: array[Int32 range 1..n] of Float64`)
+  have the same type.
+- **An open operand** (an open-array parameter, or `p^` of a pointer to
+  an open array) is compared with every value that could be passed to
+  it (§ 3.7.1): elements of the same type, an index of the same base
+  type; open operands of another type with the same element and index
+  base are included.
+- An **aggregate** operand takes the type of the other operand, on
+  either side (§ 6.8); between two aggregates there is no type (a
+  compile-time error).
+- `a = b` is true when the two values have **the same components**:
+  records field by field, in the order of the declaration; arrays when
+  they have the **same length** and the same elements **in the same
+  position** (the first with the first, and so on), whatever their
+  bounds: an `array[Int32 range 5..9]` and an `array[Int32 range 1..5]`
+  with the same five elements, passed to `s` and `t`, are equal. Arrays
+  of different lengths are not equal; two empty arrays are equal.
+- Each component is compared with the `=` of its type, at every depth:
+  reals with the `=` of reals, so `-0.0 = 0.0` and a NaN is equal to
+  nothing; strings and `BigInt` values by value; pointers by address
+  (the objects they point to are not compared); C types by their
+  representation. The bytes between fields, if any, do not count.
+- **A record with a NaN field is not equal to itself**: after
+  `var z: Float64 := 0.0; p.x := z / z;`, `p = p` is false and
+  `p <> p` is true. This is the result of comparing the fields one by
+  one, which the whole comparison must give.
+- `a <> b` is `not (a = b)`.
+- **Order**: the operands are evaluated first, left to right (§ 6.7);
+  then the components are compared in order (fields in the order of the
+  declaration, elements from the first) and the comparison **stops at
+  the first difference**. Comparing has no effects; the order decides
+  only which invalid value (§ 3.11) is found: one reached before a
+  difference is a range error, reported at the operator; one after it is
+  not read. Ada leaves both the order and the stop unspecified.
+- Records and arrays have no order: `<`, `<=`, `>`, `>=` between them
+  are a compile-time error.
 
 ### 6.3 Integer semantics
 
@@ -818,7 +874,8 @@ An **aggregate** writes a whole record or array value between braces.
 - **The type comes from the context**, as in Ada: the declared type of a
   constant or variable, the target of an assignment, a parameter without
   a mode (`var` and `out` want a variable), the result of a function
-  (`return`), a component of an enclosing aggregate. An aggregate
+  (`return`), a component of an enclosing aggregate, the other operand of
+  `=` or `<>` (§ 6.2). An aggregate
   anywhere else has no type: a compile-time error. There is no
   conversion of an aggregate (`Vector({...})`): every context where it
   is allowed already gives the type.
@@ -878,7 +935,8 @@ An **aggregate** writes a whole record or array value between braces.
 - `p^ := {...}` assigns a record or an array with fixed bounds; for a
   pointer to an open array it is an error, as every whole assignment of
   `p^` (§ 3.10).
-- Records and arrays are still not compared as a whole (§ 6.2).
+- An aggregate may be an operand of `=` and `<>`, typed by the other
+  operand (§ 6.2): `if v = {x: 0.0; y: 0.0; z: 0.0} then`.
 
 ## 7. Statements
 
@@ -1866,7 +1924,7 @@ and tools can anticipate them.
 - Exceptions and handlers (`raise`, `try ... except`), grouping the
   run-time checks as Ada's `Constraint_Error` does.
 - Named association of arguments (`F(x => 1)`), optional.
-- Comparison of whole records and arrays with `=` and `<>`.
+- An order (`<`) on arrays of discrete elements, as in Ada.
 - Sets; the brackets of Pascal (`[a, b]`) remain free for them.
 - Assignment of whole open arrays, with a length check.
 - Iteration over the Unicode characters of a string.

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The specification compares whole records and arrays with `=` and `<>`
+  (§ 6.2), as Ada does: records field by field, arrays by length and
+  position whatever their bounds, each component with the `=` of its
+  type (a record holding a NaN is not equal to itself), in order up to
+  the first difference, an invalid value reached a range error. An open
+  operand is compared with every array it could be given; an aggregate
+  takes the type of the other operand. No order on records and arrays
+  (§ 3.7.1, 3.10, 3.11, 6.8, appendix A).
+
 - fasta writes its tables as typed constants: the codes and their
   weights as aggregates, the odds added up at the start. The same output;
   the interpreter takes 0.05 % more steps at -O0 and 0.1 % at -O1, the
