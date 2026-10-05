@@ -1197,6 +1197,301 @@ static limba_id new_array(lxl *L, uint32_t node)
     return p;
 }
 
+/* ---- comparisons of records and arrays (§ 6.2) ---- */
+
+static bool narrow(lxl *L, limba_ltype t);
+
+/* what a comparison function gives back, an i32 */
+enum { EQ_SAME, EQ_DIFF, EQ_BAD };
+
+static bool is_array(lxl *L, limba_ltype t)
+{
+    unsigned k = ti(L, t)->kind;
+    return k == LIMBA_LTK_ARRAY || k == LIMBA_LTK_OPEN;
+}
+
+static bool is_whole(lxl *L, limba_ltype t)
+{
+    return is_array(L, t) || ti(L, t)->kind == LIMBA_LTK_RECORD;
+}
+
+/* (ptr, ptr) -> i32 for a record, (ptr, i64, ptr, i64) -> i32 for an
+   array: the elements and their number */
+static limba_id eq_ftype(lxl *L, limba_ltype t)
+{
+    limba_id rec[2] = {LIMBA_T_PTR, LIMBA_T_PTR},
+             arr[4] = {LIMBA_T_PTR, LIMBA_T_I64, LIMBA_T_PTR, LIMBA_T_I64};
+    return is_array(L, t) ? limba_type_func(L->m, LIMBA_T_I32, arr, 4, false)
+                          : limba_type_func(L->m, LIMBA_T_I32, rec, 2, false);
+}
+
+/* the number of elements of an array with static bounds */
+static int64_t static_length(lxl *L, limba_ltype t)
+{
+    const limba_typeinfo *ix = ti(L, ti(L, t)->index);
+    return ix->hi < ix->lo ? 0 : (int64_t)(ix->hi - ix->lo + 1);
+}
+
+/* in a comparison function: return code if cond holds */
+static void eq_ret_if(lxl *L, limba_id cond, int code)
+{
+    limba_id ret = limba_ssa_block(L->ssa), go = limba_ssa_block(L->ssa);
+    limba_ssa_cbr(L->ssa, L->cur, cond, ret, go);
+    limba_ssa_seal(L->ssa, ret);
+    limba_ssa_seal(L->ssa, go);
+    L->cur = ret;
+    limba_ssa_ret(L->ssa, ret, lxl_iconst(L, LIMBA_T_I32, code));
+    L->cur = go;
+}
+
+/* a call of the comparison function of t: its result, an i32 */
+static limba_id eq_call(lxl *L, limba_ltype t, limba_id a, limba_id na,
+                        limba_id b, limba_id nb)
+{
+    uint32_t o[4] = {a, na, b, nb}, r[2] = {a, b};
+    bool arr = is_array(L, t);
+    return lxl_emit(L, LIMBA_OP_CALL, LIMBA_T_I32, 0, L->eq_of[t] - 1, 0,
+                    arr ? o : r, arr ? 4 : 2);
+}
+
+/* v, of a scalar type narrower than its base, is valid: an i1 */
+static limba_id valid(lxl *L, limba_id v, limba_ltype t)
+{
+    const limba_typeinfo *x = ti(L, t), *b = ti(L, lxs_base(L->S, t));
+    limba_id it = lxl_type(L, t);
+    bool sg = lxl_signed(L, t);
+    limba_id ok = lxl_iconst(L, LIMBA_T_I1, 1);
+    if (x->lo > b->lo)
+        ok = cmp(L, false, sg ? LIMBA_CC_SGE : LIMBA_CC_UGE, v,
+                 lxl_iconst(L, it, (int64_t)x->lo));
+    if (x->hi < b->hi)
+        ok = bin(L, LIMBA_OP_AND, LIMBA_T_I1, ok,
+                 cmp(L, false, sg ? LIMBA_CC_SLE : LIMBA_CC_ULE, v,
+                     lxl_iconst(L, it, (int64_t)(uint64_t)x->hi)));
+    return ok;
+}
+
+/* in a comparison function: the components of type t at a and b; a
+   difference or an invalid value is returned (§ 3.11: the left one, then
+   the right one, then the difference) */
+static void eq_component(lxl *L, limba_ltype t, limba_id a, limba_id b)
+{
+    if (is_whole(L, t)) {
+        limba_id n = is_array(L, t)
+                         ? lxl_iconst(L, LIMBA_T_I64, static_length(L, t))
+                         : LIMBA_NONE;
+        limba_id st = eq_call(L, t, a, n, b, n);
+        limba_id ret = limba_ssa_block(L->ssa), go = limba_ssa_block(L->ssa);
+        limba_ssa_cbr(
+            L->ssa, L->cur,
+            cmp(L, false, LIMBA_CC_NE, st, lxl_iconst(L, LIMBA_T_I32, EQ_SAME)),
+            ret, go);
+        limba_ssa_seal(L->ssa, ret);
+        limba_ssa_seal(L->ssa, go);
+        L->cur = ret;
+        limba_ssa_ret(L->ssa, ret, st);
+        L->cur = go;
+        return;
+    }
+    limba_id va = load(L, t, a);
+    if (narrow(L, t))
+        eq_ret_if(L,
+                  cmp(L, false, LIMBA_CC_EQ, valid(L, va, t),
+                      lxl_iconst(L, LIMBA_T_I1, 0)),
+                  EQ_BAD);
+    limba_id vb = load(L, t, b);
+    if (narrow(L, t))
+        eq_ret_if(L,
+                  cmp(L, false, LIMBA_CC_EQ, valid(L, vb, t),
+                      lxl_iconst(L, LIMBA_T_I1, 0)),
+                  EQ_BAD);
+    eq_ret_if(L, compare(L, LX_NE, t, va, vb), EQ_DIFF);
+}
+
+/* the body of the comparison function fid of type t */
+static void eq_body(lxl *L, limba_ltype t, limba_id fid)
+{
+    lxl_begin_function(L, fid);
+    L->result = 0;
+    const limba_func *f = limba_ssa_func(L->ssa);
+    limba_id p[4];
+    for (unsigned i = 0; i < (is_array(L, t) ? 4u : 2u); i++)
+        p[i] = f->blocks[0].insts[i];
+    const limba_typeinfo *x = ti(L, t);
+    limba_id zero = lxl_iconst(L, LIMBA_T_I64, 0);
+    if (x->kind == LIMBA_LTK_RECORD) {
+        for (uint32_t i = 0; i < x->count; i++) {
+            const limba_field *fd = &L->S->ts.field[x->first + i];
+            eq_component(L, fd->type,
+                         addr(L, p[0], zero, 0, (int64_t)fd->offset),
+                         addr(L, p[1], zero, 0, (int64_t)fd->offset));
+        }
+    } else {
+        /* the same number of elements, then each, from the first */
+        eq_ret_if(L, cmp(L, false, LIMBA_CC_NE, p[1], p[3]), EQ_DIFF);
+        int64_t esize = (int64_t)ti(L, x->elem)->size;
+        limba_id head = limba_ssa_block(L->ssa), body = limba_ssa_block(L->ssa),
+                 out = limba_ssa_block(L->ssa);
+        uint32_t k = limba_ssa_var(L->ssa, LIMBA_T_I64);
+        limba_ssa_def(L->ssa, k, L->cur, zero);
+        limba_ssa_br(L->ssa, L->cur, head);
+        L->cur = head;
+        limba_id kv = limba_ssa_use(L->ssa, k, head, UINT32_MAX);
+        limba_ssa_cbr(L->ssa, head, cmp(L, false, LIMBA_CC_SLT, kv, p[1]), body,
+                      out);
+        limba_ssa_seal(L->ssa, body);
+        L->cur = body;
+        eq_component(L, x->elem, addr(L, p[0], kv, esize, 0),
+                     addr(L, p[2], kv, esize, 0));
+        limba_ssa_def(L->ssa, k, L->cur,
+                      bin(L, LIMBA_OP_ADD, LIMBA_T_I64, kv,
+                          lxl_iconst(L, LIMBA_T_I64, 1)));
+        limba_ssa_br(L->ssa, L->cur, head);
+        limba_ssa_seal(L->ssa, head);
+        limba_ssa_seal(L->ssa, out);
+        L->cur = out;
+    }
+    limba_ssa_ret(L->ssa, L->cur, lxl_iconst(L, LIMBA_T_I32, EQ_SAME));
+    lxl_end_function(L, 0, false);
+}
+
+/* the comparison function of t, after those of its components */
+static void eq_make(lxl *L, limba_ltype t)
+{
+    if (L->eq_of[t])
+        return;
+    const limba_typeinfo *x = ti(L, t);
+    if (x->kind == LIMBA_LTK_RECORD) {
+        for (uint32_t i = 0; i < x->count; i++) {
+            limba_ltype ft = L->S->ts.field[x->first + i].type;
+            if (is_whole(L, ft))
+                eq_make(L, ft);
+        }
+    } else if (is_whole(L, x->elem)) {
+        eq_make(L, x->elem);
+    }
+    limba_id fid = lxl_eq_declare(L, t, eq_ftype(L, t));
+    L->eq_of[t] = fid + 1;
+    eq_body(L, t, fid);
+}
+
+void lxl_eq_functions(lxl *L)
+{
+    limba_lxs *S = L->S;
+    for (uint32_t i = 0; i + 1 < S->neqs && !L->stopped; i += 2) {
+        uint32_t who = S->eqs[i + 1];
+        if (!(who & LXS_INIT) && S->reached && !S->reached[who])
+            continue;
+        eq_make(L, ntype(L, nd(L, S->eqs[i])->a));
+    }
+}
+
+/* may evaluating node run code of the program (a call)? */
+static bool runs_code(lxl *L, uint32_t node)
+{
+    if (!node)
+        return false;
+    const limba_lx_node *x = nd(L, node);
+    switch (x->kind) {
+    case LXN_CALL:
+        return true;
+    case LXN_BINARY:
+    case LXN_INDEX:
+        return runs_code(L, x->a) || runs_code(L, x->b);
+    case LXN_IN:
+        return runs_code(L, x->a) || runs_code(L, x->b) || runs_code(L, x->c);
+    case LXN_UNARY:
+    case LXN_SEL:
+    case LXN_DEREF:
+        return runs_code(L, x->a);
+    case LXN_AGG:
+        for (uint32_t i = 0; i < nd(L, x->a)->b; i++) {
+            const limba_lx_node *c = nd(L, limba_lx_list_at(L->S->t, x->a, i));
+            if (runs_code(L, c->a) || runs_code(L, c->b) || runs_code(L, c->c))
+                return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+/* an operand of a whole comparison: the address of its elements, and for
+   an array their number (an i64) */
+static void whole_operand(lxl *L, uint32_t node, uint32_t at, limba_id *p,
+                          limba_id *n)
+{
+    limba_ltype t = ntype(L, node);
+    *n = LIMBA_NONE;
+    if (!is_array(L, t) || (ti(L, t)->kind == LIMBA_LTK_ARRAY &&
+                            !(ti(L, t)->flags & LIMBA_TF_DYNAMIC))) {
+        *p = lxl_addr(L, node);
+        if (is_array(L, t))
+            *n = lxl_iconst(L, LIMBA_T_I64, static_length(L, t));
+        return;
+    }
+    limba_id lo, hi;
+    lxl_span(L, node, at, p, &lo, &hi);
+    bool sg = lxl_signed(L, ti(L, t)->index);
+    limba_id empty = cmp(L, false, sg ? LIMBA_CC_SLT : LIMBA_CC_ULT, hi, lo);
+    *n = lxl_count(L, empty, lo, hi);
+}
+
+/* l = r or l <> r between records or arrays (§ 6.2): the operands from
+   left to right, the left one copied first if the right one may change
+   it, then the comparison function; an invalid value it meets is a range
+   error at the operator */
+static limba_id compare_whole(lxl *L, uint32_t node)
+{
+    limba_lx_node *x = nd(L, node);
+    unsigned op = x->op;
+    uint32_t l = x->a, r = x->b;
+    limba_ltype lt = ntype(L, l);
+    limba_id a, na, b, nb, heap = LIMBA_NONE;
+    whole_operand(L, l, node, &a, &na);
+    unsigned lk = nd(L, l)->kind;
+    if (lk != LXN_CALL && lk != LXN_AGG && runs_code(L, r)) {
+        /* the value of l now: what r runs comes after it (§ 6.7) */
+        const limba_typeinfo *xt = ti(L, lt);
+        limba_ltype et = is_array(L, lt) ? xt->elem : lt;
+        uint64_t esize = ti(L, et)->size;
+        limba_id bytes = is_array(L, lt)
+                             ? bin(L, LIMBA_OP_MUL, LIMBA_T_I64, na,
+                                   lxl_iconst(L, LIMBA_T_I64, (int64_t)esize))
+                             : lxl_iconst(L, LIMBA_T_I64, (int64_t)esize);
+        if (is_array(L, lt) &&
+            (xt->kind == LIMBA_LTK_OPEN || (xt->flags & LIMBA_TF_DYNAMIC))) {
+            /* a block of its own, freed after the comparison */
+            limba_id n1 = bin(L, LIMBA_OP_ADD, LIMBA_T_I64, bytes,
+                              lxl_iconst(L, LIMBA_T_I64, 1));
+            heap = lxl_rt(L, LIMBA_RT_MEM_ALLOC, LIMBA_T_PTR, &n1, 1);
+            lxl_live(L, a);
+            lxl_rc(L, LIMBA_OP_RETAIN, a, et, na);
+            uint32_t o[3] = {heap, a, bytes};
+            lxl_emit(L, LIMBA_OP_MEMCPY, LIMBA_T_VOID, 0, 0, 0, o, 3);
+            a = heap;
+        } else {
+            limba_id copy = lxl_temp(L, lt, node);
+            lxl_copy(L, copy, a, lt);
+            a = copy;
+        }
+    }
+    whole_operand(L, r, node, &b, &nb);
+    lxl_at(L, node);
+    lxl_live(L, a);
+    lxl_live(L, b);
+    limba_id st = L->dry ? lxl_iconst(L, LIMBA_T_I32, EQ_SAME)
+                         : eq_call(L, lt, a, na, b, nb);
+    if (heap != LIMBA_NONE) {
+        lxl_rc(L, LIMBA_OP_RELEASE, heap, ti(L, lt)->elem, na);
+        lxl_rt(L, LIMBA_RT_MEM_FREE, LIMBA_T_VOID, &heap, 1);
+    }
+    lxl_check(
+        L, cmp(L, false, LIMBA_CC_NE, st, lxl_iconst(L, LIMBA_T_I32, EQ_BAD)),
+        LXR_RANGE);
+    return cmp(L, false, op == LX_EQ ? LIMBA_CC_EQ : LIMBA_CC_NE, st,
+               lxl_iconst(L, LIMBA_T_I32, EQ_SAME));
+}
+
 static limba_id binary(lxl *L, uint32_t node)
 {
     limba_lx_node *x = nd(L, node);
@@ -1205,6 +1500,8 @@ static limba_id binary(lxl *L, uint32_t node)
     limba_ltype t = ntype(L, node), lt = ntype(L, l), rt = ntype(L, r);
     if (is_logic(L, node))
         return bool_value(L, node);
+    if ((op == LX_EQ || op == LX_NE) && is_whole(L, lt))
+        return compare_whole(L, node);
     limba_id a = lxl_value(L, l), b = lxl_value(L, nd(L, node)->b);
     lxl_at(L, node);
     switch (op) {

@@ -88,6 +88,12 @@ static void span(lxl *L, uint32_t a, uint32_t at, limba_id *base, limba_id *lo,
     }
 }
 
+void lxl_span(lxl *L, uint32_t a, uint32_t at, limba_id *base, limba_id *lo,
+              limba_id *hi)
+{
+    span(L, a, at, base, lo, hi);
+}
+
 /* the address of element i (an i64) of an array whose elements start at
    base and whose low bound is lo */
 static limba_id element_at(lxl *L, limba_id base, limba_id lo, limba_id i,

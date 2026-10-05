@@ -602,6 +602,15 @@ an argument of a library routine of the wrong kind (`ord` of an integer,
 `low` of a real type, `sqrt` of an integer, `write` of an enumeration,
 and so on, § 9).
 
+Between two operands the message suggests a conversion only where one
+exists (numbers, Boolean types, an integer and an enumeration, § 6.6):
+"'=' between Int32 and Int64: convert one of them", but "'=' between
+Int32 and String: values of different types". Records and arrays are
+compared only with their own type, or an open operand with an array
+that could be passed to it (§ 6.2): "'=' between Vector and Point:
+records and arrays are compared only with their own type", "'=' between
+Samples and Counts: the elements are Float64 and Int64".
+
 ```pascal
 program p;
 var a: Int32 := 0;
@@ -619,7 +628,8 @@ prog.luxia:5:8: error[L0027]: this is Int64, the variable wants Int32
 
 An operator applied to a type that does not take it: unary minus on an
 unsigned number, `/` on integers, `div` on reals, shifts and bitwise
-operators outside the `BitsN` types, and so on (§ 3.2, § 6.2, § 6.3).
+operators outside the `BitsN` types, an order (`<`, `<=`, `>`, `>=`)
+between records or arrays, and so on (§ 3.2, § 6.2, § 6.3).
 
 ```pascal
 program p;
@@ -1041,10 +1051,11 @@ cannot have it. `range <>` outside the index of an array gives "'range
 reports `new(A)` without the bounds of an open array ("an open array
 needs the bounds of its index: new(A range low..high)") and an array
 made by `new` used as a whole, outside `low`, `high`, `length`,
-`move`, `translate`, `reverse`, `occurrences`, `readbytes` and
-`writebytes` ("an array made by new is used through its elements, low,
-high, length, move, translate, reverse, occurrences, readbytes and
-writebytes: not as a whole", § 3.10).
+`move`, `translate`, `reverse`, `occurrences`, `readbytes`,
+`writebytes` and the comparisons `=` and `<>` ("an array made by new is
+used through its elements, low, high, length, move, translate, reverse,
+occurrences, readbytes and writebytes, and compared with = and <>: not
+otherwise as a whole", § 3.10, § 6.2).
 
 ```pascal
 program p;

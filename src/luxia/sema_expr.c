@@ -224,11 +224,16 @@ static bool unify(limba_lxs *S, uint32_t node, uint32_t l, uint32_t r,
         return true;
     }
     if (!lxs_compatible(S, *lt, *rt)) {
+        /* convert one of them only where a conversion is (§ 6.6) */
+        bool conv = (is_numeric(S, *lt) && is_numeric(S, *rt)) ||
+                    (is_bool(S, *lt) && is_bool(S, *rt)) ||
+                    (is_int(S, *lt) && kind(S, *rt) == LIMBA_LTK_ENUM) ||
+                    (is_int(S, *rt) && kind(S, *lt) == LIMBA_LTK_ENUM);
         char ta[128], tb[128];
-        lxs_error(S, LXE_TYPE_MISMATCH, node,
-                  "'%s' between %s and %s: convert one of them",
+        lxs_error(S, LXE_TYPE_MISMATCH, node, "'%s' between %s and %s: %s",
                   limba_lx_kind_text(lxs_node(S, node)->op),
-                  lxs_tname(S, *lt, ta), lxs_tname(S, *rt, tb));
+                  lxs_tname(S, *lt, ta), lxs_tname(S, *rt, tb),
+                  conv ? "convert one of them" : "values of different types");
         return false;
     }
     return true;
@@ -258,14 +263,116 @@ static limba_ltype result_of(limba_lxs *S, limba_ltype t)
     return untyped(S, t) ? t : lxs_base(S, t);
 }
 
+static bool composite(const limba_lxs *S, limba_ltype t)
+{
+    unsigned k = t ? kind(S, t) : 0;
+    return k == LIMBA_LTK_RECORD || k == LIMBA_LTK_ARRAY || k == LIMBA_LTK_OPEN;
+}
+
+static bool comparison(unsigned op)
+{
+    return op == LX_EQ || op == LX_NE || op == LX_LT || op == LX_LE ||
+           op == LX_GT || op == LX_GE;
+}
+
+/* the type an aggregate compared with a value of type t takes (§ 6.2):
+   t, or for an open or computed array the open type of its elements, so
+   that its own length counts */
+static limba_ltype compared_agg_type(limba_lxs *S, limba_ltype t)
+{
+    const limba_typeinfo *x = t ? lxs_ty(S, t) : NULL;
+    if (x && x->kind == LIMBA_LTK_ARRAY && (x->flags & LIMBA_TF_DYNAMIC))
+        return limba_types_open(&S->ts, lxs_base(S, x->index), x->elem);
+    return t;
+}
+
+/* = and <> between records and arrays (§ 6.2): the same type, or an open
+   operand and an array that could be passed to it; an aggregate (agg) has
+   the type of the other operand, or one made for its own length */
+static limba_ltype compare_whole(limba_lxs *S, uint32_t node, unsigned op,
+                                 limba_ltype lt, limba_ltype rt, bool agg)
+{
+    char ta[128], tb[128], tc[128], td[128];
+    const char *ot = limba_lx_kind_text(op);
+    if (op != LX_EQ && op != LX_NE)
+        return op_error(S, node, composite(S, lt) ? lt : rt,
+                        "compares scalars and strings");
+    unsigned lk = kind(S, lt), rk = kind(S, rt);
+    bool arrays = (lk == LIMBA_LTK_ARRAY || lk == LIMBA_LTK_OPEN) &&
+                  (rk == LIMBA_LTK_ARRAY || rk == LIMBA_LTK_OPEN);
+    bool ok = lxs_compatible(S, lt, rt);
+    if (!ok && arrays &&
+        (agg || lk == LIMBA_LTK_OPEN || rk == LIMBA_LTK_OPEN)) {
+        const limba_typeinfo *x = lxs_ty(S, lt), *y = lxs_ty(S, rt);
+        if (!lxs_compatible(S, x->elem, y->elem)) {
+            lxs_error(S, LXE_TYPE_MISMATCH, node,
+                      "'%s' between %s and %s: the elements are %s and %s", ot,
+                      lxs_tname(S, lt, ta), lxs_tname(S, rt, tb),
+                      lxs_tname(S, x->elem, tc), lxs_tname(S, y->elem, td));
+            return set(S, node, 0);
+        }
+        if (lxs_base(S, x->index) != lxs_base(S, y->index)) {
+            lxs_error(S, LXE_TYPE_MISMATCH, node,
+                      "'%s' between %s and %s: the indices are %s and %s", ot,
+                      lxs_tname(S, lt, ta), lxs_tname(S, rt, tb),
+                      lxs_tname(S, lxs_base(S, x->index), tc),
+                      lxs_tname(S, lxs_base(S, y->index), td));
+            return set(S, node, 0);
+        }
+        ok = true;
+    }
+    if (!ok) {
+        lxs_error(S, LXE_TYPE_MISMATCH, node,
+                  "'%s' between %s and %s: records and arrays are compared "
+                  "only with their own type",
+                  ot, lxs_tname(S, lt, ta), lxs_tname(S, rt, tb));
+        return set(S, node, 0);
+    }
+    LIMBA_GROW(S->eqs, S->neqs, S->capeqs);
+    S->eqs[S->neqs++] = node;
+    LIMBA_GROW(S->eqs, S->neqs, S->capeqs);
+    S->eqs[S->neqs++] = S->who;
+    return set(S, node, S->ts.bool_);
+}
+
+/* an operand of a comparison: p^ of an array made by new is compared
+   whole (§ 6.2) */
+static limba_ltype compared(limba_lxs *S, uint32_t node, uint32_t scope,
+                            limba_ltype expected)
+{
+    S->open_ok = lxs_node(S, node)->kind == LXN_DEREF;
+    limba_ltype t = lxs_expr(S, node, scope, expected);
+    S->open_ok = false;
+    return t;
+}
+
 static limba_ltype binary(limba_lxs *S, uint32_t node, uint32_t scope)
 {
     limba_lx_node *x = lxs_node(S, node);
     unsigned op = x->op;
     uint32_t l = x->a, r = x->b;
-    limba_ltype lt = lxs_expr(S, l, scope, 0);
-    limba_ltype rt = lxs_expr(S, r, scope, 0);
-    limba_ltype res;
+    limba_ltype lt, rt, res;
+    bool la = lxs_node(S, l)->kind == LXN_AGG,
+         ra = lxs_node(S, r)->kind == LXN_AGG;
+    if (comparison(op) && la != ra) {
+        /* an aggregate takes the type of the other operand, on either
+           side (§ 6.2); the order of evaluation stays left to right */
+        if (la) {
+            rt = compared(S, r, scope, 0);
+            lt = lxs_expr(S, l, scope, compared_agg_type(S, rt));
+        } else {
+            lt = compared(S, l, scope, 0);
+            rt = lxs_expr(S, r, scope, compared_agg_type(S, lt));
+        }
+    } else if (comparison(op)) {
+        lt = compared(S, l, scope, 0);
+        rt = compared(S, r, scope, 0);
+    } else {
+        lt = lxs_expr(S, l, scope, 0);
+        rt = lxs_expr(S, r, scope, 0);
+    }
+    if (comparison(op) && lt && rt && (composite(S, lt) || composite(S, rt)))
+        return compare_whole(S, node, op, lt, rt, la || ra);
     switch (op) {
     case LX_POWER:
         if (!lt || !rt)
@@ -1730,7 +1837,11 @@ limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
     case LXN_INDEX:
         return index_expr(S, node, scope);
     case LXN_DEREF: {
+        /* p^ itself may be whole (open_ok), not what p is made of */
+        bool open_ok = S->open_ok;
+        S->open_ok = false;
         limba_ltype t = lxs_expr(S, x->a, scope, 0);
+        S->open_ok = open_ok;
         if (t && kind(S, t) != LIMBA_LTK_POINTER) {
             char tb[128];
             lxs_error(S, LXE_NOT_POINTER, node, "%s is not a pointer",
@@ -1742,8 +1853,8 @@ limba_ltype lxs_expr(limba_lxs *S, uint32_t node, uint32_t scope,
             lxs_error(S, LXE_OPEN_ARRAY_PLACE, node,
                       "an array made by new is used through its elements, "
                       "low, high, length, move, translate, reverse, "
-                      "occurrences, readbytes and writebytes: not as a "
-                      "whole");
+                      "occurrences, readbytes and writebytes, and compared "
+                      "with = and <>: not otherwise as a whole");
             return set(S, node, 0);
         }
         return set(S, node, e);

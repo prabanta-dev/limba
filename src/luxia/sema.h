@@ -215,6 +215,10 @@ typedef struct {
     /* the typed constants of records and arrays (§ 4.3), CONST nodes */
     uint32_t *tconsts;
     uint32_t ntconsts, captconsts;
+    /* the comparisons of records and arrays (§ 6.2), in pairs: a BINARY
+       node, then who makes it (as the uses) */
+    uint32_t *eqs;
+    uint32_t neqs, capeqs;
 } limba_lxs;
 
 void limba_lxs_init(limba_lxs *S, limba_lx_ast *t, limba_lx *lx,

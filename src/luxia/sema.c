@@ -323,6 +323,7 @@ void limba_lxs_free(limba_lxs *S)
     free(S->val);
     free(S->spelling);
     free(S->tconsts);
+    free(S->eqs);
     lxs_unit_free(S);
     limba_types_free(&S->ts);
     limba_symtab_free(&S->st);

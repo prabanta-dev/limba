@@ -1312,6 +1312,41 @@ static limba_id ir_name(lxl *L, limba_sym s, const char *suffix)
     return limba_str_intern(L->m, buf, strlen(buf));
 }
 
+void lxl_begin_function(lxl *L, limba_id fid)
+{
+    begin_function(L, fid);
+}
+
+void lxl_end_function(lxl *L, uint32_t node, bool function)
+{
+    end_function(L, node, function);
+}
+
+limba_id lxl_eq_declare(lxl *L, limba_ltype t, limba_id ftype)
+{
+    limba_lxs *S = L->S;
+    limba_sym ts = 0;
+    for (limba_sym s = 1; s < S->st.nsym && !ts; s++)
+        if (S->st.sym[s].kind == LIMBA_LSYM_TYPE && S->st.sym[s].type == t)
+            ts = s;
+    char buf[340];
+    if (!ts)
+        snprintf(buf, sizeof(buf), "$eq%u", ++L->neq_anon);
+    limba_id fid = LIMBA_NONE;
+    for (unsigned k = 1; fid == LIMBA_NONE; k++) {
+        if (ts) {
+            char suffix[24];
+            snprintf(suffix, sizeof(suffix), k > 1 ? "$eq%u" : "$eq", k);
+            sym_text(L, ts, suffix, buf, sizeof(buf));
+        } else if (k > 1) {
+            snprintf(buf, sizeof(buf), "$eq%u", ++L->neq_anon);
+        }
+        fid = limba_func_add(L->m, limba_str_intern(L->m, buf, strlen(buf)),
+                             ftype, 0);
+    }
+    return fid;
+}
+
 /* the routines (those reached, or not) and the globals (the first time)
    of a declaration list */
 static void declare(lxl *L, uint32_t decls, bool unreached)
@@ -1423,6 +1458,7 @@ limba_module *limba_lxl_program_each(limba_lxs *S,
     L->func_of = limba_xcalloc(S->st.nsym + 1, sizeof(*L->func_of));
     L->tmap = limba_xcalloc(S->ts.n + 1, sizeof(*L->tmap));
     L->node_pos = limba_xcalloc(S->t->nnode + 1, sizeof(*L->node_pos));
+    L->eq_of = limba_xcalloc(S->ts.n + 1, sizeof(*L->eq_of));
     scan_taken(L);
     /* the files in the order of their initialisations, the program last
        (§ 11.5); the checks each file turns off for the whole of it */
@@ -1479,6 +1515,9 @@ limba_module *limba_lxl_program_each(limba_lxs *S,
             bodies(L, files[k], file_decls(L, files[k], part == 1), off, false);
     L->dry = false;
     limba_module_truncate(L->m, L->kept_funcs, L->kept_externs);
+    /* the comparison functions, before the routines that call them: the
+       short ones go in line at -O1 */
+    lxl_eq_functions(L);
     for (uint32_t k = 0; k < nu && !L->stopped; k++)
         for (int part = 0; part < 2; part++)
             bodies(L, files[k], file_decls(L, files[k], part == 1), off, true);
@@ -1552,6 +1591,7 @@ done:
     free(L->out_place);
     free(L->dyns);
     free(L->node_pos);
+    free(L->eq_of);
     free(L->lvn);
     free(L->via);
     free(files);

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Records and arrays compared whole in the compiler (specification
+  § 6.2): `=` and `<>` between values of the same type, an open operand
+  (a parameter, `p^` of an array made by new) with any array that could
+  be passed to it, an aggregate typed by the other operand. Each type
+  compared gets a function of its own in the IR, named after the type
+  (`Vector$eq`, `$eq1` for an anonymous one, the same from one
+  compilation to the next), made before the routines so that -O1 puts
+  the short ones in line; it gives back equal, different or an invalid
+  value met, which the caller reports as a range error at the operator.
+  The left operand is copied first when the right one may run code. The
+  message of a type mismatch suggests a conversion only where one
+  exists. No new code; the IR is unchanged.
+
 - The specification compares whole records and arrays with `=` and `<>`
   (§ 6.2), as Ada does: records field by field, arrays by length and
   position whatever their bounds, each component with the `=` of its

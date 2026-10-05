@@ -141,6 +141,10 @@ typedef struct {
        functions and externs kept, those reached (§ 7 of the proposal) */
     bool dry;
     uint32_t kept_funcs, kept_externs;
+    /* per language type: its comparison function plus 1 (§ 6.2), made
+       before the routines; the anonymous ones numbered so far */
+    limba_id *eq_of;
+    uint32_t neq_anon;
 } lxl;
 
 /* IR types */
@@ -175,6 +179,13 @@ void lxl_rc(lxl *L, unsigned op, limba_id p, limba_ltype t, limba_id n);
 /* the copy of a record or an array of type t: the dangling checks of
    both, then retain src, release dst, memcpy (r := r keeps its strings) */
 void lxl_copy(lxl *L, limba_id dst, limba_id src, limba_ltype t);
+/* a function of the module being built: begun (its parameters made),
+   then ended (given to done) */
+void lxl_begin_function(lxl *L, limba_id fid);
+void lxl_end_function(lxl *L, uint32_t node, bool function);
+/* the function comparing two values of type t (§ 6.2), declared: T$eq
+   for a type with a name, $eqN for an anonymous one */
+limba_id lxl_eq_declare(lxl *L, limba_ltype t, limba_id ftype);
 /* a new block that is where the code goes now */
 void lxl_goto_new(lxl *L, limba_id b);
 /* the instructions made from now on come from node */
@@ -220,5 +231,12 @@ bool lxl_has_narrow(lxl *L, limba_ltype t);
 void lxl_fill_dyn(lxl *L, limba_id p, limba_id bytes, limba_ltype et);
 void lxl_invalidate(lxl *L, limba_id p, uint64_t off, limba_ltype t);
 bool lxl_signed(const lxl *L, limba_ltype t);
+/* array node a: the address of its elements and its bounds as i64
+   values, whatever it is (static, computed, open, made by new) */
+void lxl_span(lxl *L, uint32_t a, uint32_t at, limba_id *base, limba_id *lo,
+              limba_id *hi);
+/* the comparison functions of the records and arrays compared in what
+   is reached (§ 6.2), each after those of its components */
+void lxl_eq_functions(lxl *L);
 
 #endif
