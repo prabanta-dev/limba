@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Exceptions in the IR (`progetto_ir.md` § 11i): identities of 32 bits
+  (below 1000 the codes of `traps.def`, now with `LengthError` 108, and
+  the predefined families 900-903), a table of the module that names
+  them, `raise`, a handler for each block reached by errors only, with
+  the three values of an occurrence, and `par_for`. The binary form is
+  version 8. The verifier checks the handlers and sees the edges of
+  errors in dominance. The reference interpreter catches what a handler
+  may catch (never out of memory nor stack), leaves calls releasing their
+  typed slots, runs `par_for` in sequence with the exception of the
+  lowest index, and `lir_run` names an exception no one caught
+  (`luxia: IndexError: index out of range at ...`). The passes keep the
+  handlers: blocks join only with the same handler, LICM moves nothing
+  that may fail to another handler, inlining gives the inlined blocks the
+  handler of the call. The set "under a handler" is computed for every
+  module.
+
 - Reals are written and read without any conversion of the C library:
   where 128 bits do not reach, the integers and rationals of `bigint.c`
   give the exact digits and the nearest real (the fixed form past 64

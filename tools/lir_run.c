@@ -7,9 +7,12 @@
  *
  * Prints what the program printed, then a line with how it ended and what
  * it returned, on standard error. Exit status: 0 returned, 1 anything else.
- * A trap of the program is first presented as its language words it (the
- * module's prefix and messages, progetto_ir.md § 4): "luxia: index out of
- * range at prog.luxia:12:5"; a module without a language gets "lir_run".
+ * A trap of the program, or an exception no handler caught, is first
+ * presented as its language words it (the module's prefix, the name its
+ * table of exceptions gives the identity, the message; progetto_ir.md § 4,
+ * § 11i): "luxia: IndexError: index out of range at prog.luxia:12:5";
+ * without a name "luxia: index out of range at ..."; a module without a
+ * language gets "lir_run".
  * The output is written at the end: an error there, after a run that did
  * not stop on its own error, is the trap IO without a position; a closed
  * output (EPIPE) ends with status 141 and no message (luxia-0.md § 10.1).
@@ -107,15 +110,32 @@ int main(int argc, char **argv)
         r.pos && r.pos <= m->npos ? &m->pos[r.pos - 1] : NULL;
     if (where)
         file = limba_str(m, where->file, &fn);
-    const char *text;
-    size_t tn;
-    if (r.status == LIMBA_EVAL_TRAP &&
-        (text = limba_trap_message(m, r.code, &tn))) {
-        size_t ln = 7;
+    if (r.status == LIMBA_EVAL_TRAP) {
+        /* the exception no handler caught (progetto_ir.md § 11i): the
+           prefix of the module, the name it gives the identity, the
+           message, the position; a trap the module does not name as
+           before */
+        size_t ln = 7, nn = 0;
         const char *lang = m->language != LIMBA_NONE
                                ? limba_str(m, m->language, &ln)
                                : "lir_run";
-        fprintf(stderr, "%.*s: %.*s", (int)ln, lang, (int)tn, text);
+        const char *name = limba_exception_name(m, r.code, &nn);
+        size_t tn = r.msglen;
+        const char *text = r.msg;
+        if (!text || (!tn && !limba_exception_name(m, r.code, &nn)))
+            /* an error of the output after the run, or a trap raised
+               with no words: those of the module or traps.def */
+            text = limba_trap_message(m, r.code, &tn);
+        fprintf(stderr, "%.*s: ", (int)ln, lang);
+        if (name) {
+            fprintf(stderr, "%.*s", (int)nn, name);
+            if (text && tn)
+                fprintf(stderr, ": %.*s", (int)tn, text);
+        } else if (text && tn) {
+            fprintf(stderr, "%.*s", (int)tn, text);
+        } else {
+            fprintf(stderr, "exception %" PRId64, r.code);
+        }
         if (where)
             fprintf(stderr, " at %.*s:%" PRIu32 ":%" PRIu32, (int)fn, file,
                     where->line, where->col);

@@ -1,0 +1,54 @@
+; output: 100
+; output: index out of range
+; output: 1001
+; output: not a digit
+; output: finally
+; output: 1001
+; result: 7
+; exceptions caught (progetto_ir.md § 11i): a trap in a protected block
+; goes to its handler with its code and the words of the module; a
+; handler protected in turn raises again (a finally) to the outer one
+language "luxia"
+message 100 "index out of range"
+exception 900 "ConstraintError"
+exception 100 "IndexError" parent 900
+exception 1000 "ParseError"
+exception 1001 "BadDigit" parent 1000
+
+func @main : fn() -> i64 {
+b0:
+  v0 = iconst i1 0
+  br b1
+b1 handler b2:
+  check v0, 100
+  v1 = iconst i64 0
+  ret v1
+b2(v2: i32, v3: i32, v4: str):
+  v5 = sext i64 v2
+  call.rt void print_i64(v5)
+  call.rt void print_nl()
+  call.rt void print_str(v4)
+  call.rt void print_nl()
+  br b3
+b3 handler b4:
+  v6 = iconst i32 1001
+  v7 = iconst i32 0
+  v8 = sconst str "not a digit"
+  raise v6, v7, v8
+b4(v9: i32, v10: i32, v11: str) handler b5:
+  v12 = sext i64 v9
+  call.rt void print_i64(v12)
+  call.rt void print_nl()
+  call.rt void print_str(v11)
+  call.rt void print_nl()
+  v13 = sconst str "finally"
+  call.rt void print_str(v13)
+  call.rt void print_nl()
+  raise v9, v10, v11
+b5(v14: i32, v15: i32, v16: str):
+  v17 = sext i64 v14
+  call.rt void print_i64(v17)
+  call.rt void print_nl()
+  v18 = iconst i64 7
+  ret v18
+}

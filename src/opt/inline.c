@@ -61,6 +61,7 @@ static limba_func *copy_func(const limba_func *g)
         limba_block *d = &c->blocks[b];
         d->ninsts = d->cap = s->ninsts;
         d->nparams = s->nparams;
+        d->handler = s->handler;
         d->insts = limba_xmalloc(((size_t)s->ninsts + 1) * sizeof(uint32_t));
         if (s->ninsts)
             memcpy(d->insts, s->insts, s->ninsts * sizeof(uint32_t));
@@ -258,6 +259,16 @@ static limba_id expand(limba_pass_ctx *x, limba_func *f, limba_id cur,
     bmap[0] = cur;
     for (uint32_t b = 1; b < g->nblocks; b++)
         bmap[b] = limba_block_add(f);
+    /* the handlers (progetto_ir.md § 11i): after, and every block of the
+       copy with none of its own, take that of the block of the call; a
+       block of g with a handler keeps it, in the copy */
+    uint32_t ch = f->blocks[cur].handler;
+    f->blocks[after].handler = ch;
+    for (uint32_t b = 1; b < g->nblocks; b++) {
+        uint32_t gh = g->blocks[b].handler;
+        f->blocks[bmap[b]].handler =
+            gh && gh - 1 < g->nblocks ? bmap[gh - 1] + 1 : ch;
+    }
     uint32_t s0 = f->nslots;
     for (uint32_t s = 0; s < g->nslots; s++)
         limba_slot_add(f, g->slots[s].size, g->slots[s].align);

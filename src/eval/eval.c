@@ -85,6 +85,13 @@ typedef struct {
     int status;
     int64_t code;
     uint32_t pos; /* where the run stopped, innermost call first */
+    /* the exception on its way (progetto_ir.md § 11i): status TRAP, its
+       identity in code, its position in pos (given by raise: pos_given),
+       its message, a str, 0 until made (a trap words it when caught or
+       at the end) */
+    uint64_t exc_msg;
+    bool pos_given;
+    uint64_t par_msg; /* par_for: the message of the lowest index kept */
     /* the C stack the run may use: a call of the program deeper than
        budget bytes from base is the trap STACK, never a crash of the
        interpreter itself */
@@ -281,6 +288,8 @@ static void collect(E *e)
        takes memory again before it returns */
     for (size_t i = 0; i < e->npinned; i++)
         e->pinned[i]->marked = 1;
+    mark(e, &set, e->exc_msg); /* the exceptions on their way */
+    mark(e, &set, e->par_msg);
     amap_free(&set);
     size_t j = 0;
     for (size_t i = 0; i < e->ncounted; i++)
@@ -451,7 +460,9 @@ static bool trap(E *e, int64_t code)
 {
     e->status = LIMBA_EVAL_TRAP;
     e->code = code;
-    if (e->lim.check_mem)
+    /* what a handler may catch is checked at the end, after the calls
+       left have released their slots; the rest stops here */
+    if (e->lim.check_mem && !limba_exception_catchable(code))
         end_check(e);
     return false;
 }
@@ -1802,6 +1813,61 @@ static bool convert(unsigned op, limba_id from, limba_id to, uint64_t a,
 
 static bool call(E *e, const limba_func *f, const uint64_t *args,
                  uint64_t *ret);
+static uint64_t exc_message(E *e);
+
+/* par_for(body, env, lo, hi) in sequence (progetto_ir.md § 11i, R2):
+   every iteration runs; then the exception of the lowest index, if one
+   left the body, leaves par_for. What no handler may catch stops at once */
+static bool par_for(E *e, const uint64_t *a)
+{
+    const limba_module *m = e->m;
+    uintptr_t p = (uintptr_t)a[0], base = (uintptr_t)m->funcs;
+    uintptr_t k = (p - base) / sizeof(limba_func);
+    if (p < base || (p - base) % sizeof(limba_func) || k >= m->nfuncs) {
+        e->status = LIMBA_EVAL_BAD; /* not a function of the module */
+        return false;
+    }
+    const limba_func *body = &m->funcs[k];
+    const limba_type *ty = &m->types[body->type];
+    if (ty->elem != LIMBA_T_VOID || ty->count != 2 ||
+        m->members[ty->first].type != LIMBA_T_PTR ||
+        m->members[ty->first + 1].type != LIMBA_T_I64) {
+        e->status = LIMBA_EVAL_BAD; /* not fn(ptr, i64) -> void */
+        return false;
+    }
+    bool raised = false;
+    int64_t code = 0;
+    uint32_t pos = 0;
+    for (int64_t i = (int64_t)a[2]; i <= (int64_t)a[3]; i++) {
+        uint64_t args[2] = {a[1], (uint64_t)i}, ret;
+        if (call(e, body, args, &ret))
+            continue;
+        if (e->status != LIMBA_EVAL_TRAP || !limba_exception_catchable(e->code))
+            return false; /* fatal: no more iterations */
+        if (!raised) {    /* the lowest index: kept */
+            raised = true;
+            code = e->code;
+            pos = e->pos;
+            e->par_msg = exc_message(e);
+        }
+        e->status = LIMBA_EVAL_OK;
+        e->code = 0;
+        e->pos = 0;
+        e->pos_given = false;
+        e->exc_msg = 0;
+        if (i == INT64_MAX)
+            break;
+    }
+    if (!raised)
+        return true;
+    e->status = LIMBA_EVAL_TRAP;
+    e->code = code;
+    e->pos = pos;
+    e->pos_given = true;
+    e->exc_msg = e->par_msg;
+    e->par_msg = 0;
+    return false;
+}
 
 static bool call_inst(E *e, const limba_func *f, const limba_inst *in,
                       const uint64_t *v, uint64_t *r)
@@ -1832,6 +1898,10 @@ static bool call_inst(E *e, const limba_func *f, const limba_inst *in,
         break;
     }
     case LIMBA_OP_CALLRT:
+        if (in->imm == LIMBA_RT_PAR_FOR) {
+            ok = par_for(e, args);
+            break;
+        }
         /* a string past the budget comes back here (str_alloc) */
         if (setjmp(e->nomem)) {
             e->armed = false;
@@ -1869,6 +1939,41 @@ static const limba_block *jump(const limba_func *f, uint32_t k, uint64_t *v)
     if (tmp != stack)
         free(tmp);
     return bl;
+}
+
+/* the message of the exception on its way, a str: a trap words it now,
+   as the module or traps.def says it */
+static uint64_t exc_message(E *e)
+{
+    if (!e->exc_msg) {
+        size_t n = 0;
+        const char *t = limba_trap_message(e->m, e->code, &n);
+        e->exc_msg = sv(str_make(e, t ? t : "", t ? n : 0));
+    }
+    return e->exc_msg;
+}
+
+/* the run stopped in block bl of f: if an exception a handler may catch
+   is on its way and bl has a handler, give it the occurrence as its
+   parameters and forget the exception (progetto_ir.md § 11i) */
+static bool caught(E *e, const limba_func *f, const limba_block *bl,
+                   uint64_t *v)
+{
+    limba_id h = limba_block_handler(f, (uint32_t)(bl - f->blocks));
+    if (h == LIMBA_NONE || e->status != LIMBA_EVAL_TRAP ||
+        !limba_exception_catchable(e->code))
+        return false;
+    const limba_block *hb = &f->blocks[h];
+    uint64_t msg = exc_message(e);
+    v[hb->insts[0]] = norm((uint64_t)e->code, LIMBA_T_I32);
+    v[hb->insts[1]] = norm((uint64_t)e->pos, LIMBA_T_I32);
+    v[hb->insts[2]] = msg;
+    e->status = LIMBA_EVAL_OK;
+    e->code = 0;
+    e->pos = 0;
+    e->pos_given = false;
+    e->exc_msg = 0;
+    return true;
 }
 
 static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
@@ -2033,24 +2138,51 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
                 if (!v[o[0]])
                     ok = trap(e, in->imm);
                 break;
+            case LIMBA_F_RAISE:
+                /* the occurrence given: identity, position, message */
+                e->status = LIMBA_EVAL_TRAP;
+                e->code = (int32_t)v[o[0]];
+                e->pos = (uint32_t)v[o[1]];
+                e->pos_given = true;
+                e->exc_msg = v[o[2]];
+                if (e->lim.check_mem && !limba_exception_catchable(e->code))
+                    end_check(e);
+                ok = false;
+                break;
             case LIMBA_F_PARAM:
                 break;
             }
-            if (!ok && !e->pos)
+            if (!ok && !e->pos && !e->pos_given)
                 e->pos = limba_inst_pos(f, id);
+            if (!ok && caught(e, f, bl, v)) {
+                /* to the handler of the block (progetto_ir.md § 11i) */
+                ok = true;
+                next = &f->blocks[limba_block_handler(
+                    f, (uint32_t)(bl - f->blocks))];
+                continue;
+            }
             v[id] = r;
         }
         if (!ok)
             break;
         bl = next;
     }
-done:
-    /* the typed slots release their strings, every slot forgets its own */
-    for (uint32_t s = 0; ok && e->lim.check_mem && s < f->nslots; s++) {
+done:;
+    /* the typed slots release their strings, every slot forgets its own;
+       also a call left by an exception a handler may catch (§ 11i) */
+    bool unwinding = !ok && e->status == LIMBA_EVAL_TRAP &&
+                     limba_exception_catchable(e->code);
+    for (uint32_t s = 0; (ok || unwinding) && e->lim.check_mem && s < f->nslots;
+         s++) {
         uintptr_t p = (uintptr_t)slots[s];
+        bool fine = true;
         if (f->slots[s].type != LIMBA_NONE)
-            ok = rc_walk(e, p, f->slots[s].type, -1);
-        ok = ok && forget(e, p, f->slots[s].size);
+            fine = rc_walk(e, p, f->slots[s].type, -1);
+        fine = fine && forget(e, p, f->slots[s].size);
+        if (!fine) {
+            ok = unwinding = false; /* BADMEM: no more exception */
+            break;
+        }
     }
     for (uint32_t s = 0; s < f->nslots && slots[s]; s++) {
         free(slots[s]);
@@ -2211,6 +2343,17 @@ void limba_eval(const limba_module *m, const char *entry,
         run_on_stack(&e, &m->funcs[fid], &ret);
     if (e.status == LIMBA_EVAL_OK && e.lim.check_mem)
         end_check(&e);
+    /* an exception that left the entry: the calls left released their
+       slots, so the counts are checked now; its message for the report */
+    if (e.status == LIMBA_EVAL_TRAP && limba_exception_catchable(e.code) &&
+        e.lim.check_mem)
+        end_check(&e);
+    if (e.status == LIMBA_EVAL_TRAP) {
+        const estr *x = (const estr *)(uintptr_t)exc_message(&e);
+        r->msg = limba_xmalloc(x->len + 1);
+        memcpy(r->msg, x->data, x->len + 1);
+        r->msglen = x->len;
+    }
     r->status = e.status;
     r->code = e.code;
     r->pos = e.pos;
@@ -2243,4 +2386,6 @@ void limba_eval_result_free(limba_eval_result *r)
 {
     free(r->out);
     r->out = NULL;
+    free(r->msg);
+    r->msg = NULL;
 }

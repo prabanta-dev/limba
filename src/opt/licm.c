@@ -153,6 +153,8 @@ static limba_id split(lctx *l, limba_id p, limba_id h)
 {
     limba_func *f = l->f;
     limba_id nb = limba_block_add(f);
+    /* the handler of the header: what moves here could raise there */
+    f->blocks[nb].handler = f->blocks[h].handler;
     limba_inst *t = terminator(f, p);
     uint32_t *ops = limba_xmalloc(((size_t)t->nops + 4) * sizeof(uint32_t)),
              m = 0;
@@ -247,7 +249,7 @@ static uint32_t one_loop(lctx *l, limba_id h)
 {
     limba_func *f = l->f;
     const limba_cfg *c = l->c;
-    limba_id way;
+    limba_id way = 0; /* set by loop_of */
     if (!loop_of(l, h, &way))
         return 0;
     bool frees = false;
@@ -283,11 +285,17 @@ static uint32_t one_loop(lctx *l, limba_id h)
             /* what may move at all, before asking where its operands
                come from */
             bool effectless = no_effect(in);
+            /* what may fail moves only where the same handler would
+               catch it: from a block with the header's and the way in's
+               (progetto_ir.md § 11i) */
+            bool same = bl->handler == f->blocks[h].handler &&
+                        f->blocks[way].handler == f->blocks[h].handler;
             bool kind = effectless ||
                         (!frees && in->op == LIMBA_OP_CALLRT &&
                          in->imm == LIMBA_RT_PTR_LIVE) ||
-                        (prefix && (in->op == LIMBA_OP_CHECK ||
-                                    (!frees && in->op == LIMBA_OP_LOADINV)));
+                        (prefix && same &&
+                         (in->op == LIMBA_OP_CHECK ||
+                          (!frees && in->op == LIMBA_OP_LOADINV)));
             bool go = kind && invariant(l, in);
             if (go) {
                 l->hoist[id] = 1;

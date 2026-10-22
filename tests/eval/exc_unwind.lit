@@ -1,0 +1,55 @@
+; output: deep
+; output: caught 1000
+; output: finally
+; trap: 1000
+; an exception out of a call with no handler, through a frame whose typed
+; slot holds a string (released on the way, check_mem counts it), to the
+; handler of the caller; then a finally that raises again and no one
+; catches: the program ends with it
+language "luxia"
+exception 1000 "ParseError"
+
+func @deep : fn() -> void {
+  slot 8 align 8 type str
+b0:
+  v0 = slot ptr $0
+  v1 = sconst str "x"
+  v2 = call.rt str str_concat(v1, v1)
+  store v2, v0
+  v4 = sconst str "deep"
+  call.rt void print_str(v4)
+  call.rt void print_nl()
+  v5 = iconst i32 1000
+  v6 = iconst i32 0
+  v7 = sconst str "m"
+  raise v5, v6, v7
+}
+
+func @middle : fn() -> void {
+b0:
+  call void @deep()
+  ret
+}
+
+func @main : fn() -> i64 {
+b0:
+  br b1
+b1 handler b2:
+  call void @middle()
+  v0 = iconst i64 0
+  ret v0
+b2(v1: i32, v2: i32, v3: str):
+  v4 = sconst str "caught "
+  call.rt void print_str(v4)
+  v5 = sext i64 v1
+  call.rt void print_i64(v5)
+  call.rt void print_nl()
+  br b3
+b3 handler b4:
+  raise v1, v2, v3
+b4(v6: i32, v7: i32, v8: str):
+  v9 = sconst str "finally"
+  call.rt void print_str(v9)
+  call.rt void print_nl()
+  raise v6, v7, v8
+}

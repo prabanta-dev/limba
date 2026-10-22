@@ -81,6 +81,10 @@ typedef struct {
     size_t live;    /* blocks of mem_alloc never freed */
     uint32_t pos;   /* a trap or a halt: the position of the instruction
                        in m->pos, 0 if it has none */
+    /* a trap, or an exception no handler caught (progetto_ir.md § 11i):
+       its message, malloc'd (code is its identity, pos its position) */
+    char *msg;
+    size_t msglen;
 } limba_eval_result;
 
 /* run function entry of a verified module; the result owns r->out */

@@ -428,6 +428,12 @@ static void reachability(limba_ssa *s, uint8_t *reach)
                     stack[n++] = t;
                 }
             }
+        /* the handler of the block, reached by its errors (§ 11i) */
+        limba_id h = limba_block_handler(limba_ssa_func(s), b);
+        if (h != LIMBA_NONE && h < s->nb && !reach[h]) {
+            reach[h] = 1;
+            stack[n++] = h;
+        }
     }
     free(stack);
 }

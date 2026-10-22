@@ -178,6 +178,10 @@ static uint32_t join(limba_pass_ctx *x, limba_func *f, const limba_cfg *cfg,
         if (b == 0 || b == a || touched[b] || x->e.dead_block[b] ||
             cfg->pfirst[b + 1] - cfg->pfirst[b] != 1)
             continue;
+        /* the same handler only: joined, what b raises would go where a
+           sends it (progetto_ir.md § 11i) */
+        if (ab->handler != bb->handler)
+            continue;
         /* the arguments go to the parameters still there, in order */
         uint32_t live = 0;
         for (uint32_t i = 0; i < bb->nparams; i++)
@@ -257,8 +261,8 @@ uint32_t limba_pass_cfg(limba_pass_ctx *x, limba_func *f)
     changes += join(x, f, cfg, touched);
     free(touched);
 
-    /* blocks the entry no longer reaches, by a walk along the jumps:
-       marked, and with them what they hold */
+    /* blocks the entry no longer reaches, by a walk along the jumps and
+       to the handlers: marked, and with them what they hold */
     uint32_t dead = 0;
     if (changes) {
         uint8_t *seen = limba_xcalloc((size_t)f->nblocks + 1, 1);
@@ -282,6 +286,12 @@ uint32_t limba_pass_cfg(limba_pass_ctx *x, limba_func *f)
                 }
             if (out != succ)
                 free(out);
+            /* and its handler, reached by its errors (§ 11i) */
+            uint32_t h = f->blocks[b].handler;
+            if (h && h - 1 < f->nblocks && !seen[h - 1]) {
+                seen[h - 1] = 1;
+                stack[sp++] = h - 1;
+            }
         }
         for (uint32_t b = 1; b < f->nblocks; b++)
             if (!x->e.dead_block[b] && !seen[b]) {

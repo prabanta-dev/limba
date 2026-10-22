@@ -137,6 +137,11 @@ void limba_edit_end(limba_edit *e)
             if (in->op == LIMBA_OP_PARAM)
                 nbl->nparams++;
         }
+        /* its handler, renumbered; one gone with it is none */
+        uint32_t h = bl->handler;
+        nbl->handler = h && h - 1 < nb && newblock[h - 1] != UINT32_MAX
+                           ? newblock[h - 1] + 1
+                           : 0;
     }
 
     for (uint32_t b = 0; b < nb; b++)
