@@ -124,7 +124,7 @@ limba_module *limba_module_new(void)
     return m;
 }
 
-void limba_func_clear(limba_func *f)
+static void body_free(limba_func *f)
 {
     for (uint32_t b = 0; b < f->nblocks; b++)
         free(f->blocks[b].insts);
@@ -143,12 +143,25 @@ void limba_func_clear(limba_func *f)
     f->caplocs = f->pos_cur = 0;
 }
 
+void limba_func_clear(limba_func *f)
+{
+    limba_handled_summary(f); /* what the set "under a handler" needs */
+    body_free(f);
+    limba_handled_touch();
+}
+
+void limba_func_free(limba_func *f)
+{
+    body_free(f);
+    limba_handled_drop(f);
+}
+
 void limba_module_free(limba_module *m)
 {
     if (!m)
         return;
     for (uint32_t i = 0; i < m->nfuncs; i++)
-        limba_func_clear(&m->funcs[i]);
+        limba_func_free(&m->funcs[i]);
     free(m->funcs);
     free(m->pos);
     free(m->messages);
@@ -160,7 +173,6 @@ void limba_module_free(limba_module *m)
     free(m->inits);
     free(m->excs);
     free(m->handled);
-    limba_handled_free(m);
     free(m->externs);
     free(m->members);
     free(m->types);
@@ -428,6 +440,8 @@ void limba_global_add_reloc(limba_module *m, limba_id g, uint32_t offset,
     limba_initdata *d = data_of(m, g);
     LIMBA_GROW(d->relocs, d->nrelocs, d->caprelocs);
     d->relocs[d->nrelocs++] = (limba_reloc){offset, (uint8_t)kind, id, addend};
+    if (kind == LIMBA_RELOC_FUNC) /* an address taken */
+        limba_handled_touch();
 }
 
 const limba_initdata *limba_global_data(const limba_module *m, limba_id g)
@@ -463,6 +477,7 @@ limba_id limba_func_add(limba_module *m, limba_id name, limba_id type,
     f->type = type;
     f->flags = flags;
     limba_hash_put(m->symidx, sym_hash(name, SYM_FUNC), id);
+    limba_handled_touch();
     return id;
 }
 
@@ -471,8 +486,9 @@ void limba_module_truncate(limba_module *m, uint32_t nfuncs, uint32_t nexterns)
     if (nfuncs > m->nfuncs || nexterns > m->nexterns)
         return;
     for (uint32_t i = nfuncs; i < m->nfuncs; i++)
-        limba_func_clear(&m->funcs[i]);
+        limba_func_free(&m->funcs[i]);
     m->nfuncs = nfuncs;
+    limba_handled_touch();
     m->nexterns = nexterns;
     limba_hash_free(m->symidx);
     m->symidx = limba_hash_new();
@@ -503,6 +519,7 @@ limba_id limba_block_handler(const limba_func *f, limba_id b)
 void limba_block_set_handler(limba_func *f, limba_id b, limba_id h)
 {
     f->blocks[b].handler = h == LIMBA_NONE ? 0 : h + 1;
+    limba_handled_touch();
 }
 
 void limba_exception_add(limba_module *m, int32_t id, limba_id name,
@@ -576,6 +593,10 @@ limba_id limba_inst_add(limba_func *f, limba_id b, unsigned op, limba_id type,
         f->locs[id] = f->pos_cur;
     }
     limba_inst *in = &f->insts[id];
+    /* what the set "under a handler" looks at */
+    if (op == LIMBA_OP_CALL || op == LIMBA_OP_CALLIND || op == LIMBA_OP_FADDR ||
+        op == LIMBA_OP_CALLRT)
+        limba_handled_touch();
     in->op = (uint16_t)op;
     in->cc = (uint8_t)cc;
     in->pad = 0;

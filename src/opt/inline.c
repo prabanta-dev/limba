@@ -188,7 +188,7 @@ void limba_inline_lib_free(limba_inline_lib *lib)
 {
     for (uint32_t i = 0; i < lib->n; i++)
         if (lib->body[i]) {
-            limba_func_clear(lib->body[i]);
+            limba_func_free(lib->body[i]);
             free(lib->body[i]);
         }
     free(lib->body);

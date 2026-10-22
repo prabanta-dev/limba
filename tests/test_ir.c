@@ -17,6 +17,7 @@
 #define _GNU_SOURCE
 #include "common/leb128.h"
 #include "limba/ir.h"
+#include "limba/opt.h"
 
 #include <dirent.h>
 #include <stdio.h>
@@ -292,6 +293,11 @@ static void test_data(void)
 /* the set "under a handler" (progetto_ir.md § 11i): a protected block,
    what it calls, an indirect call by signature, a body of par_for; not
    a function only its caller's callers reach, nor one of another type */
+static limba_id fn(limba_module *m, const char *name)
+{
+    return limba_func_find(m, limba_str_intern(m, name, strlen(name)));
+}
+
 static void test_handled(void)
 {
     const char text[] =
@@ -320,26 +326,77 @@ static void test_handled(void)
     } want[] = {{"leaf", true},     {"other", false}, {"taken", true},
                 {"untaken", false}, {"body", true},   {"prot", true},
                 {"main", false}};
-    for (size_t i = 0; i < sizeof(want) / sizeof(want[0]); i++) {
-        limba_id f = limba_func_find(
-            m, limba_str_intern(m, want[i].name, strlen(want[i].name)));
-        CHECK(limba_module_handled(m, f) == want[i].in,
+    for (size_t i = 0; i < sizeof(want) / sizeof(want[0]); i++)
+        CHECK(limba_module_handled(m, fn(m, want[i].name)) == want[i].in,
               "handled: @%s %s the set", want[i].name,
               want[i].in ? "not in" : "in");
-    }
-    /* the same from notes, the bodies gone */
-    for (uint32_t i = 0; i < m->nfuncs; i++) {
-        limba_handled_note(m, i);
+    /* the same with the bodies gone, as a front end clears them: nothing
+       to call before */
+    for (uint32_t i = 0; i < m->nfuncs; i++)
         limba_func_clear(&m->funcs[i]);
-    }
-    limba_handled_compute(m);
-    for (size_t i = 0; i < sizeof(want) / sizeof(want[0]); i++) {
-        limba_id f = limba_func_find(
-            m, limba_str_intern(m, want[i].name, strlen(want[i].name)));
-        CHECK(limba_module_handled(m, f) == want[i].in,
-              "handled from notes: @%s %s the set", want[i].name,
+    for (size_t i = 0; i < sizeof(want) / sizeof(want[0]); i++)
+        CHECK(limba_module_handled(m, fn(m, want[i].name)) == want[i].in,
+              "handled, bodies cleared: @%s %s the set", want[i].name,
               want[i].in ? "not in" : "in");
-    }
+    limba_module_free(m);
+
+    /* made again when the IR changes: a handler given to @main puts its
+       callees in, a call added to @main the one it calls */
+    m = limba_parse(text, sizeof(text) - 1, &d);
+    if (!m)
+        return;
+    limba_id main_ = fn(m, "main"), untaken = fn(m, "untaken");
+    CHECK(!limba_module_handled(m, untaken), "handled: @untaken in the set");
+    limba_func *f = &m->funcs[main_];
+    limba_id h = limba_block_add(f);
+    limba_block_set_handler(f, limba_block_add(f), h);
+    CHECK(limba_module_handled(m, untaken),
+          "handled: a handler given, @untaken not in the set");
+    limba_module_free(m);
+    m = limba_parse(text, sizeof(text) - 1, &d);
+    if (!m)
+        return;
+    limba_id other = fn(m, "other"), prot = fn(m, "prot");
+    CHECK(!limba_module_handled(m, other), "handled: @other in the set");
+    uint32_t arg = limba_inst_add(&m->funcs[prot], 1, LIMBA_OP_ICONST,
+                                  LIMBA_T_I64, 0, 0, 0, NULL, 0);
+    limba_inst_add(&m->funcs[prot], 1, LIMBA_OP_CALL, LIMBA_T_VOID, 0, other, 0,
+                   &arg, 1);
+    CHECK(limba_module_handled(m, other),
+          "handled: a call added, @other not in the set");
+    limba_module_free(m);
+
+    /* and after the passes: @g goes in line in @f, which then has a
+       protected block, so @h, which @f calls, comes in */
+    const char text2[] =
+        "func @k : fn() -> void {\nb0:\n  v0 = iconst i64 1\n"
+        "  call.rt void print_i64(v0)\n  ret\n}\n"
+        /* calls itself: never in line */
+        "func @h : fn(i64) -> void {\nb0(v0: i64):\n  v1 = iconst i64 0\n"
+        "  v2 = icmp.eq i1 v0, v1\n  cbr v2, b1, b2\nb1:\n  ret\nb2:\n"
+        "  v3 = iconst i64 1\n  v4 = sub i64 v0, v3\n"
+        "  call void @h(v4)\n  ret\n}\n"
+        /* no call at all: the copy adds none */
+        "func @g : fn(i64) -> void {\nb0(v0: i64):\n  br b1\n"
+        "b1 handler b2:\n  v1 = iconst i64 7\n  v2 = sdiv i64 v1, v0\n"
+        "  ret\nb2(v3: i32, v4: i32, v5: str):\n  ret\n}\n"
+        "func @f : fn(i64) -> void {\nb0(v0: i64):\n  call void @g(v0)\n"
+        "  call void @h(v0)\n  ret\n}\n"
+        "func @main : fn() -> void {\nb0:\n  v0 = iconst i64 3\n"
+        "  call void @f(v0)\n  ret\n}\n";
+    m = limba_parse(text2, sizeof(text2) - 1, &d);
+    CHECK(m && limba_verify(m, &d) == 0, "handled: %s", d.msg);
+    if (!m)
+        return;
+    CHECK(!limba_module_handled(m, fn(m, "h")), "handled: @h in the set");
+    limba_opt_options o = {false, NULL, NULL, NULL};
+    CHECK(limba_optimize(m, &o, &d) == 0, "handled: %s", d.msg);
+    bool inlined = false;
+    for (uint32_t b = 0; b < m->funcs[fn(m, "f")].nblocks; b++)
+        inlined = inlined || m->funcs[fn(m, "f")].blocks[b].handler;
+    CHECK(inlined, "handled: @g not in line in @f");
+    CHECK(limba_module_handled(m, fn(m, "h")),
+          "handled: after the passes, @h not in the set");
     limba_module_free(m);
 }
 

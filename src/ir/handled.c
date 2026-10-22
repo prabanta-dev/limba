@@ -9,16 +9,29 @@
  * module takes (faddr, a FUNC relocation of the data). The whole program
  * is in the module. One byte a function in m->handled.
  *
- * A front end that clears a body after giving it away notes it first
- * (limba_handled_note): the calls, the addresses and whether it has a
- * handler are all the set needs.
+ * No one asks for it to be made: limba_module_handled makes it when the
+ * IR changed since the last time, which every function of Limba that
+ * changes what the set looks at says (limba_handled_touch: a stamp of
+ * the process). A body that limba_func_clear frees leaves a summary in
+ * its function: the calls, the addresses and whether it has a handler
+ * are all the set needs.
  */
 #include "internal.h"
 
 #include "common/xalloc.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* bumped by every change of the IR the set sees, in any module: a set
+   made at another stamp is made again */
+static _Atomic uint64_t stamp = 1;
+
+void limba_handled_touch(void)
+{
+    atomic_fetch_add_explicit(&stamp, 1, memory_order_relaxed);
+}
 
 struct limba_fsum {
     bool noted;
@@ -88,27 +101,23 @@ static void summarise(const limba_func *f, struct limba_fsum *s)
     s->noted = true;
 }
 
-void limba_handled_note(limba_module *m, limba_id fid)
+void limba_handled_summary(limba_func *f)
 {
-    if (m->nfsums < m->nfuncs) {
-        m->fsums = limba_xrealloc(m->fsums, m->nfuncs, sizeof(*m->fsums));
-        memset(m->fsums + m->nfsums, 0,
-               (m->nfuncs - m->nfsums) * sizeof(*m->fsums));
-        m->nfsums = m->nfuncs;
-    }
-    sum_free(&m->fsums[fid]);
-    summarise(&m->funcs[fid], &m->fsums[fid]);
+    if (!f->nblocks) /* nothing new to keep */
+        return;
+    if (!f->sum)
+        f->sum = limba_xcalloc(1, sizeof(*f->sum));
+    sum_free(f->sum);
+    summarise(f, f->sum);
 }
 
-void limba_handled_free(limba_module *m)
+void limba_handled_drop(limba_func *f)
 {
-    if (!m->fsums)
-        return;
-    for (uint32_t i = 0; i < m->nfsums; i++)
-        sum_free(&m->fsums[i]);
-    free(m->fsums);
-    m->fsums = NULL;
-    m->nfsums = 0;
+    if (f->sum) {
+        sum_free(f->sum);
+        free(f->sum);
+        f->sum = NULL;
+    }
 }
 
 /* fn(ptr, i64) -> void, the type of a body of par_for */
@@ -122,20 +131,18 @@ static bool body_type(const limba_module *m, limba_id t)
            m->members[ty->first + 1].type == LIMBA_T_I64;
 }
 
-void limba_handled_compute(limba_module *m)
+static void compute(limba_module *m)
 {
     uint32_t n = m->nfuncs;
     struct limba_fsum *sum = limba_xcalloc(n + 1, sizeof(*sum));
     for (uint32_t i = 0; i < n; i++) {
         const limba_func *f = &m->funcs[i];
-        if (f->nblocks || i >= m->nfsums || !m->fsums[i].noted)
+        if (f->nblocks || !f->sum)
             summarise(f, &sum[i]);
     }
     const struct limba_fsum *at = sum;
 #define SUM(i)                                                                 \
-    ((i) < m->nfsums && m->fsums[i].noted && !m->funcs[i].nblocks              \
-         ? &m->fsums[i]                                                        \
-         : &at[i])
+    (!m->funcs[i].nblocks && m->funcs[i].sum ? m->funcs[i].sum : &at[i])
     /* the functions whose address the module takes */
     uint8_t *taken = limba_xcalloc(n + 1, 1);
     for (uint32_t i = 0; i < n; i++)
@@ -150,6 +157,7 @@ void limba_handled_compute(limba_module *m)
     }
     free(m->handled);
     m->handled = limba_xcalloc(n + 1, 1);
+    m->nhandled = n;
     limba_id *work = limba_xmalloc((n + 1) * sizeof(*work));
     uint32_t nwork = 0;
 #define ADD(f)                                                                 \
@@ -197,5 +205,13 @@ void limba_handled_compute(limba_module *m)
 
 bool limba_module_handled(const limba_module *m, limba_id fid)
 {
-    return m->handled && fid < m->nfuncs && m->handled[fid];
+    uint64_t now = atomic_load_explicit(&stamp, memory_order_relaxed);
+    if (!m->handled || m->handled_stamp != now || m->nhandled != m->nfuncs) {
+        /* a cache of the module, made again: the module itself does not
+           change */
+        limba_module *w = (limba_module *)m;
+        compute(w);
+        w->handled_stamp = now;
+    }
+    return fid < m->nfuncs && m->handled[fid];
 }

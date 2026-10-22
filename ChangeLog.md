@@ -15,8 +15,10 @@
   (`luxia: IndexError: index out of range at ...`). The passes keep the
   handlers: blocks join only with the same handler, LICM moves nothing
   that may fail to another handler, inlining gives the inlined blocks the
-  handler of the call. The set "under a handler" is computed for every
-  module.
+  handler of the call. The set "under a handler" has one function,
+  `limba_module_handled`: it computes the set when asked, again whenever
+  the IR changed since, and `limba_func_clear` keeps what the set needs
+  of the body it frees, so a front end calls nothing more.
 - The random programs of `lir_gen` have exceptions: protected regions,
   nested also in handlers and loops, conditional `raise`, handlers that
   catch all, catch one identity, run a `finally` that raises again or

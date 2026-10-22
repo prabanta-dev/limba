@@ -248,6 +248,9 @@ int limba_optimizer_func_edit(limba_optimizer *z, limba_module *m, limba_id fid,
     }
     limba_edit_cancel(&x.e);
     limba_pass_cfg_drop(&x);
+    /* the passes moved calls and handlers, some by hand (inline): the
+       set "under a handler" is made again when asked */
+    limba_handled_touch();
     if (r)
         return r;
     if (!z->skip[P_INLINE])

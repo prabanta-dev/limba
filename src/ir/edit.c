@@ -164,6 +164,7 @@ void limba_edit_end(limba_edit *e)
     free(newid);
     free(newblock);
     limba_edit_cancel(e);
+    limba_handled_touch(); /* calls and handlers may have gone */
 }
 
 void limba_edit_cancel(limba_edit *e)

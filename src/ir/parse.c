@@ -300,6 +300,5 @@ limba_module *limba_parse(const char *text, size_t len, limba_diag *d)
         limba_module_free(p.m);
         return NULL;
     }
-    limba_handled_compute(p.m); /* the set "under a handler", § 11i */
     return p.m;
 }

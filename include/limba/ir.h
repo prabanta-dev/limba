@@ -357,6 +357,9 @@ typedef struct {
     uint32_t nblocks, capblocks;
     limba_slot *slots;
     uint32_t nslots, capslots;
+    /* what the set "under a handler" needs of a body limba_func_clear
+       freed; NULL while the body is there */
+    struct limba_fsum *sum;
 } limba_func;
 
 enum limba_memory { LIMBA_MEM_STRICT, LIMBA_MEM_FB };
@@ -416,12 +419,12 @@ typedef struct limba_module {
     /* the exceptions the language names (progetto_ir.md § 11i) */
     limba_exception *excs;
     uint32_t nexcs, capexcs;
-    /* the set "under a handler": one byte a function, after
-       limba_handled_compute; and what limba_handled_note kept of the
-       functions whose body went (NULL until a note) */
+    /* the set "under a handler", one byte a function, made by
+       limba_module_handled when the IR changed since (progetto_ir.md
+       § 11i) */
     uint8_t *handled;
-    struct limba_fsum *fsums;
-    uint32_t nfsums;
+    uint32_t nhandled;
+    uint64_t handled_stamp;
 } limba_module;
 
 /* ---- the program ---- */
@@ -509,7 +512,8 @@ limba_id limba_global_find(const limba_module *m, limba_id name);
 limba_id limba_extern_find(const limba_module *m, limba_id name);
 
 /* free the body of a function (blocks, instructions, slots, positions):
-   it keeps its name and type, once written somewhere else */
+   it keeps its name and type, once written somewhere else, and what the
+   set "under a handler" needs of it */
 void limba_func_clear(limba_func *f);
 
 limba_id limba_block_add(limba_func *f);
@@ -522,11 +526,10 @@ void limba_exception_add(limba_module *m, int32_t id, limba_id name,
 /* its name, NULL if the module does not name it */
 const char *limba_exception_name(const limba_module *m, int64_t id,
                                  size_t *len);
-/* the set "under a handler" (progetto_ir.md § 11i): note keeps what it
-   needs of function fid before its body is cleared; compute fills
-   m->handled from the bodies and the notes; handled reads it */
-void limba_handled_note(limba_module *m, limba_id fid);
-void limba_handled_compute(limba_module *m);
+/* is function fid in the set "under a handler" (progetto_ir.md § 11i)?
+   Computed when asked, again whenever the IR changed since, from the
+   bodies there and from what limba_func_clear kept of those it freed:
+   nothing to call before. The whole program must be in m */
 bool limba_module_handled(const limba_module *m, limba_id fid);
 limba_id limba_slot_add(limba_func *f, uint32_t size, uint32_t align);
 /* the same, typed: t holds a str (checked by the verifier) */

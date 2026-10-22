@@ -579,7 +579,6 @@ limba_module *limba_read(const uint8_t *buf, size_t len, limba_diag *d)
                              : "bytes after the end of the module");
         goto fail;
     }
-    limba_handled_compute(m); /* the set "under a handler", § 11i */
     return m;
 fail:
     limba_module_free(m);

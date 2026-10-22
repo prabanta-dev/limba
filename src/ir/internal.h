@@ -33,8 +33,15 @@ static inline limba_id limba_sig_param(const limba_sig *s, uint32_t i)
 
 /* false if t is not a function type */
 bool limba_type_sig(const limba_module *m, limba_id t, limba_sig *s);
-/* free what limba_handled_note kept (module.c, at the end) */
-void limba_handled_free(limba_module *m);
+/* the set "under a handler" (handled.c): touch says the IR changed in
+   what the set looks at (calls, addresses, handlers, functions), so that
+   limba_module_handled computes it again; summary keeps it of a body
+   about to go; drop frees the summary; func_free frees a body and its
+   summary, keeping nothing (module.c) */
+void limba_handled_touch(void);
+void limba_handled_summary(limba_func *f);
+void limba_handled_drop(limba_func *f);
+void limba_func_free(limba_func *f);
 /* false if rt is out of range or its text is malformed */
 bool limba_rt_sig(limba_id rt, limba_sig *s);
 /* the signature of a call instruction; false if the callee is invalid */
