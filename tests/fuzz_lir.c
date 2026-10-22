@@ -22,8 +22,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
     static FILE *null;
-    if (!null)
+    if (!null) {
+        limba_set_program("fuzz_lir");
         null = fopen("/dev/null", "w");
+    }
     limba_module *m = limba_read(data, size, NULL);
     if (!m)
         m = limba_parse((const char *)data, size, NULL);

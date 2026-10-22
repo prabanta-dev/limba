@@ -236,6 +236,7 @@ static void test_messages(void)
 
 int main(void)
 {
+    limba_set_program("test_ir");
     test_leb128();
     test_messages();
     int ok = each("tests/ir/ok", test_ok);

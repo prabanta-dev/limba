@@ -10,6 +10,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* the prefix of the messages of the library (limba_set_program); the
+   program stops (abort) if it never gave one: the error is its own */
+const char *limba_program(void);
+
 void *limba_xmalloc(size_t n);
 void *limba_xcalloc(size_t count, size_t size);
 void *limba_xrealloc(void *p, size_t count, size_t size);

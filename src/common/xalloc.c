@@ -5,12 +5,39 @@
  */
 #include "xalloc.h"
 
+#include "limba/ir.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 
+/* null until the program gives its name: Limba has none of its own */
+static const char *program;
+
+/* a mistake of the program that calls Limba, not of its user */
+static void caller_error(const char *what)
+{
+    fprintf(stderr, "liblimba: %s\n", what);
+    abort();
+}
+
+void limba_set_program(const char *name)
+{
+    if (!name || !*name)
+        caller_error("limba_set_program: the name is missing");
+    program = name;
+}
+
+const char *limba_program(void)
+{
+    if (!program)
+        caller_error("the program did not give its name: call "
+                     "limba_set_program at the start of main");
+    return program;
+}
+
 static void out_of_memory(void)
 {
-    fputs("limba: out of memory\n", stderr);
+    fprintf(stderr, "%s: out of memory\n", limba_program());
     exit(70);
 }
 

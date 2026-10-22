@@ -165,6 +165,7 @@ static int each(const char *dir, void (*fn)(const char *))
 
 int main(void)
 {
+    limba_set_program("test_opt");
     int cases = each("tests/opt", test_expect);
     int corpus = each("tests/ir/ok", test_corpus);
     CHECK(cases > 0 && corpus > 0, "no test files found");

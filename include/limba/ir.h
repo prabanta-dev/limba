@@ -351,6 +351,18 @@ typedef struct limba_module {
     uint32_t npos, cappos;
 } limba_module;
 
+/* ---- the program ---- */
+
+/* the name of the program that uses Limba ("luxia", "meri"), the prefix
+   of the messages of the library itself (out of memory, an internal
+   error). Every program gives it, at the start of main, before any other
+   call to Limba and before any thread; Limba has no name of its own. A
+   program that forgets it is wrong: the first module it makes
+   (limba_module_new, limba_parse, limba_read) stops it with abort and a
+   message on standard error, and so does a null or empty name. The
+   string is kept, not copied */
+void limba_set_program(const char *name);
+
 /* ---- building ---- */
 
 limba_module *limba_module_new(void);

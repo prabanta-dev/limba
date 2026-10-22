@@ -12,6 +12,7 @@
 
 int main(int argc, char **argv)
 {
+    limba_set_program("lir_gen");
     if (argc != 2) {
         fputs("usage: lir_gen SEED\n", stderr);
         return 2;

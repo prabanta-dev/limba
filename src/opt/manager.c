@@ -128,8 +128,10 @@ static void cfg_same(const limba_cfg *a, const limba_func *f)
               !memcmp(a->post, b.post, n * sizeof(uint32_t));
     limba_cfg_free(&b);
     if (!ok) {
-        fprintf(stderr, "limba: internal error: a pass changed the "
-                        "branches and kept the old CFG\n");
+        fprintf(stderr,
+                "%s: internal error: a pass changed the branches and kept "
+                "the old CFG\n",
+                limba_program());
         abort();
     }
 }

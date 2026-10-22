@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The messages of the library itself (out of memory, an internal error)
+  carry the name of the program that uses it, which every program gives
+  with `limba_set_program` at the start of `main` (`limba`, `lir_run`,
+  `lir_gen`, the tests; `luxia`, `meri`). Limba has no name of its own:
+  a program that forgets it stops (abort, `liblimba:` on standard error)
+  at its first module, so its tests see the mistake.
+
 - Luxia leaves for a repository of its own (`../Luxia`): its front end,
   specification, diagnostics, API (`limba_luxia.h`), random programs
   (`lx_gen`), benchmarks and their tests. Limba keeps what every language

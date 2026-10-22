@@ -255,6 +255,7 @@ static int each(const char *dir, void (*fn)(const char *))
 
 int main(void)
 {
+    limba_set_program("test_eval");
     int golden_n = each("tests/eval", golden);
     each("tests/eval", optdiff);
     each("tests/ir/ok", optdiff);

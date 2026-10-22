@@ -54,6 +54,7 @@ static uint64_t env(const char *name, uint64_t dflt)
 
 int main(void)
 {
+    limba_set_program("test_gen");
     uint64_t first = env("LIMBA_GEN_FIRST", 1);
     uint64_t count = env("LIMBA_GEN_SEEDS", 200);
     uint64_t ended[6] = {0}, compared = 0, limited = 0, insts = 0;

@@ -102,6 +102,7 @@ unsigned limba_type_bits(limba_id t)
 
 limba_module *limba_module_new(void)
 {
+    (void)limba_program(); /* the program gave its name: else it stops */
     limba_module *m = limba_xcalloc(1, sizeof(*m));
     m->name = LIMBA_NONE;
     m->memory = LIMBA_MEM_STRICT;

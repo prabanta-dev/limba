@@ -203,5 +203,6 @@ static int run(int argc, char **argv)
 
 int main(int argc, char **argv)
 {
+    limba_set_program("limba");
     return run(argc, argv);
 }

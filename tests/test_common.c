@@ -8,12 +8,17 @@
  */
 #include "limba/fmt.h"
 #include "common/bigint.h"
+#include "common/xalloc.h"
+#include "limba/ir.h"
 
 #include <float.h>
 #include <math.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 static int failures;
 
@@ -468,18 +473,71 @@ static void test_fmt_f64(unsigned count)
     }
 }
 
+/* how a child that runs f ends: the signal that stopped it, 0 if it
+   returned; its standard error thrown away */
+static int child_signal(void (*f)(void))
+{
+    fflush(NULL);
+    pid_t pid = fork();
+    if (pid == 0) {
+        if (!freopen("/dev/null", "w", stderr))
+            _exit(3);
+        f();
+        _exit(0);
+    }
+    int status = 0;
+    if (pid < 0 || waitpid(pid, &status, 0) != pid)
+        return -1;
+    return WIFSIGNALED(status) ? WTERMSIG(status) : 0;
+}
+
+static void make_module(void)
+{
+    limba_module_free(limba_module_new());
+}
+
+static void give_empty(void)
+{
+    limba_set_program("");
+}
+
+static void give_null(void)
+{
+    limba_set_program(NULL);
+}
+
+static void give_then_make(void)
+{
+    limba_set_program("lxp");
+    make_module();
+}
+
+/* the name of the program: Limba has none, so a program that forgets it,
+   or gives an empty one, stops at its first module (the error is its
+   own, and its tests see it) */
+static void test_program(void)
+{
+    CHECK(child_signal(make_module) == SIGABRT, "no name: not stopped");
+    CHECK(child_signal(give_empty) == SIGABRT, "empty name: not stopped");
+    CHECK(child_signal(give_null) == SIGABRT, "null name: not stopped");
+    CHECK(child_signal(give_then_make) == 0, "a name given: stopped");
+    limba_set_program("test_common");
+    CHECK(!strcmp(limba_program(), "test_common"), "given: %s",
+          limba_program());
+}
+
 int main(void)
 {
+    test_program();
     test_integers();
     test_division(20000);
     test_rationals();
     test_rounding(20000);
     test_fmt_f64(20000);
     test_fmt_f32(20000);
-    printf("test_common: integers, 20000 random divisions, rationals, 20000 "
-           "random roundings to "
-           "double and float, 20000 shortest reals, %d "
-           "failures\n",
+    printf("test_common: program name, integers, 20000 random divisions, "
+           "rationals, 20000 random roundings to double and float, 20000 "
+           "shortest reals, %d failures\n",
            failures);
     return failures ? 1 : 0;
 }

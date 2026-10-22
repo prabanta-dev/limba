@@ -32,6 +32,7 @@ static const char *const status_text[] = {
 
 int main(int argc, char **argv)
 {
+    limba_set_program("lir_run");
     const char *path = NULL, *entry = "main";
     bool opt = false, check_mem = false;
     int first_arg = argc;
