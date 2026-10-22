@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `limba_program()` is public (`limba/ir.h`): the name given by
+  `limba_set_program`, the prefix of the messages of whoever hosts Limba.
+
 - `par_for` in the reference interpreter: each one keeps the message of
   its own exception (one in the body of another lost the outer's), and an
   `hi` of INT64_MAX runs the last index once and ends. `test_eval` reads

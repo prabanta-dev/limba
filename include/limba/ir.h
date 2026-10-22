@@ -451,6 +451,10 @@ typedef struct limba_module {
    message on standard error, and so does a null or empty name. The
    string is kept, not copied */
 void limba_set_program(const char *name);
+/* the name given by limba_set_program: the prefix of the messages of
+   whoever hosts Limba. The program stops (abort) if it never gave one:
+   the error is its own */
+const char *limba_program(void);
 
 /* ---- building ---- */
 
