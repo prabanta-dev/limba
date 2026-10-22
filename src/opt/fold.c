@@ -19,6 +19,7 @@
 #include "pass.h"
 
 #include "common/xalloc.h"
+#include "limba/math.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -604,6 +605,20 @@ static bool fold_inst(fctx *c, uint32_t id)
         return true;
     case LIMBA_F_CONV:
         return fold_conv(c, in, o[0]);
+    case LIMBA_F_CALL_RT: {
+        /* the mathematics of runtime.def on constants, by the library the
+           engines run (limba/math.h): the same bits. Not a NaN (above) */
+        double x;
+        if (in->nops < 1 || in->nops > 2 || in->type != LIMBA_T_F64)
+            return false;
+        for (uint32_t k = 0; k < in->nops; k++)
+            if (!fval(c, o[k], &v[k]))
+                return false;
+        if (!limba_math_call((uint32_t)in->imm, v, &x) || isnan(x))
+            return false;
+        limba_inst_set_fconst(in, fbits(x, LIMBA_T_F64));
+        return true;
+    }
     }
     return false;
 }

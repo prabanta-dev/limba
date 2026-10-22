@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- The mathematics of the run time (sin, cos, tan, atan, exp, ln, pow)
+  is computed by one library compiled into Limba, the same bits on every
+  engine and machine: musl 1.2.5 (MIT), its portable C only, without
+  contraction of `a * b + c` (`include/limba/math.h`,
+  `src/third_party/musl/`). The reference interpreter calls it instead of
+  the C library, and the optimiser now folds these functions on
+  constants with it (never into a NaN). A declared change: where the C
+  library of x86-64 rounded the other way, a result changes in its last
+  bit (`sin(4.4)` is now -0.9516020738895161). `test_math` checks the
+  special cases of IEEE 754, a hash of the bits of 140 000 results, and
+  1 ulp from the C library.
+
 - Reals written and read by exact steps of Limba's own, the same on
   every machine, wherever their numbers fit in 128 bits: the rounding of
   a real to its digits (the shortest form and `x:w:d`), the reading back

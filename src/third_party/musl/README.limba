@@ -1,0 +1,23 @@
+The mathematics of musl, compiled into Limba (progetto_ir.md § 11b): the
+functions sin, cos, tan, atan, exp, log and pow that every engine runs, so
+that they give the same bits on every machine.
+
+Version: musl 1.2.5, https://musl.libc.org/releases/musl-1.2.5.tar.gz
+sha256 a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4
+Licence: MIT, in COPYRIGHT (musl's own file, unchanged).
+
+The files are musl's, unchanged, from these places of the release:
+  src/math/: sin.c cos.c tan.c atan.c exp.c log.c pow.c __sin.c __cos.c
+    __tan.c __rem_pio2.c __rem_pio2_large.c exp_data.c exp_data.h
+    log_data.c log_data.h pow_data.c pow_data.h __math_oflow.c
+    __math_uflow.c __math_xflow.c __math_divzero.c __math_invalid.c
+    scalbn.c floor.c fabs.c
+  src/internal/libm.h
+  arch/generic/fp_arch.h (empty)
+Only the portable C of src/math/, none of its directories for one
+architecture. build.sh compiles them with -ffp-contract=off -fno-builtin
+-U__FP_FAST_FMA and -include src/common/musl.h, Limba's own header that
+gives every symbol a limba_musl_ name; Limba calls them through
+include/limba/math.h. On a C library without endian.h or features.h
+(newlib), src/common/musl_compat/ gives the two (-idirafter: the C
+library's own come first).

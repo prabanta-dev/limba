@@ -120,6 +120,7 @@ rationals (`src/common/bigint.c`).
 |---|---|
 | `include/limba/` | the public API: the IR, its operations, the run-time table, the optimiser, the printing and reading of numbers shared with Meri |
 | `src/common/` | hash tables, interned strings, LEB128, allocation, exact integers and rationals |
+| `src/third_party/musl/` | the mathematics of musl (MIT), compiled in, so that every engine computes the same bits |
 | `src/ir/` | the IR: building, SSA construction, verifier, CFG and dominators, text and binary forms |
 | `src/opt/` | the pass manager and the passes |
 | `src/eval/` | the reference interpreter and the generator of random IR |

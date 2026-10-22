@@ -182,6 +182,25 @@ while IFS= read -r src; do
     objs+=("$obj")
     compile "$src" "$obj" "${CFLAGS[@]}"
 done < <(find src -name '*.c' ! -name main.c ! -path 'src/third_party/*' | sort)
+# The mathematics of musl (progetto_ir.md § 11b): its files unchanged,
+# the flags of the variant without Limba's warnings (the code is not
+# Limba's), no contraction of a * b + c, no builtin in place of its calls,
+# and the same path of computation on every machine (no __FP_FAST_FMA);
+# src/common/musl.h gives each file its names
+tpflags=()
+for f in "${CFLAGS[@]}"; do
+    case "$f" in
+    -Wall | -Wextra | -Werror) ;;
+    *) tpflags+=("$f") ;;
+    esac
+done
+tpflags+=(-w -fno-builtin -fno-fast-math -U__FP_FAST_FMA
+    -idirafter src/common/musl_compat -include src/common/musl.h)
+while IFS= read -r src; do
+    obj=$(objname "$src")
+    objs+=("$obj")
+    compile "$src" "$obj" "${tpflags[@]}"
+done < <(find src/third_party/musl -name '*.c' | sort)
 rm -f "$OBJ/liblimba.a"
 "$AR" rcs "$OBJ/liblimba.a" "${objs[@]}"
 

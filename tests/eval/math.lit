@@ -1,0 +1,50 @@
+; output: -0.9516020738895161
+; output: -0.4575358937753214
+; output: -0.47553692799599256
+; output: -1.3738230567687948
+; output: 1.3473197256542635
+; output: 2.718281828459045
+; output: 0.6931471805599453
+; output: 1.4142135623730951
+; result: 0
+; the mathematics of the run time, limba/math.h (musl): arguments where
+; the C library of x86-64 gives the next double, as a check that lir_run
+; calls it
+func @main : fn() -> i64 {
+b0:
+  v0 = fconst f64 0x1.199999999999ap+2
+  v1 = call.rt f64 math_sin(v0)
+  call.rt void print_f64(v1)
+  call.rt void print_nl()
+  v2 = fconst f64 0x1.3cccccccccccdp+3
+  v3 = call.rt f64 math_sin(v2)
+  call.rt void print_f64(v3)
+  call.rt void print_nl()
+  v4 = fconst f64 0x1.5000000000000p+3
+  v5 = call.rt f64 math_cos(v4)
+  call.rt void print_f64(v5)
+  call.rt void print_nl()
+  v6 = fconst f64 0x1.199999999999ap+1
+  v7 = call.rt f64 math_tan(v6)
+  call.rt void print_f64(v7)
+  call.rt void print_nl()
+  v8 = fconst f64 0x1.199999999999ap+2
+  v9 = call.rt f64 math_atan(v8)
+  call.rt void print_f64(v9)
+  call.rt void print_nl()
+  v10 = fconst f64 0x1.0000000000000p+0
+  v11 = call.rt f64 math_exp(v10)
+  call.rt void print_f64(v11)
+  call.rt void print_nl()
+  v12 = fconst f64 0x1.0000000000000p+1
+  v13 = call.rt f64 math_ln(v12)
+  call.rt void print_f64(v13)
+  call.rt void print_nl()
+  v14 = fconst f64 0x1.0000000000000p+1
+  v15 = fconst f64 0x1.0000000000000p-1
+  v16 = call.rt f64 math_pow(v14, v15)
+  call.rt void print_f64(v16)
+  call.rt void print_nl()
+  v17 = iconst i64 0
+  ret v17
+}

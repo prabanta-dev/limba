@@ -20,6 +20,7 @@
 #include "eval.h"
 
 #include "limba/fmt.h"
+#include "limba/math.h"
 #include "limba/val.h"
 #include "common/leb128.h"
 #include "common/xalloc.h"
@@ -1020,27 +1021,6 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         if (e->lim.check_mem)
             end_check(e); /* as at a trap */
         return false;
-    case LIMBA_RT_MATH_TAN:
-        *r = fbits(tan(dv(a[0])), LIMBA_T_F64);
-        return true;
-    case LIMBA_RT_MATH_ATAN:
-        *r = fbits(atan(dv(a[0])), LIMBA_T_F64);
-        return true;
-    case LIMBA_RT_MATH_EXP:
-        *r = fbits(exp(dv(a[0])), LIMBA_T_F64);
-        return true;
-    case LIMBA_RT_MATH_LN:
-        *r = fbits(log(dv(a[0])), LIMBA_T_F64);
-        return true;
-    case LIMBA_RT_MATH_TRUNC:
-        *r = fbits(trunc(dv(a[0])), LIMBA_T_F64);
-        return true;
-    case LIMBA_RT_MATH_FLOOR:
-        *r = fbits(floor(dv(a[0])), LIMBA_T_F64);
-        return true;
-    case LIMBA_RT_MATH_CEIL:
-        *r = fbits(ceil(dv(a[0])), LIMBA_T_F64);
-        return true;
     case LIMBA_RT_INT_POW: {
         int64_t base = (int64_t)a[0], acc = 1;
         uint64_t ex = a[1]; /* without a sign */
@@ -1178,17 +1158,22 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         *r = a[0] && amap_find(&e->heap, a[0]) != AMAP_NONE;
         return true;
     case LIMBA_RT_MATH_SQRT:
-        *r = fbits(sqrt(dv(a[0])), LIMBA_T_F64);
-        return true;
     case LIMBA_RT_MATH_SIN:
-        *r = fbits(sin(dv(a[0])), LIMBA_T_F64);
-        return true;
     case LIMBA_RT_MATH_COS:
-        *r = fbits(cos(dv(a[0])), LIMBA_T_F64);
-        return true;
+    case LIMBA_RT_MATH_TAN:
+    case LIMBA_RT_MATH_ATAN:
+    case LIMBA_RT_MATH_EXP:
+    case LIMBA_RT_MATH_LN:
     case LIMBA_RT_MATH_POW:
-        *r = fbits(pow(dv(a[0]), dv(a[1])), LIMBA_T_F64);
+    case LIMBA_RT_MATH_TRUNC:
+    case LIMBA_RT_MATH_FLOOR:
+    case LIMBA_RT_MATH_CEIL: {
+        /* limba/math.h: the same bits as every engine (IR § 11b) */
+        double in[2] = {dv(a[0]), rt == LIMBA_RT_MATH_POW ? dv(a[1]) : 0}, out;
+        limba_math_call(rt, in, &out);
+        *r = fbits(out, LIMBA_T_F64);
         return true;
+    }
     default:
         return runtime_luxia(e, rt, a, r);
     }
