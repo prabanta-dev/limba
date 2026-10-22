@@ -74,6 +74,18 @@ bool limba_big_pow_lim(limba_big *r, const limba_big *a, uint64_t e,
 bool limba_big_parse_lim(limba_big *r, const char *s, size_t n, unsigned base,
                          uint64_t maxbits);
 void limba_big_gcd(limba_big *r, const limba_big *a, const limba_big *b);
+/* the functions of the BigInt library (progetto_ir.md § 11d), up to
+   maxbits for what they build; false past it. The caller checks before
+   what they need: lcm is >= 0, 0 if an operand is 0; sqrt is the floor
+   of the root of a >= 0; root the k-th root, k >= 1, truncated toward
+   zero (a < 0 only with k odd); powmod b^e mod |m| in 0 .. |m| - 1, for
+   e >= 0 and m != 0 (0^0 is 1) */
+bool limba_big_lcm_lim(limba_big *r, const limba_big *a, const limba_big *b,
+                       uint64_t maxbits);
+bool limba_big_root_lim(limba_big *r, const limba_big *a, uint64_t k,
+                        uint64_t maxbits);
+bool limba_big_powmod_lim(limba_big *r, const limba_big *b, const limba_big *e,
+                          const limba_big *m, uint64_t maxbits);
 
 /* the value if it fits */
 bool limba_big_to_i64(const limba_big *a, int64_t *v);

@@ -473,6 +473,103 @@ static void test_fmt_f64(unsigned count)
     }
 }
 
+/* the BigInt library checked by what each result must satisfy: gcd
+   divides both and leaves coprime quotients, lcm * gcd = |a * b|, the
+   k-th root r has r^k <= |a| < (r + 1)^k (and an odd one keeps the sign),
+   powmod agrees with pow then mod and is 1 for a^(p - 1) mod a prime p,
+   the exact division undoes a product */
+static void test_library(unsigned count)
+{
+    const uint64_t huge = (uint64_t)1 << 40;
+    uint64_t s = 0x1bd11bdaa9fc1a22ull;
+    limba_big a, b, g, l, t, u, q, m, r, one, x, p;
+    limba_big *all[] = {&a, &b, &g, &l, &t, &u, &q, &m, &r, &one, &x, &p};
+    for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); i++)
+        limba_big_init(all[i]);
+    limba_big_set_u64(&one, 1);
+    /* 2^61 - 1, a prime */
+    limba_big_set_u64(&p, ((uint64_t)1 << 61) - 1);
+    unsigned wrong = 0;
+#define LIB_CHECK(cond, what)                                                  \
+    do {                                                                       \
+        if (!(cond) && wrong++ < 5) {                                          \
+            fprintf(stderr, "test_common: library: %s, case %u\n", what, k);   \
+            failures++;                                                        \
+        }                                                                      \
+    } while (0)
+    for (unsigned k = 0; k < count; k++) {
+        rand_big(&a, &s, 10);
+        rand_big(&b, &s, 6);
+        /* gcd and lcm */
+        limba_big_gcd(&g, &a, &b);
+        LIB_CHECK(limba_big_sign(&g) >= 0, "gcd negative");
+        if (!limba_big_is_zero(&g)) {
+            limba_big_divmod(&q, &m, &a, &g);
+            LIB_CHECK(limba_big_is_zero(&m), "gcd does not divide a");
+            limba_big_divmod(&u, &m, &b, &g);
+            LIB_CHECK(limba_big_is_zero(&m), "gcd does not divide b");
+            limba_big_gcd(&t, &q, &u);
+            LIB_CHECK(limba_big_cmp(&t, &one) == 0, "quotients not coprime");
+        } else
+            LIB_CHECK(limba_big_is_zero(&a) && limba_big_is_zero(&b),
+                      "gcd 0 of non-zero");
+        LIB_CHECK(limba_big_lcm_lim(&l, &a, &b, huge), "lcm room");
+        limba_big_mul_lim(&t, &l, &g, huge);
+        limba_big_mul_lim(&u, &a, &b, huge);
+        limba_big_abs(&u, &u);
+        LIB_CHECK(limba_big_cmp(&t, &u) == 0, "lcm * gcd is not |a * b|");
+        /* roots */
+        s ^= s << 13, s ^= s >> 7, s ^= s << 17;
+        uint64_t kk = 2 + s % 7;
+        if (s >> 40 & 1)
+            kk = 2 + (s >> 20) % 400; /* past the bits, sometimes */
+        limba_big_abs(&x, &a);
+        LIB_CHECK(limba_big_root_lim(&r, &x, kk, huge), "root room");
+        limba_big_pow_lim(&t, &r, kk, huge);
+        limba_big_add_lim(&u, &r, &one, huge);
+        limba_big_pow_lim(&u, &u, kk, huge);
+        LIB_CHECK(limba_big_cmp(&t, &x) <= 0 && limba_big_cmp(&x, &u) < 0,
+                  "root out of its bounds");
+        if (kk % 2) {
+            limba_big_neg(&x, &x);
+            limba_big_root_lim(&t, &x, kk, huge);
+            limba_big_neg(&t, &t);
+            LIB_CHECK(limba_big_cmp(&t, &r) == 0, "odd root of a negative");
+        }
+        /* exact division */
+        if (!limba_big_is_zero(&b)) {
+            limba_big_mul_lim(&t, &a, &b, huge);
+            limba_big_divmod(&q, &m, &t, &b);
+            LIB_CHECK(limba_big_cmp(&q, &a) == 0 && limba_big_is_zero(&m),
+                      "exact division");
+        }
+        /* powmod against pow then mod, small exponents */
+        s ^= s << 13, s ^= s >> 7, s ^= s << 17;
+        uint64_t e = s % 40;
+        rand_big(&m, &s, 3);
+        if (limba_big_is_zero(&m))
+            limba_big_set_u64(&m, 7);
+        limba_big_set_u64(&x, e);
+        LIB_CHECK(limba_big_powmod_lim(&r, &b, &x, &m, huge), "powmod room");
+        limba_big_pow_lim(&t, &b, e, huge);
+        limba_big_abs(&u, &m);
+        limba_big_divmod(NULL, &t, &t, &u);
+        if (limba_big_sign(&t) < 0)
+            limba_big_add_lim(&t, &t, &u, huge);
+        LIB_CHECK(limba_big_cmp(&t, &r) == 0, "powmod is not pow then mod");
+        /* Fermat: a^(p - 1) = 1 mod p, a not a multiple of p */
+        limba_big_divmod(NULL, &t, &a, &p);
+        if (!limba_big_is_zero(&t)) {
+            limba_big_sub_lim(&x, &p, &one, huge);
+            limba_big_powmod_lim(&r, &a, &x, &p, huge);
+            LIB_CHECK(limba_big_cmp(&r, &one) == 0, "Fermat");
+        }
+    }
+#undef LIB_CHECK
+    for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); i++)
+        limba_big_free(all[i]);
+}
+
 /* how a child that runs f ends: the signal that stopped it, 0 if it
    returned; its standard error thrown away */
 static int child_signal(void (*f)(void))
@@ -531,11 +628,13 @@ int main(void)
     test_program();
     test_integers();
     test_division(20000);
+    test_library(5000);
     test_rationals();
     test_rounding(20000);
     test_fmt_f64(20000);
     test_fmt_f32(20000);
     printf("test_common: program name, integers, 20000 random divisions, "
+           "5000 of the library, "
            "rationals, 20000 random roundings to double and float, 20000 "
            "shortest reals, %d failures\n",
            failures);

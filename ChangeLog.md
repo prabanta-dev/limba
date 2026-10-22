@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The BigInt library of the run time: `big_gcd`, `big_lcm`, `big_sqrt`,
+  `big_root` (truncated toward zero), `big_divisible`, `big_divexact` and
+  `big_powmod` (in 0 .. |m| - 1). As for `big_div`, the IR checks before
+  what they need (a negative square root, a modulus 0, a negative
+  exponent, a division not exact), and the reference interpreter calls a
+  module that does not wrong; `test_eval` now says so with
+  `; module: wrong`. The runtime table changes, so a `.lir` of before is
+  refused.
+
 - The mathematics of the run time (sin, cos, tan, atan, exp, ln, pow)
   is computed by one library compiled into Limba, the same bits on every
   engine and machine: musl 1.2.5 (MIT), its portable C only, without

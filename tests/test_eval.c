@@ -7,7 +7,9 @@
  *
  * tests/eval, every .lit: the interpreter itself, against what its header
  *     says: "; output: <line>" per printed line, "; result: <n>",
- *     "; trap: <code>" or "; memory: broken" (a rule of the strings in
+ *     "; trap: <code>", "; module: wrong" (a check the IR must make
+ *     before a call of the run time is missing) or "; memory: broken" (a
+ *     rule of the strings in
  *     memory broken, found by check_mem, on in every run here), and
  *     "; max memory: <bytes>" for a budget other than 64 MiB; run twice,
  *     the second time with a collection before each value made and,
@@ -125,6 +127,8 @@ static void golden(const char *path)
         } else if (!strncmp(p, "; trap: ", 8)) {
             status = LIMBA_EVAL_TRAP;
             value = strtoll(p + 8, NULL, 10);
+        } else if (!strncmp(p, "; module: wrong", 15)) {
+            status = LIMBA_EVAL_BAD;
         } else if (!strncmp(p, "; memory: broken", 16)) {
             status = LIMBA_EVAL_BADMEM;
         } else if (!strncmp(p, "; max memory: ", 14)) {

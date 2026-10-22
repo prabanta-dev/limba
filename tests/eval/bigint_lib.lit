@@ -1,0 +1,100 @@
+; output: 9000000000900000000090
+; output: 12
+; output: 0
+; output: 10000000000000000000
+; output: -10000000000
+; output: 1
+; output: 987654321098765432109876543210
+; output: 686288592
+; output: 0
+; output: 1
+; output: 0
+; result: 0
+; the BigInt library: gcd, lcm, sqrt, roots (odd of a negative, past the
+; bits), exact division, powmod (negative base and modulus, 0 ** 0),
+; divisible; the values from Python's integers
+func @main : fn() -> i64 {
+b0:
+  v0 = sconst str "-123456789012345678901234567890"
+  v1 = call.rt ref big_lit(v0)
+  v2 = sconst str "987654321098765432109876543210"
+  v3 = call.rt ref big_lit(v2)
+  v4 = call.rt ref big_gcd(v1, v3)
+  call.rt void print_big(v4)
+  call.rt void print_nl()
+  v5 = sconst str "-4"
+  v6 = call.rt ref big_lit(v5)
+  v7 = sconst str "6"
+  v8 = call.rt ref big_lit(v7)
+  v9 = call.rt ref big_lcm(v6, v8)
+  call.rt void print_big(v9)
+  call.rt void print_nl()
+  v10 = sconst str "0"
+  v11 = call.rt ref big_lit(v10)
+  v12 = sconst str "6"
+  v13 = call.rt ref big_lit(v12)
+  v14 = call.rt ref big_lcm(v11, v13)
+  call.rt void print_big(v14)
+  call.rt void print_nl()
+  v15 = sconst str "100000000000000000000000000000000000001"
+  v16 = call.rt ref big_lit(v15)
+  v17 = call.rt ref big_sqrt(v16)
+  call.rt void print_big(v17)
+  call.rt void print_nl()
+  v18 = sconst str "-1000000000000000000000000000000"
+  v19 = call.rt ref big_lit(v18)
+  v20 = iconst i64 3
+  v21 = call.rt ref big_root(v19, v20)
+  call.rt void print_big(v21)
+  call.rt void print_nl()
+  v22 = sconst str "12345678901234567890123456789"
+  v23 = call.rt ref big_lit(v22)
+  v24 = iconst i64 200
+  v25 = call.rt ref big_root(v23, v24)
+  call.rt void print_big(v25)
+  call.rt void print_nl()
+  v26 = sconst str "121932631137021795226185032733622923332237463801111263526900"
+  v27 = call.rt ref big_lit(v26)
+  v28 = sconst str "123456789012345678901234567890"
+  v29 = call.rt ref big_lit(v28)
+  v30 = call.rt ref big_divexact(v27, v29)
+  call.rt void print_big(v30)
+  call.rt void print_nl()
+  v31 = sconst str "-7"
+  v32 = call.rt ref big_lit(v31)
+  v33 = sconst str "1000000000000000000000"
+  v34 = call.rt ref big_lit(v33)
+  v35 = sconst str "-1000000007"
+  v36 = call.rt ref big_lit(v35)
+  v37 = call.rt ref big_powmod(v32, v34, v36)
+  call.rt void print_big(v37)
+  call.rt void print_nl()
+  v38 = sconst str "0"
+  v39 = call.rt ref big_lit(v38)
+  v40 = sconst str "0"
+  v41 = call.rt ref big_lit(v40)
+  v42 = sconst str "1"
+  v43 = call.rt ref big_lit(v42)
+  v44 = call.rt ref big_powmod(v39, v41, v43)
+  call.rt void print_big(v44)
+  call.rt void print_nl()
+  v45 = sconst str "0"
+  v46 = call.rt ref big_lit(v45)
+  v47 = sconst str "0"
+  v48 = call.rt ref big_lit(v47)
+  v49 = sconst str "5"
+  v50 = call.rt ref big_lit(v49)
+  v51 = call.rt ref big_powmod(v46, v48, v50)
+  call.rt void print_big(v51)
+  call.rt void print_nl()
+  v52 = sconst str "34"
+  v53 = call.rt ref big_lit(v52)
+  v54 = sconst str "6"
+  v55 = call.rt ref big_lit(v54)
+  v56 = call.rt i1 big_divisible(v53, v55)
+  v57 = zext i64 v56
+  call.rt void print_i64(v57)
+  call.rt void print_nl()
+  v58 = iconst i64 0
+  ret v58
+}

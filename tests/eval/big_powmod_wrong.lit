@@ -1,0 +1,13 @@
+; module: wrong
+; a negative exponent given to big_powmod: the IR checks it before (101)
+func @main : fn() -> i64 {
+b0:
+  v0 = sconst str "7"
+  v1 = call.rt ref big_lit(v0)
+  v2 = sconst str "-1"
+  v3 = call.rt ref big_lit(v2)
+  v4 = call.rt ref big_powmod(v1, v3, v1)
+  call.rt void print_big(v4)
+  v9 = iconst i64 0
+  ret v9
+}

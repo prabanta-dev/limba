@@ -196,3 +196,22 @@ LIMBA_RT(IO_READ, "io_read", "(ptr, i64) -> i64",
          LIMBA_RTA_IO | LIMBA_RTA_WRITES_MEM | LIMBA_RTA_MAY_TRAP)
 LIMBA_RT(IO_WRITE, "io_write", "(ptr, i64) -> void",
          LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
+/* the BigInt library (progetto_ir.md § 11d, proposta_luxia_1.md § 3),
+   checked before, in the IR, as big_div is: gcd and lcm are >= 0 (0 for
+   0 and 0, lcm 0 if an operand is 0); sqrt of a >= 0, its floor; root
+   the k-th root, k >= 1 and a >= 0 for an even k, truncated toward zero;
+   divisible of b != 0; divexact of b != 0 that divides a (the IR checks
+   it with divisible: which trap that gives is the language's); powmod b
+   to e modulo |m| in 0 .. |m| - 1, for e >= 0 and m != 0 (0 ** 0 is 1) */
+LIMBA_RT(BIG_GCD, "big_gcd", "(ref, ref) -> ref",
+         LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+LIMBA_RT(BIG_LCM, "big_lcm", "(ref, ref) -> ref",
+         LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+LIMBA_RT(BIG_SQRT, "big_sqrt", "(ref) -> ref", LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+LIMBA_RT(BIG_ROOT, "big_root", "(ref, i64) -> ref",
+         LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+LIMBA_RT(BIG_DIVISIBLE, "big_divisible", "(ref, ref) -> i1", LIMBA_RTA_PURE)
+LIMBA_RT(BIG_DIVEXACT, "big_divexact", "(ref, ref) -> ref",
+         LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+LIMBA_RT(BIG_POWMOD, "big_powmod", "(ref, ref, ref) -> ref",
+         LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)

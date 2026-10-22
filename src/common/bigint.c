@@ -435,6 +435,125 @@ void limba_big_gcd(limba_big *r, const limba_big *a, const limba_big *b)
     limba_big_free(&t);
 }
 
+bool limba_big_lcm_lim(limba_big *r, const limba_big *a, const limba_big *b,
+                       uint64_t maxbits)
+{
+    if (!a->n || !b->n) {
+        limba_big_set_u64(r, 0);
+        return true;
+    }
+    limba_big g, q, x;
+    limba_big_init(&g);
+    limba_big_init(&q);
+    limba_big_init(&x);
+    limba_big_gcd(&g, a, b);
+    limba_big_abs(&x, a);
+    limba_big_divmod(&q, NULL, &x, &g); /* exact */
+    limba_big_abs(&x, b);
+    bool ok = limba_big_mul_lim(r, &q, &x, maxbits);
+    limba_big_free(&g);
+    limba_big_free(&q);
+    limba_big_free(&x);
+    return ok;
+}
+
+bool limba_big_root_lim(limba_big *r, const limba_big *a, uint64_t k,
+                        uint64_t maxbits)
+{
+    bool neg = a->neg;
+    limba_big m, x, y, p, q, km1, kk;
+    limba_big_init(&m);
+    limba_big_abs(&m, a);
+    uint32_t bits = limba_big_bits(&m);
+    if (bits == 0 || k == 1 || k >= bits) {
+        /* 0, the number itself, or below 2: |a| < 2^bits <= 2^k */
+        if (k == 1)
+            limba_big_copy(r, a);
+        else
+            limba_big_set_i64(r, bits == 0 ? 0 : neg ? -1 : 1);
+        limba_big_free(&m);
+        return true;
+    }
+    limba_big_init(&x);
+    limba_big_init(&y);
+    limba_big_init(&p);
+    limba_big_init(&q);
+    limba_big_init(&km1);
+    limba_big_init(&kk);
+    limba_big_set_u64(&km1, k - 1);
+    limba_big_set_u64(&kk, k);
+    /* Newton from above: x0 = 2^ceil(bits / k) is past the root, and each
+       step x = ((k - 1) x + m / x^(k - 1)) / k comes down to it */
+    limba_big_set_u64(&x, 1);
+    bool ok =
+        limba_big_shl_lim(&x, &x, (uint32_t)((bits + k - 1) / k), maxbits);
+    while (ok) {
+        ok = limba_big_pow_lim(&p, &x, k - 1, maxbits + bits);
+        if (!ok)
+            break;
+        limba_big_divmod(&q, NULL, &m, &p);
+        ok = limba_big_mul_lim(&y, &x, &km1, maxbits) &&
+             limba_big_add_lim(&y, &y, &q, maxbits);
+        if (!ok)
+            break;
+        limba_big_divmod(&y, NULL, &y, &kk);
+        if (limba_big_cmp(&y, &x) >= 0)
+            break;
+        limba_big_copy(&x, &y);
+    }
+    if (ok) {
+        if (neg)
+            limba_big_neg(&x, &x);
+        limba_big_copy(r, &x);
+    }
+    limba_big_free(&m);
+    limba_big_free(&x);
+    limba_big_free(&y);
+    limba_big_free(&p);
+    limba_big_free(&q);
+    limba_big_free(&km1);
+    limba_big_free(&kk);
+    return ok;
+}
+
+bool limba_big_powmod_lim(limba_big *r, const limba_big *b, const limba_big *e,
+                          const limba_big *m, uint64_t maxbits)
+{
+    limba_big mm, base, acc, t;
+    limba_big_init(&mm);
+    limba_big_init(&base);
+    limba_big_init(&acc);
+    limba_big_init(&t);
+    limba_big_abs(&mm, m);
+    /* the base in 0 .. |m| - 1 */
+    limba_big_divmod(NULL, &base, b, &mm);
+    bool ok = true;
+    if (base.neg)
+        ok = limba_big_add_lim(&base, &base, &mm, maxbits);
+    limba_big_set_u64(&acc, 1);
+    limba_big_divmod(NULL, &acc, &acc, &mm); /* 0 when |m| is 1 */
+    uint32_t nb = limba_big_bits(e);
+    for (uint32_t i = nb; ok && i-- > 0;) {
+        ok = limba_big_mul_lim(&t, &acc, &acc, maxbits);
+        if (!ok)
+            break;
+        limba_big_divmod(NULL, &acc, &t, &mm);
+        if (e->w[i / 32] >> (i % 32) & 1) {
+            ok = limba_big_mul_lim(&t, &acc, &base, maxbits);
+            if (!ok)
+                break;
+            limba_big_divmod(NULL, &acc, &t, &mm);
+        }
+    }
+    if (ok)
+        limba_big_copy(r, &acc);
+    limba_big_free(&mm);
+    limba_big_free(&base);
+    limba_big_free(&acc);
+    limba_big_free(&t);
+    return ok;
+}
+
 bool limba_big_to_u64(const limba_big *a, uint64_t *v)
 {
     if (a->neg || a->n > 2)

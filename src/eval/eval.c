@@ -711,6 +711,63 @@ static bool runtime_big(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
             ok = limba_big_pow_lim(&t, &x, a[1], big_room(e));
         while (!ok && big_again(e, &t, &tried));
         return big_done(e, ok, &t, r);
+    case LIMBA_RT_BIG_GCD:
+        y = big_get(a[1]);
+        limba_big_gcd(&t, &x, &y);
+        return big_box(e, &t, r);
+    case LIMBA_RT_BIG_LCM:
+        y = big_get(a[1]);
+        do
+            ok = limba_big_lcm_lim(&t, &x, &y, big_room(e));
+        while (!ok && big_again(e, &t, &tried));
+        return big_done(e, ok, &t, r);
+    case LIMBA_RT_BIG_SQRT:
+    case LIMBA_RT_BIG_ROOT: {
+        /* checked before, in the IR: a module that does not is wrong */
+        uint64_t k = rt == LIMBA_RT_BIG_SQRT ? 2 : a[1];
+        if ((int64_t)k < 1 || (x.neg && k % 2 == 0)) {
+            e->status = LIMBA_EVAL_BAD;
+            return false;
+        }
+        do
+            ok = limba_big_root_lim(&t, &x, k, big_room(e));
+        while (!ok && big_again(e, &t, &tried));
+        return big_done(e, ok, &t, r);
+    }
+    case LIMBA_RT_BIG_DIVISIBLE:
+    case LIMBA_RT_BIG_DIVEXACT: {
+        y = big_get(a[1]);
+        limba_big m;
+        limba_big_init(&m);
+        if (!limba_big_is_zero(&y))
+            limba_big_divmod(&t, &m, &x, &y);
+        bool exact = !limba_big_is_zero(&y) && limba_big_is_zero(&m);
+        limba_big_free(&m);
+        if (rt == LIMBA_RT_BIG_DIVISIBLE && !limba_big_is_zero(&y)) {
+            limba_big_free(&t);
+            *r = exact;
+            return true;
+        }
+        if (!exact) { /* a divisor 0, or a division not exact: the IR
+                         checks both before */
+            limba_big_free(&t);
+            e->status = LIMBA_EVAL_BAD;
+            return false;
+        }
+        return big_box(e, &t, r);
+    }
+    case LIMBA_RT_BIG_POWMOD: {
+        y = big_get(a[1]);
+        limba_big m = big_get(a[2]);
+        if (y.neg || limba_big_is_zero(&m)) { /* checked before, in the IR */
+            e->status = LIMBA_EVAL_BAD;
+            return false;
+        }
+        do
+            ok = limba_big_powmod_lim(&t, &x, &y, &m, big_room(e));
+        while (!ok && big_again(e, &t, &tried));
+        return big_done(e, ok, &t, r);
+    }
     case LIMBA_RT_BIG_CMP:
         y = big_get(a[1]);
         *r = norm((uint64_t)(int64_t)limba_big_cmp(&x, &y), LIMBA_T_I32);
