@@ -153,6 +153,11 @@ void limba_module_free(limba_module *m)
     free(m->pos);
     free(m->messages);
     free(m->globals);
+    for (uint32_t i = 0; i < m->ninits; i++) {
+        free(m->inits[i].bytes);
+        free(m->inits[i].relocs);
+    }
+    free(m->inits);
     free(m->externs);
     free(m->members);
     free(m->types);
@@ -381,6 +386,53 @@ limba_id limba_global_add(limba_module *m, limba_id name, limba_id type,
     m->globals[id] = (limba_global){name, type, flags, LIMBA_INIT_ZERO, 0};
     limba_hash_put(m->symidx, sym_hash(name, SYM_GLOBAL), id);
     return id;
+}
+
+/* the data of g, made if it has none */
+static limba_initdata *data_of(limba_module *m, limba_id g)
+{
+    limba_global *gl = &m->globals[g];
+    if (gl->init != LIMBA_INIT_DATA || (uint64_t)gl->value >= m->ninits) {
+        LIMBA_GROW(m->inits, m->ninits, m->capinits);
+        gl->init = LIMBA_INIT_DATA;
+        gl->value = m->ninits;
+        m->inits[m->ninits++] = (limba_initdata){0};
+    }
+    return &m->inits[gl->value];
+}
+
+void limba_global_set_data(limba_module *m, limba_id g, const void *bytes,
+                           size_t len)
+{
+    limba_initdata *d = data_of(m, g);
+    const uint8_t *b = bytes;
+    while (len && !b[len - 1])
+        len--;
+    free(d->bytes);
+    free(d->relocs);
+    *d = (limba_initdata){0};
+    if (len) {
+        d->bytes = limba_xmalloc(len);
+        memcpy(d->bytes, b, len);
+        d->len = (uint32_t)len;
+    }
+}
+
+void limba_global_add_reloc(limba_module *m, limba_id g, uint32_t offset,
+                            enum limba_reloc_kind kind, limba_id id,
+                            int64_t addend)
+{
+    limba_initdata *d = data_of(m, g);
+    LIMBA_GROW(d->relocs, d->nrelocs, d->caprelocs);
+    d->relocs[d->nrelocs++] = (limba_reloc){offset, (uint8_t)kind, id, addend};
+}
+
+const limba_initdata *limba_global_data(const limba_module *m, limba_id g)
+{
+    const limba_global *gl = &m->globals[g];
+    return gl->init == LIMBA_INIT_DATA && (uint64_t)gl->value < m->ninits
+               ? &m->inits[gl->value]
+               : NULL;
 }
 
 limba_id limba_extern_add(limba_module *m, limba_id name, limba_id type,

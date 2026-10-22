@@ -176,6 +176,175 @@ static bool c_type(const limba_module *m, limba_id t, bool result)
     return true;
 }
 
+/* the scalar type that starts at byte off of type t (its layout: struct
+   fields, array elements), LIMBA_NONE if none starts there */
+static limba_id scalar_at(const limba_module *m, limba_id t, uint32_t off)
+{
+    for (;;) {
+        if (t >= m->ntypes)
+            return LIMBA_NONE;
+        if (t < LIMBA_T_FIRST_USER)
+            return off == 0 ? t : LIMBA_NONE;
+        const limba_type *ty = &m->types[t];
+        if (ty->kind == LIMBA_TK_ARRAY) {
+            uint32_t es = ty->elem < m->ntypes ? m->types[ty->elem].size : 0;
+            if (!es || off / es >= ty->count)
+                return LIMBA_NONE;
+            off %= es;
+            t = ty->elem;
+        } else if (ty->kind == LIMBA_TK_STRUCT) {
+            limba_id next = LIMBA_NONE;
+            for (uint32_t i = 0; i < ty->count && next == LIMBA_NONE; i++) {
+                const limba_member *f = &m->members[ty->first + i];
+                uint32_t fs = f->type < m->ntypes ? m->types[f->type].size : 0;
+                if (off >= f->offset && off - f->offset < fs) {
+                    next = f->type;
+                    off -= f->offset;
+                }
+            }
+            if (next == LIMBA_NONE)
+                return LIMBA_NONE;
+            t = next;
+        } else
+            return LIMBA_NONE;
+    }
+}
+
+/* are the bytes of every str and ref of type t, placed at base, zero in
+   d? Only the first d->len bytes are written, the rest is zero */
+static bool counted_zero(const limba_module *m, limba_id t, uint64_t base,
+                         const limba_initdata *d)
+{
+    if (base >= d->len || !limba_type_counted(m, t))
+        return true;
+    const limba_type *ty = &m->types[t];
+    if (t == LIMBA_T_STR || t == LIMBA_T_REF) {
+        for (uint64_t k = base; k < base + ty->size && k < d->len; k++)
+            if (d->bytes[k])
+                return false;
+        return true;
+    }
+    if (ty->kind == LIMBA_TK_ARRAY) {
+        uint32_t es = m->types[ty->elem].size;
+        for (uint64_t i = 0; i < ty->count && base + i * es < d->len; i++)
+            if (!counted_zero(m, ty->elem, base + i * es, d))
+                return false;
+        return true;
+    }
+    for (uint32_t i = 0; i < ty->count; i++) {
+        const limba_member *f = &m->members[ty->first + i];
+        if (!counted_zero(m, f->type, base + f->offset, d))
+            return false;
+    }
+    return true;
+}
+
+/* the bytes and relocations of a LIMBA_INIT_DATA global
+   (progetto_ir.md § 11h) */
+static bool check_data(vctx *v, const limba_global *g, uint8_t *seen)
+{
+    const limba_module *m = v->m;
+    const char *nm = name_of(m, g->name);
+    if ((uint64_t)g->value >= m->ninits)
+        FAIL("global @%s: data out of range", nm);
+    if (seen[g->value]++)
+        FAIL("global @%s: data shared with another global", nm);
+    const limba_initdata *d = &m->inits[g->value];
+    uint32_t size = m->types[g->type].size;
+    if (d->len > size)
+        FAIL("global @%s: %" PRIu32 " bytes of data for a type of %" PRIu32, nm,
+             d->len, size);
+    if (d->len && !d->bytes)
+        FAIL("global @%s: data without bytes", nm);
+    if (!counted_zero(m, g->type, 0, d))
+        FAIL("global @%s: a str or ref of the data is not zero", nm);
+    uint64_t end = 0; /* the first byte after the previous relocation */
+    for (uint32_t k = 0; k < d->nrelocs; k++) {
+        const limba_reloc *r = &d->relocs[k];
+        limba_id want = r->kind == LIMBA_RELOC_STR ? LIMBA_T_STR : LIMBA_T_PTR;
+        uint32_t w = m->types[want].size;
+        if (r->kind > LIMBA_RELOC_STR)
+            FAIL("global @%s: relocation %" PRIu32 " of an unknown kind", nm,
+                 k);
+        if (r->offset < end)
+            FAIL("global @%s: relocation %" PRIu32 " not after the one "
+                 "before",
+                 nm, k);
+        if (scalar_at(m, g->type, r->offset) != want)
+            FAIL("global @%s: relocation %" PRIu32 " is not on a %s of the "
+                 "type",
+                 nm, k, want == LIMBA_T_STR ? "str" : "ptr");
+        for (uint64_t b = r->offset; b < (uint64_t)r->offset + w; b++)
+            if (b < d->len && d->bytes[b])
+                FAIL("global @%s: the bytes under relocation %" PRIu32
+                     " are not zero",
+                     nm, k);
+        end = (uint64_t)r->offset + w;
+        switch (r->kind) {
+        case LIMBA_RELOC_FUNC:
+            if (r->id >= m->nfuncs || r->addend)
+                FAIL("global @%s: relocation %" PRIu32 ": no such function", nm,
+                     k);
+            break;
+        case LIMBA_RELOC_GLOBAL:
+            if (r->id >= m->nglobals || r->addend < 0 ||
+                (uint64_t)r->addend > m->types[m->globals[r->id].type].size)
+                FAIL("global @%s: relocation %" PRIu32 ": no such global, or "
+                     "an address outside it",
+                     nm, k);
+            break;
+        case LIMBA_RELOC_STR:
+            if (r->id >= limba_str_count(m) || r->addend)
+                FAIL("global @%s: relocation %" PRIu32 ": no such string", nm,
+                     k);
+            break;
+        }
+    }
+    return true;
+}
+
+/* the globals: names, types, initial values */
+static bool check_globals(vctx *v, uint8_t *seen)
+{
+    const limba_module *m = v->m;
+    uint32_t nstr = limba_str_count(m);
+    for (uint32_t i = 0; i < m->nglobals; i++) {
+        const limba_global *g = &m->globals[i];
+        if (g->name >= nstr)
+            FAIL("global %" PRIu32 ": no name", i);
+        if (!type_ok(m, g->type) || g->type == LIMBA_T_VOID ||
+            m->types[g->type].kind == LIMBA_TK_FUNC)
+            FAIL("global @%s: invalid type", name_of(m, g->name));
+        bool ok;
+        switch (g->init) {
+        case LIMBA_INIT_ZERO:
+            ok = g->value == 0;
+            break;
+        case LIMBA_INIT_INT:
+            ok = limba_type_is_int(g->type) || g->type == LIMBA_T_PTR;
+            break;
+        case LIMBA_INIT_FLOAT:
+            ok = limba_type_is_float(g->type) &&
+                 (g->type != LIMBA_T_F32 || (uint64_t)g->value <= UINT32_MAX);
+            break;
+        case LIMBA_INIT_STR:
+            ok = g->type == LIMBA_T_STR && (uint64_t)g->value < nstr;
+            break;
+        case LIMBA_INIT_DATA:
+            if (!check_data(v, g, seen))
+                return false;
+            ok = true;
+            break;
+        default:
+            ok = false;
+        }
+        if (!ok)
+            FAIL("global @%s: the initial value does not suit its type",
+                 name_of(m, g->name));
+    }
+    return true;
+}
+
 static bool check_symbols(vctx *v)
 {
     const limba_module *m = v->m;
@@ -206,35 +375,12 @@ static bool check_symbols(vctx *v)
             if (m->messages[j].code == msg->code)
                 FAIL("two messages for code %" PRId64, msg->code);
     }
-    for (uint32_t i = 0; i < m->nglobals; i++) {
-        const limba_global *g = &m->globals[i];
-        if (g->name >= nstr)
-            FAIL("global %" PRIu32 ": no name", i);
-        if (!type_ok(m, g->type) || g->type == LIMBA_T_VOID ||
-            m->types[g->type].kind == LIMBA_TK_FUNC)
-            FAIL("global @%s: invalid type", name_of(m, g->name));
-        bool ok;
-        switch (g->init) {
-        case LIMBA_INIT_ZERO:
-            ok = g->value == 0;
-            break;
-        case LIMBA_INIT_INT:
-            ok = limba_type_is_int(g->type) || g->type == LIMBA_T_PTR;
-            break;
-        case LIMBA_INIT_FLOAT:
-            ok = limba_type_is_float(g->type) &&
-                 (g->type != LIMBA_T_F32 || (uint64_t)g->value <= UINT32_MAX);
-            break;
-        case LIMBA_INIT_STR:
-            ok = g->type == LIMBA_T_STR && (uint64_t)g->value < nstr;
-            break;
-        default:
-            ok = false;
-        }
-        if (!ok)
-            FAIL("global @%s: the initial value does not suit its type",
-                 name_of(m, g->name));
-    }
+    /* the data already given to a global */
+    uint8_t *seen = limba_xcalloc((size_t)m->ninits + 1, 1);
+    bool gok = check_globals(v, seen);
+    free(seen);
+    if (!gok)
+        return false;
     for (uint32_t i = 0; i < m->nexterns; i++) {
         const limba_extern *e = &m->externs[i];
         if (e->name >= nstr || e->symbol >= nstr ||

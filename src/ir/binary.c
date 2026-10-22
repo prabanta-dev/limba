@@ -7,6 +7,10 @@
  *   strings  language  messages  target  types  globals  externs
  *   functions
  *
+ * A global is name, type, flags, init, value; a LIMBA_INIT_DATA one has 0
+ * as value, then its bytes (length, bytes) and its relocations (count,
+ * then offset, kind, id, addend each).
+ *
  * Integers are LEB128 (signed where they may be negative), fingerprints 8
  * bytes little endian. Instructions are written block by block, parameters
  * first, and a value operand is the index of its instruction in that order:
@@ -223,7 +227,24 @@ int limba_writer_end(limba_writer *wr, const limba_module *m, uint8_t **buf,
         limba_w_uleb(&w, g->type);
         limba_w_uleb(&w, g->flags);
         limba_w_byte(&w, g->init);
-        limba_w_sleb(&w, g->value);
+        const limba_initdata *dt = limba_global_data(m, i);
+        if (g->init != LIMBA_INIT_DATA) {
+            limba_w_sleb(&w, g->value);
+            continue;
+        }
+        static const limba_initdata none = {0};
+        if (!dt)
+            dt = &none;
+        limba_w_sleb(&w, 0);
+        limba_w_uleb(&w, dt->len);
+        limba_w_bytes(&w, dt->bytes, dt->len);
+        limba_w_uleb(&w, dt->nrelocs);
+        for (uint32_t k = 0; k < dt->nrelocs; k++) {
+            limba_w_uleb(&w, dt->relocs[k].offset);
+            limba_w_byte(&w, dt->relocs[k].kind);
+            limba_w_uleb(&w, dt->relocs[k].id);
+            limba_w_sleb(&w, dt->relocs[k].addend);
+        }
     }
 
     limba_w_uleb(&w, m->nexterns);
@@ -468,8 +489,27 @@ limba_module *limba_read(const uint8_t *buf, size_t len, limba_diag *d)
             limba_diag_set(d, 0, "a global name used twice");
             goto fail;
         }
-        m->globals[g].init = init;
-        m->globals[g].value = value;
+        if (init != LIMBA_INIT_DATA) {
+            m->globals[g].init = init;
+            m->globals[g].value = value;
+            continue;
+        }
+        uint32_t len = limba_r_count(&r, 1);
+        const uint8_t *bytes = limba_r_bytes(&r, len);
+        if (value != 0)
+            r.bad = true;
+        if (r.bad)
+            break;
+        limba_global_set_data(m, g, bytes, len);
+        uint32_t nrel = limba_r_count(&r, 4);
+        for (uint32_t k = 0; k < nrel && !r.bad; k++) {
+            uint32_t off = r_id(&r);
+            uint8_t kind = limba_r_byte(&r);
+            limba_id id = r_id(&r);
+            int64_t addend = limba_r_sleb(&r);
+            if (!r.bad)
+                limba_global_add_reloc(m, g, off, kind, id, addend);
+        }
     }
 
     uint32_t nexterns = limba_r_count(&r, 4);

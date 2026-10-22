@@ -2059,6 +2059,41 @@ static void run_on_stack(E *e, const limba_func *f, uint64_t *ret)
     *ret = r.ret;
 }
 
+/* the bytes and relocations of a LIMBA_INIT_DATA global at p
+   (progetto_ir.md § 11h): a function as faddr gives it, a global as
+   gaddr plus the addend, a string immortal as an initial str */
+static void init_data(E *e, const limba_module *m, uint8_t *p,
+                      const limba_initdata *d)
+{
+    if (!d)
+        return;
+    if (d->len)
+        memcpy(p, d->bytes, d->len);
+    for (uint32_t k = 0; k < d->nrelocs; k++) {
+        const limba_reloc *r = &d->relocs[k];
+        uint8_t *at = p + r->offset;
+        switch (r->kind) {
+        case LIMBA_RELOC_FUNC:
+            store(at, LIMBA_T_PTR, (uint64_t)(uintptr_t)&m->funcs[r->id]);
+            break;
+        case LIMBA_RELOC_GLOBAL:
+            store(at, LIMBA_T_PTR,
+                  (uint64_t)(uintptr_t)e->globals[r->id] + (uint64_t)r->addend);
+            break;
+        case LIMBA_RELOC_STR: {
+            size_t n;
+            const char *s = limba_str(m, r->id, &n);
+            estr *x = str_make(e, s, n);
+            x->immortal = 1;
+            store(at, LIMBA_T_STR, sv(x));
+            if (e->lim.check_mem)
+                amap_put(&e->words, (uintptr_t)at, 0);
+            break;
+        }
+        }
+    }
+}
+
 void limba_eval(const limba_module *m, const char *entry,
                 const limba_eval_limits *limits, limba_eval_result *r)
 {
@@ -2105,7 +2140,14 @@ void limba_eval(const limba_module *m, const char *entry,
             break;
         }
         e.globals[i] = keep(&e, p);
-        if (g->init == LIMBA_INIT_INT)
+    }
+    /* then their values: a relocation may name any global */
+    for (uint32_t i = 0; i < m->nglobals && e.status == LIMBA_EVAL_OK; i++) {
+        const limba_global *g = &m->globals[i];
+        void *p = e.globals[i];
+        if (g->init == LIMBA_INIT_DATA)
+            init_data(&e, m, p, limba_global_data(m, i));
+        else if (g->init == LIMBA_INIT_INT)
             store(p, g->type, norm((uint64_t)g->value, g->type));
         else if (g->init == LIMBA_INIT_FLOAT)
             store(p, g->type,

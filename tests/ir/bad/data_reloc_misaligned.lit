@@ -1,0 +1,4 @@
+; expect: is not on a ptr
+; an address inside a pointer, not at its start
+type %p = { ptr @0, ptr @8 } size 16 align 8
+global @g : %p = data "" reloc 4 global @g

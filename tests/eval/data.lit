@@ -1,0 +1,54 @@
+; output: 42
+; output: vt
+; output: 7
+; output: 9
+; output: 3
+; result: 0
+; globals with data and relocations: a table holding a function, another
+; global plus an offset and a string; an array of them
+type %vt = { ptr @0, ptr @8, str @16, i64 @24 } size 32 align 8
+global @base : [2 x i64] = data "\x05\x00\x00\x00\x00\x00\x00\x00\x09" const
+global @t : %vt = data "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x07" reloc 0 func @twice reloc 8 global @base 8 reloc 16 str "vt" const
+global @two : [2 x %vt] = data "" reloc 16 str "a" reloc 40 global @two reloc 48 str "bc"
+
+func @twice : fn(i64) -> i64 {
+b0(v0: i64):
+  v1 = add i64 v0, v0
+  ret v1
+}
+
+func @main : fn() -> i64 {
+b0:
+  v0 = gaddr ptr @t
+  v1 = load ptr v0
+  v2 = iconst i64 21
+  v3 = call.ind i64 fn(i64) -> i64 v1(v2)
+  call.rt void print_i64(v3)
+  call.rt void print_nl()
+  v4 = iconst i64 0
+  v5 = addr ptr v0, v4, 0, 16
+  v6 = load str v5
+  call.rt void print_str(v6)
+  call.rt void print_nl()
+  v7 = addr ptr v0, v4, 0, 24
+  v8 = load i64 v7
+  call.rt void print_i64(v8)
+  call.rt void print_nl()
+  v9 = addr ptr v0, v4, 0, 8
+  v10 = load ptr v9
+  v11 = load i64 v10
+  call.rt void print_i64(v11)
+  call.rt void print_nl()
+  v12 = gaddr ptr @two
+  v13 = addr ptr v12, v4, 0, 40
+  v14 = load ptr v13
+  v15 = addr ptr v14, v4, 0, 16
+  v16 = load str v15
+  v17 = addr ptr v12, v4, 0, 48
+  v18 = load str v17
+  v19 = call.rt str str_concat(v16, v18)
+  v20 = call.rt i64 str_len(v19)
+  call.rt void print_i64(v20)
+  call.rt void print_nl()
+  ret v4
+}

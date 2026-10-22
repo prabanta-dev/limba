@@ -1,0 +1,4 @@
+; expect: not after the one before
+; relocations in increasing offsets
+type %p = { ptr @0, ptr @8 } size 16 align 8
+global @g : %p = data "" reloc 8 global @g reloc 0 global @g

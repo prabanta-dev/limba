@@ -1,0 +1,4 @@
+; expect: is not on a str
+; a string where the type has an address
+type %p = { ptr @0, str @8 } size 16 align 8
+global @g : %p = data "" reloc 0 str "x"

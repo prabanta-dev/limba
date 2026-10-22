@@ -1,0 +1,4 @@
+; expect: a str or ref of the data is not zero
+; a str made of bytes, not of a relocation
+type %p = { i64 @0, str @8 } size 16 align 8
+global @g : %p = data "\x00\x00\x00\x00\x00\x00\x00\x00\x01"

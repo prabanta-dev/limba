@@ -1,0 +1,4 @@
+; expect: is not on a ptr
+; an address written over an integer
+type %p = { i64 @0, ptr @8 } size 16 align 8
+global @g : %p = data "" reloc 0 global @g

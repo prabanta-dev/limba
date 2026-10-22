@@ -234,11 +234,67 @@ static void test_messages(void)
     limba_module_free(m);
 }
 
+/* the data of a global through the API, and what the text cannot write:
+   a kind that does not exist, ids out of range, an addend where none
+   belongs, two globals sharing one data */
+static void test_data(void)
+{
+    const char text[] = "type %p = { ptr @0, str @8 } size 16 align 8\n"
+                        "global @g : %p\nglobal @h : %p\n"
+                        "func @f : fn() -> void {\nb0:\n  ret\n}\n";
+    limba_diag d = {{0}, 0};
+    limba_module *m = limba_parse(text, sizeof(text) - 1, &d);
+    CHECK(m, "data: %s", d.msg);
+    if (!m)
+        return;
+    limba_id g = limba_global_find(m, limba_str_intern(m, "g", 1));
+    limba_id h = limba_global_find(m, limba_str_intern(m, "h", 1));
+    limba_id s = limba_str_intern(m, "s", 1);
+    const uint8_t zeros[16] = {0};
+    limba_global_set_data(m, g, zeros, sizeof(zeros));
+    const limba_initdata *dt = limba_global_data(m, g);
+    CHECK(dt && dt->len == 0, "data: trailing zeros kept");
+    limba_global_add_reloc(m, g, 0, LIMBA_RELOC_FUNC, 0, 0);
+    limba_global_add_reloc(m, g, 8, LIMBA_RELOC_STR, s, 0);
+    CHECK(limba_verify(m, &d) == 0, "data: %s", d.msg);
+    CHECK(!limba_global_data(m, h), "data: a global without it has some");
+
+    limba_reloc *r = &m->inits[m->globals[g].value].relocs[0];
+    r->kind = 9;
+    CHECK(limba_verify(m, &d) != 0 && strstr(d.msg, "unknown kind"),
+          "data: an unknown kind accepted");
+    r->kind = LIMBA_RELOC_FUNC;
+    r->id = 5;
+    CHECK(limba_verify(m, &d) != 0 && strstr(d.msg, "no such function"),
+          "data: a function out of range accepted");
+    r->id = 0;
+    r->addend = 8;
+    CHECK(limba_verify(m, &d) != 0 && strstr(d.msg, "no such function"),
+          "data: an addend on a function accepted");
+    r->addend = 0;
+    r[1].id = 1000;
+    CHECK(limba_verify(m, &d) != 0 && strstr(d.msg, "no such string"),
+          "data: a string out of range accepted");
+    r[1].id = s;
+    m->globals[h].init = LIMBA_INIT_DATA;
+    m->globals[h].value = m->globals[g].value;
+    CHECK(limba_verify(m, &d) != 0 && strstr(d.msg, "shared"),
+          "data: two globals sharing one data accepted");
+    m->globals[h].value = 7;
+    CHECK(limba_verify(m, &d) != 0 && strstr(d.msg, "out of range"),
+          "data: data out of range accepted");
+    m->globals[h].init = LIMBA_INIT_ZERO;
+    m->globals[h].value = 0;
+    CHECK(limba_verify(m, &d) == 0, "data: %s", d.msg);
+    limba_module_free(m);
+}
+
 int main(void)
 {
     limba_set_program("test_ir");
     test_leb128();
     test_messages();
+    test_data();
     int ok = each("tests/ir/ok", test_ok);
     int bad = each("tests/ir/bad", test_bad);
     CHECK(ok > 0 && bad > 0, "no test files found");

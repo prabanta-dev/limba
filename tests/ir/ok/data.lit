@@ -1,0 +1,14 @@
+; globals with data: bytes, relocations of every kind, an address
+; inside another global, zeros left out, an array of records
+type %vt = { ptr @0, ptr @8, str @16, i64 @24 } size 32 align 8
+
+global @base : [2 x i64] = data "\x05\x00\x00\x00\x00\x00\x00\x00\x09" const
+global @t : %vt = data "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x07" reloc 0 func @f reloc 8 global @base 8 reloc 16 str "vt" const
+global @two : [2 x %vt] = data "" reloc 16 str "a\x00b" reloc 40 global @two reloc 48 str "" export
+global @empty : [4 x i8] = data ""
+global @r : ref = data ""
+
+func @f : fn(i64) -> i64 {
+b0(v0: i64):
+  ret v0
+}

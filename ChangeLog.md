@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Globals with data: the initial value of a global may be its bytes, in
+  the layout of its type, and relocations that write into them the
+  address of a function, the address of a global plus an offset, or a
+  string of the module (`LIMBA_INIT_DATA`, `limba_global_set_data`,
+  `limba_global_add_reloc`). A table of functions or a typed constant is
+  then data, not stores at the start of `main`. In the text form
+  `global @t : %T = data "..." reloc 0 func @f reloc 8 global @g 16
+  reloc 16 str "s"`; the binary form is version 7. The verifier checks
+  that the bytes fit the type, that each relocation lands on a `ptr` or
+  a `str` of the layout, in increasing offsets, with zeros under it, and
+  that no `str` or `ref` is made of bytes; the reference interpreter
+  loads them.
+
 - The messages of the library itself (out of memory, an internal error)
   carry the name of the program that uses it, which every program gives
   with `limba_set_program` at the start of `main` (`limba`, `lir_run`,

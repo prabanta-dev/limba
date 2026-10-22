@@ -63,6 +63,46 @@ static void print_sym(FILE *out, char sigil, const limba_module *m,
         print_bytes(out, s, n);
 }
 
+/* = data "bytes" reloc OFFSET func @f | global @g [+ N] | str "s" ... */
+static void print_data(FILE *out, const limba_module *m,
+                       const limba_initdata *d)
+{
+    fputs(" = data ", out);
+    print_bytes(out, d ? (const char *)d->bytes : "", d ? d->len : 0);
+    for (uint32_t k = 0; d && k < d->nrelocs; k++) {
+        const limba_reloc *r = &d->relocs[k];
+        fprintf(out, " reloc %" PRIu32 " ", r->offset);
+        switch (r->kind) {
+        case LIMBA_RELOC_FUNC:
+            fputs("func ", out);
+            if (r->id < m->nfuncs)
+                print_sym(out, '@', m, m->funcs[r->id].name);
+            else
+                fprintf(out, "#%" PRIu32, r->id);
+            break;
+        case LIMBA_RELOC_GLOBAL:
+            fputs("global ", out);
+            if (r->id < m->nglobals)
+                print_sym(out, '@', m, m->globals[r->id].name);
+            else
+                fprintf(out, "#%" PRIu32, r->id);
+            if (r->addend)
+                fprintf(out, " %" PRId64, r->addend);
+            break;
+        case LIMBA_RELOC_STR: {
+            size_t n = 0;
+            const char *s =
+                r->id < limba_str_count(m) ? limba_str(m, r->id, &n) : "";
+            fputs("str ", out);
+            print_bytes(out, s, n);
+            break;
+        }
+        default:
+            fprintf(out, "kind%u %" PRIu32, r->kind, r->id);
+        }
+    }
+}
+
 /* the extension of a narrow integer of an extern: sext, zext */
 static void print_ext(FILE *out, uint32_t ext)
 {
@@ -413,6 +453,9 @@ void limba_print(const limba_module *m, FILE *out)
             print_bytes(out, s, n);
             break;
         }
+        case LIMBA_INIT_DATA:
+            print_data(out, m, limba_global_data(m, i));
+            break;
         }
         if (g->flags & LIMBA_SYM_EXPORT)
             fputs(" export", out);

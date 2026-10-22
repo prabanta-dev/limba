@@ -1,0 +1,3 @@
+; expect: reloc of a function that does not exist
+; a relocation of a function that does not exist
+global @g : ptr = data "" reloc 0 func @nothing

@@ -28,6 +28,10 @@ static bool declare(P *p)
             depth--;
         if (depth || k->kind != TK_IDENT || p->t[i + 1].kind != TK_SYM)
             continue;
+        /* reloc OFFSET func @f, reloc OFFSET global @g: a use, not a
+           declaration */
+        if (i >= 2 && lp_is_word(&p->t[i - 2], "reloc"))
+            continue;
         limba_id id = LIMBA_NONE, n;
         bool known = true;
         p->i = i + 1;
@@ -49,16 +53,72 @@ static bool declare(P *p)
     return true;
 }
 
+/* data "bytes" then reloc OFFSET (func @f | global @g [ADDEND] | str "s")
+   ..., after "=" */
+static bool global_data(P *p, limba_id g)
+{
+    const limba_tok *k = lp_peek(p);
+    if (k->kind != TK_STRING)
+        return lp_fail(p, "%s expected", "the bytes of the data");
+    size_t n = limba_unescape(k, p->buf);
+    if (n == SIZE_MAX)
+        return lp_fail(p, "%s", "malformed escape in the data");
+    if (n > UINT32_MAX)
+        return lp_fail(p, "%s", "data too long");
+    limba_global_set_data(p->m, g, p->buf, n);
+    p->i++;
+    while (lp_accept_word(p, "reloc")) {
+        uint32_t off;
+        limba_id id, n2;
+        int64_t addend = 0;
+        if (!lp_uinteger32(p, &off))
+            return false;
+        if (lp_accept_word(p, "func")) {
+            if (!lp_sym(p, &n2))
+                return false;
+            id = limba_func_find(p->m, n2);
+            if (id == LIMBA_NONE)
+                return lp_fail(p, "%s",
+                               "reloc of a function that does not "
+                               "exist");
+            limba_global_add_reloc(p->m, g, off, LIMBA_RELOC_FUNC, id, 0);
+        } else if (lp_accept_word(p, "global")) {
+            if (!lp_sym(p, &n2))
+                return false;
+            id = limba_global_find(p->m, n2);
+            if (id == LIMBA_NONE)
+                return lp_fail(p, "%s",
+                               "reloc of a global that does not "
+                               "exist");
+            if (lp_peek(p)->kind == TK_INT && !lp_integer(p, &addend))
+                return false;
+            limba_global_add_reloc(p->m, g, off, LIMBA_RELOC_GLOBAL, id,
+                                   addend);
+        } else if (lp_accept_word(p, "str")) {
+            if (!lp_string(p, &id))
+                return false;
+            limba_global_add_reloc(p->m, g, off, LIMBA_RELOC_STR, id, 0);
+        } else
+            return lp_fail(p, "%s expected", "func, global or str");
+    }
+    return true;
+}
+
 static bool global(P *p)
 {
     limba_id n, t;
     if (!lp_sym(p, &n) || !lp_expect(p, TK_COLON, "':'") || !lp_type(p, &t))
         return false;
-    limba_global *g = &p->m->globals[limba_global_find(p->m, n)];
+    limba_id gid = limba_global_find(p->m, n);
+    limba_global *g = &p->m->globals[gid];
     g->type = t;
     if (lp_accept(p, TK_EQ)) {
         const limba_tok *k = lp_peek(p);
-        if (k->kind == TK_STRING) {
+        if (lp_accept_word(p, "data")) {
+            if (!global_data(p, gid))
+                return false;
+            g = &p->m->globals[gid];
+        } else if (k->kind == TK_STRING) {
             limba_id s;
             if (!lp_string(p, &s))
                 return false;

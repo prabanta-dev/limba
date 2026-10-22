@@ -22,7 +22,7 @@
 #include <stdio.h>
 
 /* bumped whenever the binary form or the tables change incompatibly */
-#define LIMBA_IR_VERSION 6
+#define LIMBA_IR_VERSION 7
 
 typedef uint32_t limba_id;
 #define LIMBA_NONE UINT32_MAX
@@ -234,8 +234,36 @@ enum limba_init {
     LIMBA_INIT_ZERO,
     LIMBA_INIT_INT,
     LIMBA_INIT_FLOAT,
-    LIMBA_INIT_STR
+    LIMBA_INIT_STR,
+    /* bytes and relocations (progetto_ir.md § 11h): value is the index
+       of its limba_initdata in m->inits */
+    LIMBA_INIT_DATA
 };
+
+/* what a relocation writes into the bytes of a global, at its offset:
+   the address of a function (as faddr id), of a global plus addend (as
+   gaddr id, then addend bytes further), or an immortal string of the
+   module (as an sconst id). A FUNC or GLOBAL relocation fills a ptr of
+   the layout, a STR one a str: as wide as those types (8 bytes today) */
+enum limba_reloc_kind { LIMBA_RELOC_FUNC, LIMBA_RELOC_GLOBAL, LIMBA_RELOC_STR };
+
+typedef struct {
+    uint32_t offset; /* bytes from the start of the global */
+    uint8_t kind;    /* enum limba_reloc_kind */
+    limba_id id;     /* function, global or string id */
+    int64_t addend;  /* bytes, GLOBAL only (0 for the others) */
+} limba_reloc;
+
+/* the initial value of a LIMBA_INIT_DATA global: its first len bytes, in
+   the layout of its type (little endian, reals as their bits); the rest
+   is zero (trailing zeros are not kept). A str, ref or ptr there is
+   zero unless a relocation, in increasing offsets, writes it */
+typedef struct {
+    uint8_t *bytes;
+    uint32_t len;
+    limba_reloc *relocs;
+    uint32_t nrelocs, caprelocs;
+} limba_initdata;
 
 typedef struct {
     limba_id name;
@@ -349,6 +377,8 @@ typedef struct limba_module {
     uint32_t nfuncs, capfuncs;
     limba_pos *pos; /* pos[k - 1] is position k */
     uint32_t npos, cappos;
+    limba_initdata *inits; /* the values of the LIMBA_INIT_DATA globals */
+    uint32_t ninits, capinits;
 } limba_module;
 
 /* ---- the program ---- */
@@ -410,6 +440,18 @@ bool limba_type_holds_str(const limba_module *m, limba_id t);
 
 limba_id limba_global_add(limba_module *m, limba_id name, limba_id type,
                           uint32_t flags);
+/* give global g the initial value of its first len bytes (copied;
+   trailing zeros dropped) and no relocation: LIMBA_INIT_DATA. Called
+   again it replaces them */
+void limba_global_set_data(limba_module *m, limba_id g, const void *bytes,
+                           size_t len);
+/* add a relocation to the data of global g (made LIMBA_INIT_DATA, with no
+   byte, if it was not), after those it has: offsets increase */
+void limba_global_add_reloc(limba_module *m, limba_id g, uint32_t offset,
+                            enum limba_reloc_kind kind, limba_id id,
+                            int64_t addend);
+/* the data of global g, NULL if it is not LIMBA_INIT_DATA */
+const limba_initdata *limba_global_data(const limba_module *m, limba_id g);
 limba_id limba_extern_add(limba_module *m, limba_id name, limba_id type,
                           limba_id symbol, limba_id library);
 limba_id limba_func_add(limba_module *m, limba_id name, limba_id type,

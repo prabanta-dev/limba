@@ -1,0 +1,4 @@
+; expect: an address outside it
+; an address past the end of the global
+type %p = { ptr @0, i64 @8 } size 16 align 8
+global @g : %p = data "" reloc 0 global @g 17
