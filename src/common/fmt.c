@@ -32,7 +32,11 @@ static size_t put(char *buf, const char *s)
    false if the exact steps cannot tell */
 static bool first_exponent(double a, int *e)
 {
-    int g = (int)floor(log10(a)); /* a guess, checked exactly */
+    /* a guess from the binary exponent, checked exactly below:
+       floor(e2 * log10(2)), with 78913 / 2^18 just above log10(2) */
+    int e2;
+    frexp(a, &e2);
+    int g = (e2 - 1) * 78913 / 262144; /* off by one at most */
     for (int tries = 0; tries < 3; tries++) {
         uint64_t f;
         int h;
@@ -208,19 +212,22 @@ size_t limba_fmt_f64_fixed(char *buf, double v, int decimals)
     if (a != 0 && !limba_dec_round(a, d, &n)) {
         /* past 64 bits: the digits of the integers of bigint.c, most
            significant first, then the same layout as below */
-        char big[LIMBA_FMT_FIXED_MAX];
-        size_t nb = limba_dec_round_text(a, d, big, sizeof(big));
-        size_t k = 0;
-        if (fixed_minus(v))
-            buf[k++] = '-';
-        size_t pad = nb < (size_t)d + 1 ? (size_t)d + 1 - nb : 0;
-        for (size_t i = 0; i < pad + nb; i++) {
-            buf[k++] = i < pad ? '0' : big[i - pad];
-            if (d > 0 && i + 1 == pad + nb - (size_t)d)
-                buf[k++] = '.';
+        /* the digits into buf, then laid out in place from the end (no
+           second buffer on the stack of a small machine) */
+        size_t nb = limba_dec_round_text(a, d, buf, LIMBA_FMT_FIXED_MAX);
+        size_t nd = nb > (size_t)d + 1 ? nb : (size_t)d + 1;
+        bool minus = fixed_minus(v);
+        size_t total = minus + nd + (d > 0), at = total, src = nb, w = 0;
+        buf[total] = 0;
+        while (w < nd) {
+            if (d > 0 && w == (size_t)d)
+                buf[--at] = '.';
+            buf[--at] = src > 0 ? buf[--src] : '0';
+            w++;
         }
-        buf[k] = 0;
-        return k;
+        if (minus)
+            buf[--at] = '-';
+        return total;
     }
     char dig[LIMBA_FMT_DECIMALS_MAX + 24];
     int nd = 0;
