@@ -2,7 +2,8 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * test_gen.c - the OPTDIFF net on random programs. For each seed the
- * generator's program must verify, and it must behave the same not
+ * generator's program must verify (and so must the one without
+ * exceptions, which has none), and it must behave the same not
  * optimised, fully optimised and with each pass alone. It writes nothing:
  * a disagreement prints the seed, the configuration and the program
  * (lir_gen SEED gives it back).
@@ -49,6 +50,25 @@ static bool same(const limba_eval_result *a, const limba_eval_result *b)
            (!a->msglen || !memcmp(a->msg, b->msg, a->msglen));
 }
 
+/* a handler, a raise, a par_for or a table of exceptions */
+static bool has_exceptions(const limba_module *m)
+{
+    if (m->nexcs)
+        return true;
+    for (uint32_t i = 0; i < m->nfuncs; i++) {
+        const limba_func *f = &m->funcs[i];
+        for (uint32_t b = 0; b < f->nblocks; b++)
+            if (f->blocks[b].handler)
+                return true;
+        for (uint32_t k = 0; k < f->ninsts; k++)
+            if (f->insts[k].op == LIMBA_OP_RAISE ||
+                (f->insts[k].op == LIMBA_OP_CALLRT &&
+                 f->insts[k].imm == LIMBA_RT_PAR_FOR))
+                return true;
+    }
+    return false;
+}
+
 static uint64_t env(const char *name, uint64_t dflt)
 {
     const char *s = getenv(name);
@@ -77,6 +97,14 @@ int main(void)
         }
         for (uint32_t i = 0; i < m->nfuncs; i++)
             insts += m->funcs[i].ninsts;
+        /* without exceptions: verifies, and has none */
+        limba_module *plain = limba_gen_with(seed, LIMBA_GEN_NO_EXCEPTIONS);
+        if (limba_verify(plain, &d) != 0 || has_exceptions(plain)) {
+            fprintf(stderr, "FAIL seed %" PRIu64 " without exceptions: %s\n",
+                    seed, limba_verify(plain, &d) ? d.msg : "it has some");
+            failures++;
+        }
+        limba_module_free(plain);
         limba_eval_result base;
         limba_eval(m, "main", &limits, &base);
         ended[base.status]++;

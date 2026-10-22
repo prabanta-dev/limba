@@ -32,6 +32,9 @@
   The OPTDIFF net compares also the position and the message of an
   exception no one caught. It found an overflow of a buffer in the edges
   of errors of nested handlers, fixed.
+  `lir_gen --no-exceptions SEED` gives the program of the seed without
+  exceptions, the same as before them, for an engine that does not run
+  them yet.
 
 - Reals are written and read without any conversion of the C library:
   where 128 bits do not reach, the integers and rationals of `bigint.c`

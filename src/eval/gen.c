@@ -55,6 +55,9 @@ typedef struct {
     bool close_try;
     limba_id close_to;
     bool main; /* the current function is @main */
+    /* exceptions in the program; without, the programs made before
+       them, seed for seed */
+    bool exc;
 } G;
 
 static uint64_t rnd(G *g)
@@ -384,7 +387,7 @@ static void loop(G *g)
     /* now and then the way in tests a condition first (a zero-trip guard),
        and in a region the header checks one from outside, which LICM may
        move before the loop only where the same handler catches it */
-    uint32_t guard = chance(g, 30) ? condition(g) : UINT32_MAX;
+    uint32_t guard = g->exc && chance(g, 30) ? condition(g) : UINT32_MAX;
     uint32_t inv = UINT32_MAX;
     if (g->close_try ||
         ((g->handler != LIMBA_NONE || g->open_try != LIMBA_NONE) &&
@@ -504,7 +507,7 @@ static void call_stmt(G *g)
     uint32_t args[1 + 4], v;
     for (uint32_t i = 0; i < s.n; i++)
         args[1 + i] = pick(g, limba_sig_param(&s, i));
-    if (chance(g, 25)) { /* through its address */
+    if (g->exc && chance(g, 25)) { /* through its address */
         args[0] = emit(g, LIMBA_OP_FADDR, LIMBA_T_PTR, 0, callee, 0, NULL, 0);
         v = emit(g, LIMBA_OP_CALLIND, s.ret, 0, type, 0, args, 1 + s.n);
     } else {
@@ -741,7 +744,7 @@ static void memory_stmt(G *g)
 static void statement(G *g)
 {
     g->budget--;
-    unsigned r = below(g, 111);
+    unsigned r = below(g, g->exc ? 111 : 100);
     if (r < 25)
         int_op(g);
     else if (r < 37)
@@ -794,8 +797,8 @@ static void body(G *g, limba_id fid, bool is_main)
     g->depth = 0;
     /* now and then a helper short enough to go in line, with what it
        raises */
-    g->budget = !is_main && chance(g, 40) ? 2 + (int)below(g, 6)
-                                          : 15 + (int)below(g, 50);
+    g->budget = g->exc && !is_main && chance(g, 40) ? 2 + (int)below(g, 6)
+                                                    : 15 + (int)below(g, 50);
     g->calls = 0;
     g->handler = LIMBA_NONE;
     g->trys = 0;
@@ -821,7 +824,7 @@ static void body(G *g, limba_id fid, bool is_main)
     }
     while (g->budget > 0)
         statement(g);
-    if (!is_main && chance(g, 40)) /* what its callers may catch */
+    if (g->exc && !is_main && chance(g, 40)) /* what its callers may catch */
         raise_stmt(g);
     if (is_main)
         for (int i = 0; i < 3; i++) {
@@ -841,13 +844,21 @@ static void body(G *g, limba_id fid, bool is_main)
 
 limba_module *limba_gen(uint64_t seed)
 {
-    G g = {.s = seed, .body = LIMBA_NONE, .open_try = LIMBA_NONE};
+    return limba_gen_with(seed, 0);
+}
+
+limba_module *limba_gen_with(uint64_t seed, unsigned flags)
+{
+    G g = {.s = seed,
+           .body = LIMBA_NONE,
+           .open_try = LIMBA_NONE,
+           .exc = !(flags & LIMBA_GEN_NO_EXCEPTIONS)};
     g.m = limba_module_new();
     uint32_t helpers = below(&g, 4);
-    if (helpers && chance(&g, 50))
+    if (g.exc && helpers && chance(&g, 50))
         g.body = 0; /* the first helper is the body of par_for */
     /* the exceptions named, often none: then lir_run words them by code */
-    if (chance(&g, 60)) {
+    if (g.exc && chance(&g, 60)) {
         static const struct {
             int32_t id;
             const char *name;
@@ -865,9 +876,11 @@ limba_module *limba_gen(uint64_t seed)
                 limba_str_intern(g.m, table[i].name, strlen(table[i].name)),
                 table[i].parent);
     }
-    limba_id file = limba_str_intern(g.m, "gen.lx", 6);
-    limba_pos_add(g.m, file, 3, 7);
-    limba_pos_add(g.m, file, 12, 1);
+    if (g.exc) { /* the positions raise names */
+        limba_id file = limba_str_intern(g.m, "gen.lx", 6);
+        limba_pos_add(g.m, file, 3, 7);
+        limba_pos_add(g.m, file, 12, 1);
+    }
     char name[16];
     for (uint32_t i = 0; i <= helpers; i++) {
         limba_id params[3], ret = LIMBA_T_I64;

@@ -17,4 +17,10 @@
 /* a module with helper functions and a @main : fn() -> i64 */
 limba_module *limba_gen(uint64_t seed);
 
+/* the same, with flags: LIMBA_GEN_NO_EXCEPTIONS makes no region, raise,
+   table of exceptions nor par_for, the programs of before them (an
+   engine that does not run exceptions yet compares all the seeds) */
+enum { LIMBA_GEN_NO_EXCEPTIONS = 1u << 0 };
+limba_module *limba_gen_with(uint64_t seed, unsigned flags);
+
 #endif
