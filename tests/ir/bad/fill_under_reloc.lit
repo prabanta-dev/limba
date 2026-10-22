@@ -1,0 +1,4 @@
+; expect: the bytes under relocation
+; a fill under a relocation
+type %p = { ptr @0, i64 @8 } size 16 align 8
+global @g : [2 x %p] = data "" fill 0 2 "\x01\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00" reloc 16 global @g

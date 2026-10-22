@@ -19,6 +19,12 @@
   `limba_module_handled`: it computes the set when asked, again whenever
   the IR changed since, and `limba_func_clear` keeps what the set needs
   of the body it frees, so a front end calls nothing more.
+- Data of a global may hold fills: a block of bytes (an element, a whole
+  record, a run of different values) written n times from an offset
+  (`fill OFFSET COUNT "bytes"`), so a large array of equal values costs
+  its block once. The verifier checks their order, their end and the
+  rules of the contents on the expanded bytes; the reference interpreter
+  writes them.
 - The random programs of `lir_gen` have exceptions: protected regions,
   nested also in handlers and loops, conditional `raise`, handlers that
   catch all, catch one identity, run a `finally` that raises again or

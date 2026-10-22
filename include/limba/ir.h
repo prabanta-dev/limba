@@ -275,15 +275,28 @@ typedef struct {
     int64_t addend;  /* bytes, GLOBAL only (0 for the others) */
 } limba_reloc;
 
+/* a block of len bytes written count times, one after the other, from
+   offset: an element, a record or a run of different values repeated
+   (progetto_ir.md § 11h) */
+typedef struct {
+    uint32_t offset;
+    uint32_t len;   /* at least 1 */
+    uint32_t count; /* at least 1 */
+    uint8_t *bytes;
+} limba_fill;
+
 /* the initial value of a LIMBA_INIT_DATA global: its first len bytes, in
-   the layout of its type (little endian, reals as their bits); the rest
-   is zero (trailing zeros are not kept). A str, ref or ptr there is
-   zero unless a relocation, in increasing offsets, writes it */
+   the layout of its type (little endian, reals as their bits), then the
+   fills, in increasing offsets after them; the rest is zero (trailing
+   zeros are not kept). A str, ref or ptr there is zero unless a
+   relocation, in increasing offsets, writes it */
 typedef struct {
     uint8_t *bytes;
     uint32_t len;
     limba_reloc *relocs;
     uint32_t nrelocs, caprelocs;
+    limba_fill *fills;
+    uint32_t nfills, capfills;
 } limba_initdata;
 
 typedef struct {
@@ -491,6 +504,11 @@ limba_id limba_global_add(limba_module *m, limba_id name, limba_id type,
    again it replaces them */
 void limba_global_set_data(limba_module *m, limba_id g, const void *bytes,
                            size_t len);
+/* add a fill to the data of global g (made LIMBA_INIT_DATA, with no byte,
+   if it was not), after those it has: len bytes, count times, from
+   offset */
+void limba_global_add_fill(limba_module *m, limba_id g, uint32_t offset,
+                           const void *bytes, uint32_t len, uint32_t count);
 /* add a relocation to the data of global g (made LIMBA_INIT_DATA, with no
    byte, if it was not), after those it has: offsets increase */
 void limba_global_add_reloc(limba_module *m, limba_id g, uint32_t offset,

@@ -1,0 +1,7 @@
+; fills: an element repeated, a record repeated, a run of different
+; values repeated, zeros between them, a relocation after
+type %rec = { i32 @0, i8 @4, ptr @8 } size 16 align 8
+
+global @a : [1000000 x i64] = data "\x01" fill 8 999999 "\x07\x00\x00\x00\x00\x00\x00\x00"
+global @rs : [4 x %rec] = data "" fill 0 3 "\x02\x00\x00\x00\x05\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" reloc 56 global @a
+global @run : [12 x i8] = data "\x09" fill 2 3 "\x01\x02\x03" fill 11 1 "\x04"

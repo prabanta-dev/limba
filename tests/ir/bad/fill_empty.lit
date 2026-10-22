@@ -1,0 +1,3 @@
+; expect: empty
+; a fill written no times
+global @g : [4 x i8] = data "" fill 0 0 "\x01"

@@ -63,12 +63,18 @@ static void print_sym(FILE *out, char sigil, const limba_module *m,
         print_bytes(out, s, n);
 }
 
-/* = data "bytes" reloc OFFSET func @f | global @g [+ N] | str "s" ... */
+/* = data "bytes" fill OFFSET COUNT "bytes" ... reloc OFFSET func @f | global @g
+ * [+ N] | str "s" ... */
 static void print_data(FILE *out, const limba_module *m,
                        const limba_initdata *d)
 {
     fputs(" = data ", out);
     print_bytes(out, d ? (const char *)d->bytes : "", d ? d->len : 0);
+    for (uint32_t k = 0; d && k < d->nfills; k++) {
+        const limba_fill *f = &d->fills[k];
+        fprintf(out, " fill %" PRIu32 " %" PRIu32 " ", f->offset, f->count);
+        print_bytes(out, (const char *)f->bytes, f->len);
+    }
     for (uint32_t k = 0; d && k < d->nrelocs; k++) {
         const limba_reloc *r = &d->relocs[k];
         fprintf(out, " reloc %" PRIu32 " ", r->offset);

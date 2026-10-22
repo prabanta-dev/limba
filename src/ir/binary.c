@@ -246,6 +246,14 @@ int limba_writer_end(limba_writer *wr, const limba_module *m, uint8_t **buf,
         limba_w_sleb(&w, 0);
         limba_w_uleb(&w, dt->len);
         limba_w_bytes(&w, dt->bytes, dt->len);
+        limba_w_uleb(&w, dt->nfills);
+        for (uint32_t k = 0; k < dt->nfills; k++) {
+            const limba_fill *fl = &dt->fills[k];
+            limba_w_uleb(&w, fl->offset);
+            limba_w_uleb(&w, fl->count);
+            limba_w_uleb(&w, fl->len);
+            limba_w_bytes(&w, fl->bytes, fl->len);
+        }
         limba_w_uleb(&w, dt->nrelocs);
         for (uint32_t k = 0; k < dt->nrelocs; k++) {
             limba_w_uleb(&w, dt->relocs[k].offset);
@@ -521,6 +529,14 @@ limba_module *limba_read(const uint8_t *buf, size_t len, limba_diag *d)
         if (r.bad)
             break;
         limba_global_set_data(m, g, bytes, len);
+        uint32_t nfill = limba_r_count(&r, 3);
+        for (uint32_t k = 0; k < nfill && !r.bad; k++) {
+            uint32_t off = r_id(&r), count = r_id(&r);
+            uint32_t flen = limba_r_count(&r, 1);
+            const uint8_t *fb = limba_r_bytes(&r, flen);
+            if (!r.bad)
+                limba_global_add_fill(m, g, off, fb, flen, count);
+        }
         uint32_t nrel = limba_r_count(&r, 4);
         for (uint32_t k = 0; k < nrel && !r.bad; k++) {
             uint32_t off = r_id(&r);

@@ -212,30 +212,60 @@ static limba_id scalar_at(const limba_module *m, limba_id t, uint32_t off)
     }
 }
 
-/* are the bytes of every str and ref of type t, placed at base, zero in
-   d? Only the first d->len bytes are written, the rest is zero */
-static bool counted_zero(const limba_module *m, limba_id t, uint64_t base,
-                         const limba_initdata *d)
+/* the first byte past what d writes: its bytes, then its fills (in
+   increasing offsets, checked before) */
+static uint64_t data_end(const limba_initdata *d)
 {
-    if (base >= d->len || !limba_type_counted(m, t))
+    if (!d->nfills)
+        return d->len;
+    const limba_fill *f = &d->fills[d->nfills - 1];
+    return f->offset + (uint64_t)f->len * f->count;
+}
+
+/* byte k of the data: of its bytes, of the fill k falls in, or zero */
+static uint8_t data_byte(const limba_initdata *d, uint64_t k)
+{
+    if (k < d->len)
+        return d->bytes[k];
+    uint32_t lo = 0, hi = d->nfills; /* the last fill from k or before */
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (d->fills[mid].offset <= k)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    if (!lo)
+        return 0;
+    const limba_fill *f = &d->fills[lo - 1];
+    uint64_t in = k - f->offset;
+    return in < (uint64_t)f->len * f->count ? f->bytes[in % f->len] : 0;
+}
+
+/* are the bytes of every str and ref of type t, placed at base, zero in
+   d? Past data_end all is zero */
+static bool counted_zero(const limba_module *m, limba_id t, uint64_t base,
+                         const limba_initdata *d, uint64_t end)
+{
+    if (base >= end || !limba_type_counted(m, t))
         return true;
     const limba_type *ty = &m->types[t];
     if (t == LIMBA_T_STR || t == LIMBA_T_REF) {
-        for (uint64_t k = base; k < base + ty->size && k < d->len; k++)
-            if (d->bytes[k])
+        for (uint64_t k = base; k < base + ty->size && k < end; k++)
+            if (data_byte(d, k))
                 return false;
         return true;
     }
     if (ty->kind == LIMBA_TK_ARRAY) {
         uint32_t es = m->types[ty->elem].size;
-        for (uint64_t i = 0; i < ty->count && base + i * es < d->len; i++)
-            if (!counted_zero(m, ty->elem, base + i * es, d))
+        for (uint64_t i = 0; i < ty->count && base + i * es < end; i++)
+            if (!counted_zero(m, ty->elem, base + i * es, d, end))
                 return false;
         return true;
     }
     for (uint32_t i = 0; i < ty->count; i++) {
         const limba_member *f = &m->members[ty->first + i];
-        if (!counted_zero(m, f->type, base + f->offset, d))
+        if (!counted_zero(m, f->type, base + f->offset, d, end))
             return false;
     }
     return true;
@@ -258,7 +288,21 @@ static bool check_data(vctx *v, const limba_global *g, uint8_t *seen)
              d->len, size);
     if (d->len && !d->bytes)
         FAIL("global @%s: data without bytes", nm);
-    if (!counted_zero(m, g->type, 0, d))
+    uint64_t past = d->len; /* the fills: after the bytes and each other */
+    for (uint32_t k = 0; k < d->nfills; k++) {
+        const limba_fill *f = &d->fills[k];
+        if (!f->len || !f->count || !f->bytes)
+            FAIL("global @%s: fill %" PRIu32 " empty", nm, k);
+        if (f->offset < past)
+            FAIL("global @%s: fill %" PRIu32 " not after the bytes and the "
+                 "fill before",
+                 nm, k);
+        past = f->offset + (uint64_t)f->len * f->count;
+        if (past > size)
+            FAIL("global @%s: fill %" PRIu32 " past the end of the type", nm,
+                 k);
+    }
+    if (!counted_zero(m, g->type, 0, d, data_end(d)))
         FAIL("global @%s: a str or ref of the data is not zero", nm);
     uint64_t end = 0; /* the first byte after the previous relocation */
     for (uint32_t k = 0; k < d->nrelocs; k++) {
@@ -277,7 +321,7 @@ static bool check_data(vctx *v, const limba_global *g, uint8_t *seen)
                  "type",
                  nm, k, want == LIMBA_T_STR ? "str" : "ptr");
         for (uint64_t b = r->offset; b < (uint64_t)r->offset + w; b++)
-            if (b < d->len && d->bytes[b])
+            if (data_byte(d, b))
                 FAIL("global @%s: the bytes under relocation %" PRIu32
                      " are not zero",
                      nm, k);

@@ -53,7 +53,8 @@ static bool declare(P *p)
     return true;
 }
 
-/* data "bytes" then reloc OFFSET (func @f | global @g [ADDEND] | str "s")
+/* data "bytes", then fill OFFSET COUNT "bytes" ..., then reloc OFFSET (func @f
+   | global @g [ADDEND] | str "s")
    ..., after "=" */
 static bool global_data(P *p, limba_id g)
 {
@@ -67,6 +68,21 @@ static bool global_data(P *p, limba_id g)
         return lp_fail(p, "%s", "data too long");
     limba_global_set_data(p->m, g, p->buf, n);
     p->i++;
+    while (lp_accept_word(p, "fill")) {
+        uint32_t off, count;
+        if (!lp_uinteger32(p, &off) || !lp_uinteger32(p, &count))
+            return false;
+        k = lp_peek(p);
+        if (k->kind != TK_STRING)
+            return lp_fail(p, "%s expected", "the bytes of the fill");
+        n = limba_unescape(k, p->buf);
+        if (n == SIZE_MAX)
+            return lp_fail(p, "%s", "malformed escape in the fill");
+        if (n > UINT32_MAX)
+            return lp_fail(p, "%s", "fill too long");
+        limba_global_add_fill(p->m, g, off, p->buf, (uint32_t)n, count);
+        p->i++;
+    }
     while (lp_accept_word(p, "reloc")) {
         uint32_t off;
         limba_id id, n2;

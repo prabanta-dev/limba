@@ -1,0 +1,3 @@
+; expect: not after the bytes
+; a fill over the bytes before it
+global @g : [4 x i8] = data "\x01\x02" fill 1 2 "\x03"

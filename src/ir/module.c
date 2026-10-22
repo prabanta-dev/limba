@@ -156,6 +156,8 @@ void limba_func_free(limba_func *f)
     limba_handled_drop(f);
 }
 
+static void data_free(limba_initdata *d);
+
 void limba_module_free(limba_module *m)
 {
     if (!m)
@@ -166,10 +168,8 @@ void limba_module_free(limba_module *m)
     free(m->pos);
     free(m->messages);
     free(m->globals);
-    for (uint32_t i = 0; i < m->ninits; i++) {
-        free(m->inits[i].bytes);
-        free(m->inits[i].relocs);
-    }
+    for (uint32_t i = 0; i < m->ninits; i++)
+        data_free(&m->inits[i]);
     free(m->inits);
     free(m->excs);
     free(m->handled);
@@ -403,6 +403,16 @@ limba_id limba_global_add(limba_module *m, limba_id name, limba_id type,
     return id;
 }
 
+static void data_free(limba_initdata *d)
+{
+    free(d->bytes);
+    free(d->relocs);
+    for (uint32_t k = 0; k < d->nfills; k++)
+        free(d->fills[k].bytes);
+    free(d->fills);
+    *d = (limba_initdata){0};
+}
+
 /* the data of g, made if it has none */
 static limba_initdata *data_of(limba_module *m, limba_id g)
 {
@@ -423,13 +433,24 @@ void limba_global_set_data(limba_module *m, limba_id g, const void *bytes,
     const uint8_t *b = bytes;
     while (len && !b[len - 1])
         len--;
-    free(d->bytes);
-    free(d->relocs);
-    *d = (limba_initdata){0};
+    data_free(d);
     if (len) {
         d->bytes = limba_xmalloc(len);
         memcpy(d->bytes, b, len);
         d->len = (uint32_t)len;
+    }
+}
+
+void limba_global_add_fill(limba_module *m, limba_id g, uint32_t offset,
+                           const void *bytes, uint32_t len, uint32_t count)
+{
+    limba_initdata *d = data_of(m, g);
+    LIMBA_GROW(d->fills, d->nfills, d->capfills);
+    limba_fill *f = &d->fills[d->nfills++];
+    *f = (limba_fill){offset, len, count, NULL};
+    if (len) {
+        f->bytes = limba_xmalloc(len);
+        memcpy(f->bytes, bytes, len);
     }
 }
 

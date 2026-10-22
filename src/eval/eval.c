@@ -2243,6 +2243,18 @@ static void init_data(E *e, const limba_module *m, uint8_t *p,
         return;
     if (d->len)
         memcpy(p, d->bytes, d->len);
+    for (uint32_t k = 0; k < d->nfills; k++) {
+        /* the block once, then what is written so far, doubling */
+        const limba_fill *f = &d->fills[k];
+        uint8_t *at = p + f->offset;
+        uint64_t total = (uint64_t)f->len * f->count, done = f->len;
+        memcpy(at, f->bytes, f->len);
+        while (done < total) {
+            uint64_t n = done < total - done ? done : total - done;
+            memcpy(at + done, at, n);
+            done += n;
+        }
+    }
     for (uint32_t k = 0; k < d->nrelocs; k++) {
         const limba_reloc *r = &d->relocs[k];
         uint8_t *at = p + r->offset;
