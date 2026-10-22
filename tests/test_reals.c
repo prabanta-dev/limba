@@ -4,10 +4,10 @@
  * test_reals.c - the text of reals, written and read, against the C
  * library of this machine (glibc: its printf and strtod round exactly)
  * on many values: the shortest form (limba_fmt_f64, limba_fmt_f32), the
- * fixed one (limba_fmt_f64_fixed) and val (limba_val_real). Values
- * chosen so that the exact steps of common/decimal.c answer most of them,
- * random bits so that the slow way answers the rest. Also how often the
- * exact steps answered, so that a change that loses them shows.
+ * fixed one (limba_fmt_f64_fixed) and val (limba_val_real), all Limba's
+ * own: short decimals for the 128-bit steps of common/decimal.c, random
+ * bits, values past 64 bits, long texts and the halfway points between
+ * two doubles for the integers of bigint.c.
  */
 #include "common/decimal.h"
 #include "limba/fmt.h"
@@ -118,36 +118,12 @@ static size_t ref_fmt(char *buf, double v, bool f32)
 
 /* ---- the checks ---- */
 
-static unsigned fast_short, all_short, fast_fixed, all_fixed, fast_read,
-    all_read;
-
 static void short_f64(double v)
 {
     char a[LIMBA_FMT_F64_MAX], b[LIMBA_FMT_F64_MAX];
     limba_fmt_f64(a, v);
     ref_fmt(b, v, false);
     CHECK(!strcmp(a, b), "%a printed %s, expected %s", v, a, b);
-    /* could the exact steps read the digits printed back? */
-    double r;
-    all_short++;
-    size_t nd = 0;
-    uint64_t dig = 0;
-    int dot = -1, ex = 0;
-    const char *s = a + (a[0] == '-');
-    for (; *s && *s != 'e'; s++) {
-        if (*s == '.')
-            dot = (int)nd;
-        else if (nd < 19) {
-            dig = dig * 10 + (uint64_t)(*s - '0');
-            nd++;
-        }
-    }
-    if (*s == 'e')
-        ex = atoi(s + 1);
-    if (dot >= 0)
-        ex -= (int)nd - dot;
-    if (isfinite(v) && limba_dec_read(dig, ex, false, &r))
-        fast_short++;
 }
 
 static void short_f32(float v)
@@ -168,10 +144,6 @@ static void fixed(double v, int d)
         snprintf(b, sizeof(b), "%.*f", d, v);
     CHECK(!strcmp(a, b), "%a to %d decimals printed %s, expected %s", v, d, a,
           b);
-    uint64_t n;
-    all_fixed++;
-    if (isfinite(v) && (v == 0 || limba_dec_round(fabs(v), d, &n)))
-        fast_fixed++;
 }
 
 /* text read by val and by strtod/strtof */
@@ -324,10 +296,6 @@ static void test_reading(unsigned count)
         random_decimal(t, ndig, point, exp);
         bool f32 = next() & 1;
         read_text(t, f32);
-        all_read++;
-        /* the short ones the exact steps read */
-        if (ndig <= 15 && exp >= -22 + ndig && exp <= 22)
-            fast_read++;
         /* digits of base 2 and 16, and the same as hexadecimal for strtod */
         unsigned nb = 1 + (unsigned)(next() % 100);
         char bin[128], hex[64];
@@ -402,17 +370,100 @@ static void test_scaled(unsigned count)
     }
 }
 
+/* the slow way: the fixed form past 64 bits and with many decimals,
+   long decimal texts, and the exact halfway point between two doubles
+   (a long double holds it; printf writes it exactly), read as it is,
+   one digit up and one down */
+static void test_slow(unsigned count)
+{
+    for (unsigned i = 0; i < count; i++) {
+        double v;
+        uint64_t z = next();
+        memcpy(&v, &z, sizeof(v));
+        if (isnan(v) || isinf(v))
+            continue;
+        fixed(v, (int)(next() % 101));
+        /* a long text: the digits of v and more */
+        char t[1200];
+        snprintf(t, sizeof(t), "%.*e", (int)(20 + next() % 900), fabs(v));
+        read_text(t, next() & 1);
+        /* halfway between v and the next double, exactly */
+        double a = fabs(v), b = nextafter(a, INFINITY);
+        if (isinf(b) || a == 0)
+            continue;
+        long double mid = ((long double)a + (long double)b) / 2;
+        snprintf(t, sizeof(t), "%.800Le", mid);
+        char *e = strchr(t, 'e');
+        char *last = e - 1;
+        while (*last == '0')
+            last--;
+        size_t keep = (size_t)(last - t) + 1;
+        char text[1200];
+        snprintf(text, sizeof(text), "%.*s%s", (int)keep, t, e);
+        read_text(text, false);
+        /* past 800 digits: zeros, then a 1 that only the rest of the
+           digits can tell (just past the half) */
+        if (keep < 790) {
+            snprintf(text, sizeof(text), "%.*s%0*d1%s", (int)keep, t,
+                     (int)(850 - keep), 0, e);
+            read_text(text, false);
+        }
+        /* one unit up in the last digit kept: past the half */
+        if (*last >= '0' && *last <= '8') {
+            (*last)++;
+            snprintf(text, sizeof(text), "%.*s%s", (int)keep, t, e);
+            read_text(text, false);
+            (*last)--;
+        }
+        /* one down: below the half */
+        if (*last >= '1' && *last <= '9') {
+            (*last)--;
+            snprintf(text, sizeof(text), "%.*s%s", (int)keep, t, e);
+            read_text(text, false);
+        }
+    }
+    /* ties of the fixed form past 64 bits: (2m + 1) / 2^n, n - 1
+       decimals, m large */
+    for (unsigned i = 0; i < count; i++) {
+        int nn = 2 + (int)(next() % 30);
+        double tie = ldexp((double)(2 * (next() >> 12) + 1), -nn);
+        fixed(tie, nn - 1);
+    }
+    static const char *const far[] = {
+        "1.0e400",
+        "1.0e-400",
+        "123.0e-330",
+        "2.4703282292062328e-324",
+        "2.4703282292062327e-324",
+        "2.4703282292062328e-324",
+        "7.0064923216240854e-46",
+        "7.0064923216240853e-46",
+        "1.7976931348623158e308",
+        "1.7976931348623157e308",
+        "3.4028235677973366e38",
+        "3.4028235677973367e38",
+    };
+    for (size_t i = 0; i < sizeof(far) / sizeof(far[0]); i++) {
+        read_text(far[i], false);
+        read_text(far[i], true);
+    }
+    static const double big[] = {1e300, -1e300, 1.7976931348623157e308,
+                                 1e20,  1e-300, 123456789012345678901.0};
+    for (size_t i = 0; i < sizeof(big) / sizeof(big[0]); i++)
+        for (int d = 0; d <= 100; d += 7)
+            fixed(big[i], d);
+}
+
 int main(void)
 {
     limba_set_program("test_reals");
     test_values(20000);
     test_reading(20000);
     test_scaled(20000);
-    printf("test_reals: %u checks against the C library; exact steps for "
-           "%u%% of the short forms, %u%% of the fixed ones, %u%% of the "
-           "decimal texts; %d failures\n",
-           checked, all_short ? 100 * fast_short / all_short : 0,
-           all_fixed ? 100 * fast_fixed / all_fixed : 0,
-           all_read ? 100 * fast_read / all_read : 0, failures);
+    test_slow(5000);
+    printf("test_reals: %u checks against the C library: short and fixed "
+           "forms, val, the slow way (past 64 bits, long texts, halfway "
+           "points); %d failures\n",
+           checked, failures);
     return failures ? 1 : 0;
 }

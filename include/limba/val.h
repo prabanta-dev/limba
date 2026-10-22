@@ -9,9 +9,9 @@
  * The text: spaces and tabs around, a sign (+ or -), then a literal of
  * Luxia: decimal, 0x, 0o or 0b digits, _ only between two digits; a real
  * with digits on both sides of the point and an optional exponent; inf,
- * or nan without a sign. Digits of base 2, 8 and 16, and short decimal
- * ones, are read by exact steps of their own; the others, for now, by
- * strtod and strtof: call them under the C locale (LC_NUMERIC "C").
+ * or nan without a sign. Every number is read by exact steps of Limba's
+ * own (common/decimal.c, common/bigint.c), rounded once to nearest even:
+ * no conversion of the C library, the same bits on every machine.
  */
 #ifndef LIMBA_VAL_H
 #define LIMBA_VAL_H

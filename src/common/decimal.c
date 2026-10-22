@@ -7,7 +7,11 @@
  */
 #include "decimal.h"
 
+#include "common/bigint.h"
+#include "common/xalloc.h"
+
 #include <float.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* every float operation here must round once, to its own type */
@@ -146,7 +150,8 @@ static u128 mul_small(u128 x, uint64_t d, uint64_t add)
     return r;
 }
 
-bool limba_dec_scaled(double a, int q, uint64_t *fl, int *half)
+/* a > 0 finite as m * 2^e, m odd; false for anything else */
+static bool split(double a, uint64_t *mm, int *ee)
 {
     uint64_t u;
     memcpy(&u, &a, sizeof(u));
@@ -165,6 +170,60 @@ bool limba_dec_scaled(double a, int q, uint64_t *fl, int *half)
         m >>= 1;
         e++;
     }
+    *mm = m;
+    *ee = e;
+    return true;
+}
+
+/* a * 10^q, a > 0 finite, as num / den, exactly */
+static void big_value(double a, int q, limba_big *num, limba_big *den)
+{
+    uint64_t m;
+    int e;
+    split(a, &m, &e);
+    limba_big ten, p;
+    limba_big_init(&ten);
+    limba_big_init(&p);
+    limba_big_set_u64(num, m);
+    limba_big_set_u64(den, 1);
+    limba_big_set_u64(&ten, 10);
+    limba_big_pow(&p, &ten, (uint64_t)(q < 0 ? -q : q));
+    if (e >= 0)
+        limba_big_shl(num, num, (uint32_t)e);
+    else
+        limba_big_shl(den, den, (uint32_t)-e);
+    limba_big_mul(q >= 0 ? num : den, q >= 0 ? num : den, &p);
+    limba_big_free(&ten);
+    limba_big_free(&p);
+}
+
+/* the slow way of limba_dec_scaled: the integers of bigint.c */
+static bool big_scaled(double a, int q, uint64_t *fl, int *half)
+{
+    limba_big num, den, quo, rem;
+    limba_big_init(&num);
+    limba_big_init(&den);
+    limba_big_init(&quo);
+    limba_big_init(&rem);
+    big_value(a, q, &num, &den);
+    limba_big_divmod(&quo, &rem, &num, &den);
+    bool ok = limba_big_to_u64(&quo, fl);
+    limba_big_shl(&rem, &rem, 1);
+    *half = limba_big_cmp(&rem, &den);
+    limba_big_free(&num);
+    limba_big_free(&den);
+    limba_big_free(&quo);
+    limba_big_free(&rem);
+    return ok;
+}
+
+/* the common cases in 128 bits; false when they cannot tell */
+static bool fast_scaled(double a, int q, uint64_t *fl, int *half)
+{
+    uint64_t m;
+    int e;
+    if (!split(a, &m, &e))
+        return false;
     /* a * 10^q = m * 5^q * 2^(e + q) */
     long t = (long)e + q;
     u128 num = {0, m};
@@ -215,6 +274,15 @@ bool limba_dec_scaled(double a, int q, uint64_t *fl, int *half)
     return true;
 }
 
+bool limba_dec_scaled(double a, int q, uint64_t *fl, int *half)
+{
+    uint64_t m;
+    int e;
+    if (!split(a, &m, &e) || q < -800 || q > 800)
+        return false;
+    return fast_scaled(a, q, fl, half) || big_scaled(a, q, fl, half);
+}
+
 bool limba_dec_round(double a, int q, uint64_t *out)
 {
     uint64_t f;
@@ -230,7 +298,8 @@ bool limba_dec_round(double a, int q, uint64_t *out)
     return true;
 }
 
-bool limba_dec_read(uint64_t d, int k, bool f32, double *v)
+/* Clinger's fast path: false when it cannot tell */
+static bool fast_read(uint64_t d, int k, bool f32, double *v)
 {
     static const double p10[23] = {
         1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
@@ -258,4 +327,126 @@ bool limba_dec_read(uint64_t d, int k, bool f32, double *v)
     double x = (double)d;
     *v = k >= 0 ? x * p10[k] : x / p10[-k];
     return true;
+}
+
+/* the digits t[0..n) times 10^k rounded once to the type, by the
+   rationals of bigint.c (they round to nearest even, subnormals too) */
+static bool big_read(const char *t, size_t n, long k, bool f32, double *v)
+{
+    limba_rat r;
+    limba_big ten, p;
+    limba_rat_init(&r);
+    limba_big_init(&ten);
+    limba_big_init(&p);
+    limba_big_parse(&r.num, t, n, 10);
+    limba_big_set_u64(&ten, 10);
+    limba_big_pow(&p, &ten, (uint64_t)(k < 0 ? -k : k));
+    if (k >= 0)
+        limba_big_mul(&r.num, &r.num, &p);
+    else
+        limba_big_copy(&r.den, &p);
+    bool ok;
+    if (f32) {
+        float f;
+        ok = limba_rat_to_f32(&r, &f);
+        *v = f;
+    } else
+        ok = limba_rat_to_f64(&r, v);
+    limba_rat_free(&r);
+    limba_big_free(&ten);
+    limba_big_free(&p);
+    return ok;
+}
+
+bool limba_dec_read(uint64_t d, int k, bool f32, double *v)
+{
+    if (fast_read(d, k, f32, v))
+        return true;
+    char t[24];
+    int n = 0;
+    do {
+        t[n++] = (char)('0' + d % 10);
+        d /= 10;
+    } while (d);
+    for (int i = 0; i < n / 2; i++) {
+        char c = t[i];
+        t[i] = t[n - 1 - i];
+        t[n - 1 - i] = c;
+    }
+    return limba_dec_read_digits(t, (size_t)n, k, f32, v);
+}
+
+bool limba_dec_read_digits(const char *t, size_t n, long k, bool f32, double *v)
+{
+    while (n && *t == '0') {
+        t++;
+        n--;
+    }
+    while (n && t[n - 1] == '0') {
+        n--;
+        k++;
+    }
+    if (n == 0) {
+        *v = 0;
+        return true;
+    }
+    /* the magnitude: 10^(n + k - 1) <= value < 10^(n + k) */
+    long top = (long)n + k;
+    if (top - 1 > (f32 ? 38 : 308))
+        return false; /* past the largest finite value */
+    if (top < (f32 ? -46 : -325)) {
+        *v = 0; /* below half the least subnormal */
+        return true;
+    }
+    if (n <= 19) {
+        uint64_t d = 0;
+        for (size_t i = 0; i < n; i++)
+            d = d * 10 + (uint64_t)(t[i] - '0');
+        if (fast_read(d, (int)k, f32, v))
+            return true;
+    }
+    /* past 800 digits, the rest only says whether it is zero: no halfway
+       point of a double or a float has more than 767 significant digits,
+       so a 1 after the first 800 rounds as all of them do */
+    char *buf = NULL;
+    if (n > 800) {
+        bool rest = false;
+        for (size_t i = 800; i < n && !rest; i++)
+            rest = t[i] != '0';
+        buf = limba_xmalloc(801);
+        memcpy(buf, t, 800);
+        buf[800] = rest ? '1' : '0';
+        k += (long)n - 801;
+        t = buf;
+        n = 801;
+    }
+    bool ok = big_read(t, n, k, f32, v);
+    free(buf);
+    return ok;
+}
+
+size_t limba_dec_round_text(double a, int q, char *buf, size_t size)
+{
+    limba_big num, den, quo, rem;
+    limba_big_init(&num);
+    limba_big_init(&den);
+    limba_big_init(&quo);
+    limba_big_init(&rem);
+    big_value(a, q, &num, &den);
+    limba_big_divmod(&quo, &rem, &num, &den);
+    limba_big_shl(&rem, &rem, 1);
+    int c = limba_big_cmp(&rem, &den);
+    if (c > 0 || (c == 0 && quo.n && (quo.w[0] & 1))) {
+        limba_big one;
+        limba_big_init(&one);
+        limba_big_set_u64(&one, 1);
+        limba_big_add(&quo, &quo, &one);
+        limba_big_free(&one);
+    }
+    limba_big_str(&quo, buf, size);
+    limba_big_free(&num);
+    limba_big_free(&den);
+    limba_big_free(&quo);
+    limba_big_free(&rem);
+    return strlen(buf);
 }

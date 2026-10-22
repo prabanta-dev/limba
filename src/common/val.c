@@ -41,7 +41,7 @@ static bool num_digits(const char *p, size_t n, size_t *i, unsigned base,
 }
 
 /* the literal p[0..n) in buf without its _: 1 for an integer of *base
-   (the digits only), 2 for a real (for strtod), 0 for no literal */
+   (the digits only), 2 for a real, 0 for no literal */
 static int num_literal(const char *p, size_t n, char *buf, unsigned *base)
 {
     size_t i = 0, k = 0;
@@ -128,53 +128,37 @@ bool limba_val_big(const char *s, size_t len, char *digits, size_t *n,
 }
 
 /* the decimal literal t (digits, '.', digits, 'e', sign, digits, as
-   num_literal leaves it) as d * 10^k: false past 19 significant digits
-   or with an exponent past 100000 (the slow way reads those) */
-static bool dec_parts(const char *t, uint64_t *d, long *k)
+   num_literal leaves it) read to the nearest real: its digits without
+   the point, and the exponent of the last one; false past the type */
+static bool dec_real(const char *t, bool f32, double *v)
 {
-    uint64_t v = 0;
-    long x = 0;
-    int nsig = 0;
-    bool frac = false;
+    size_t len = strlen(t);
+    char *dig = limba_xmalloc(len + 1);
+    size_t nd = 0;
+    long frac = 0, ev = 0;
+    bool point = false;
     for (; *t && *t != 'e'; t++) {
-        if (*t == '.') {
-            frac = true;
-            continue;
+        if (*t == '.')
+            point = true;
+        else {
+            dig[nd++] = *t;
+            frac += point;
         }
-        int c = *t - '0';
-        if (nsig == 0 && c == 0) {
-            x -= frac;
-            continue;
-        }
-        if (nsig < 19) {
-            v = v * 10 + (uint64_t)c;
-            nsig++;
-            x -= frac;
-        } else if (c != 0)
-            return false;
-        else
-            x += !frac;
     }
     if (*t == 'e') {
         t++;
         bool minus = *t == '-';
         if (*t == '-' || *t == '+')
             t++;
-        long ev = 0;
-        for (; *t; t++) {
-            ev = ev * 10 + (*t - '0');
-            if (ev > 100000)
-                return false;
-        }
-        x += minus ? -ev : ev;
+        for (; *t; t++)
+            if (ev < 100000000) /* past it, a zero or past the range */
+                ev = ev * 10 + (*t - '0');
+        if (minus)
+            ev = -ev;
     }
-    while (v && v % 10 == 0) {
-        v /= 10;
-        x++;
-    }
-    *d = v;
-    *k = x;
-    return true;
+    bool ok = limba_dec_read_digits(dig, nd, ev - frac, f32, v);
+    free(dig);
+    return ok;
 }
 
 /* the digits of base 2, 8 or 16 in t, rounded once to 53 bits (24 if
@@ -227,23 +211,18 @@ bool limba_val_real(const char *s, size_t len, bool f32, uint64_t *bits)
     } else {
         char *buf = limba_xmalloc(n + 1);
         int kind = num_literal(p, n, buf, &base);
-        uint64_t dd;
-        long k;
         d = 0;
         if (kind == 1 && base != 10)
             d = pow2_digits(buf, base, f32);
-        else if (kind && dec_parts(buf, &dd, &k) &&
-                 (dd == 0 || limba_dec_read(dd, (int)k, f32, &d)))
-            d = dd == 0 ? 0 : d;
-        else if (kind) /* the slow way, for now the C library (question 3) */
-            d = f32 ? strtof(buf, NULL) : strtod(buf, NULL);
+        else if (kind && !dec_real(buf, f32, &d))
+            d = INFINITY; /* past the largest finite value */
         free(buf);
         if (!kind || isinf(d))
             return false;
     }
     if (sign == '-')
         d = -d;
-    if (f32) { /* read by strtof: exact in a float */
+    if (f32) { /* rounded to a float already: exact */
         float f = (float)d;
         uint32_t u;
         memcpy(&u, &f, sizeof(u));

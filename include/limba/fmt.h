@@ -6,10 +6,9 @@
  * for byte. A runtime that writes reals calls these, so that every
  * back end writes what the reference interpreter writes.
  *
- * The digits come from exact steps of their own (common/decimal.c),
- * the same on every machine; where those cannot decide, for now,
- * snprintf and strtod of the C library: call them under the C locale
- * (LC_NUMERIC "C"), or the point may become a comma.
+ * The digits come from exact steps of Limba's own (common/decimal.c,
+ * common/bigint.c): no conversion of the C library and no locale, the
+ * same text on every machine.
  */
 #ifndef LIMBA_FMT_H
 #define LIMBA_FMT_H

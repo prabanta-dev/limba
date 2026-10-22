@@ -12,9 +12,18 @@
 #include "common/xalloc.h"
 
 #include <math.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* the 128-bit integers of the compiler shorten the common cases; where
+   there are none (a 32-bit microcontroller) the long way gives the same
+   numbers, exact either way. LIMBA_NO_INT128 forces the long way, to test
+   it */
+#if defined(__SIZEOF_INT128__) && !defined(LIMBA_NO_INT128)
+#define LIMBA_INT128 1
+#else
+#define LIMBA_INT128 0
+#endif
 
 void limba_big_init(limba_big *a)
 {
@@ -74,6 +83,7 @@ void limba_big_set_u64(limba_big *r, uint64_t v)
     trim(r);
 }
 
+#if LIMBA_INT128
 static void set_u128(limba_big *r, unsigned __int128 v)
 {
     reserve(r, 4);
@@ -83,6 +93,7 @@ static void set_u128(limba_big *r, unsigned __int128 v)
     r->neg = false;
     trim(r);
 }
+#endif
 
 void limba_big_set_i64(limba_big *r, int64_t v)
 {
@@ -650,11 +661,17 @@ const char *limba_big_str(const limba_big *a, char *buf, size_t size)
     } while (0)
     if (a->neg)
         PUT("-");
-    snprintf(tmp, sizeof(tmp), "%u", group[ng - 1]);
-    PUT(tmp);
-    for (uint32_t i = ng - 1; i-- > 0;) {
-        snprintf(tmp, sizeof(tmp), "%09u", group[i]);
-        PUT(tmp);
+    /* the first group as it is, the others with their zeros: digits of
+       our own, not of printf */
+    for (uint32_t i = ng; i-- > 0;) {
+        uint32_t g = group[i];
+        int k = 9;
+        tmp[k] = 0;
+        do {
+            tmp[--k] = (char)('0' + g % 10);
+            g /= 10;
+        } while (g || (i != ng - 1 && k > 0));
+        PUT(tmp + k);
     }
 #undef PUT
     if (size) {
@@ -695,6 +712,7 @@ void limba_rat_set_big(limba_rat *r, const limba_big *a)
     limba_big_set_u64(&r->den, 1);
 }
 
+#if LIMBA_INT128
 /* the magnitude of a when it fits 128 bits */
 static bool mag128(const limba_big *a, unsigned __int128 *v)
 {
@@ -716,6 +734,7 @@ static unsigned __int128 gcd128(unsigned __int128 a, unsigned __int128 b)
     }
     return a;
 }
+#endif
 
 static void normalise(limba_rat *r)
 {
@@ -727,6 +746,7 @@ static void normalise(limba_rat *r)
         limba_big_set_u64(&r->den, 1);
         return;
     }
+#if LIMBA_INT128
     unsigned __int128 n, d;
     if (mag128(&r->num, &n) && mag128(&r->den, &d)) {
         /* both in 128 bits: no division of big integers */
@@ -739,6 +759,7 @@ static void normalise(limba_rat *r)
         }
         return;
     }
+#endif
     limba_big g;
     limba_big_init(&g);
     limba_big_gcd(&g, &r->num, &r->den);
@@ -878,6 +899,7 @@ bool limba_rat_parse(limba_rat *r, const char *s, size_t n)
     size_t lead = 0;
     while (lead < nd && digits[lead] == '0')
         lead++;
+#if LIMBA_INT128
     if (nd - lead <= 19 && exp >= -38 && exp <= 19) {
         unsigned __int128 v = 0, p10 = 1, den = 1;
         for (size_t k = lead; k < nd; k++)
@@ -909,6 +931,9 @@ bool limba_rat_parse(limba_rat *r, const char *s, size_t n)
         limba_rat_free(&t);
         return true;
     }
+#else
+    (void)lead;
+#endif
     limba_big p, ten;
     limba_big_init(&p);
     limba_big_init(&ten);
@@ -943,6 +968,7 @@ static bool small_mag(const limba_big *a, int bits, uint64_t *v)
     return m < ((uint64_t)1 << bits);
 }
 
+#if LIMBA_INT128
 static int bits128(unsigned __int128 v)
 {
     int b = 0;
@@ -1000,6 +1026,7 @@ static bool round128(unsigned __int128 n, unsigned __int128 d, int mant,
     *out = ldexp((double)m, k - (mant - 1));
     return true;
 }
+#endif
 
 static bool rat_round(const limba_rat *a, int mant, int emin, int emax,
                       double *out)
@@ -1008,6 +1035,7 @@ static bool rat_round(const limba_rat *a, int mant, int emin, int emax,
         *out = 0;
         return true;
     }
+#if LIMBA_INT128
     unsigned __int128 n128, d128;
     if (mag128(&a->num, &n128) && mag128(&a->den, &d128) &&
         round128(n128, d128, mant, emin, emax, out)) {
@@ -1015,6 +1043,7 @@ static bool rat_round(const limba_rat *a, int mant, int emin, int emax,
             *out = -*out;
         return true;
     }
+#endif
     /* both exact in the format: one IEEE 754 division rounds the
        quotient once, to nearest even (the quotient is neither tiny nor
        huge) */

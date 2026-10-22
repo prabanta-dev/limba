@@ -1,13 +1,17 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * test_math.c - the mathematics of the run time (limba/math.h):
- * - the same bits on every machine: a hash of the results on fixed
- *   arguments, written here once (from x86-64, 22 Oct 2026); another
- *   machine or compiler that computes one bit differently fails;
- * - the special cases of IEEE 754 § 9.2.1, value and sign;
- * - the error: within 1 ulp of the C library of this machine (glibc,
- *   itself within 1 ulp), and how often the two agree to the bit.
+ * test_math.c - the mathematics of the run time (limba/math.h), two
+ * checks and the special cases:
+ * - the same bits on every engine and machine, with no reference: a hash
+ *   of the results on fixed arguments, written here once (x86-64, 22 Oct
+ *   2026); a machine or compiler that computes one bit differently fails;
+ * - the precision against mpmath, within the error the library declares
+ *   (below 1 ulp): tests/math/reference.txt, written by
+ *   tools/math_reference.py, gives for each argument the two doubles
+ *   around the exact result, and the result must be one of them;
+ * - the special cases of IEEE 754 § 9.2.1, value and sign.
+ * Run from the root of the repository (build.sh test does).
  */
 #include "limba/ir.h"
 #include "limba/math.h"
@@ -142,40 +146,6 @@ static double ours(int f, double x, double y)
     }
 }
 
-static double libc(int f, double x, double y)
-{
-    switch (f) {
-    case SIN:
-        return sin(x);
-    case COS:
-        return cos(x);
-    case TAN:
-        return tan(x);
-    case ATAN:
-        return atan(x);
-    case EXP:
-        return exp(x);
-    case LN:
-        return log(x);
-    default:
-        return pow(x, y);
-    }
-}
-
-/* the distance in ulps between two finite doubles of the same sign, or
-   both zero; UINT64_MAX otherwise */
-static uint64_t ulps(double a, double b)
-{
-    if (isnan(a) || isnan(b))
-        return isnan(a) && isnan(b) ? 0 : UINT64_MAX;
-    if (a == b)
-        return 0;
-    if (signbit(a) != signbit(b))
-        return UINT64_MAX;
-    uint64_t u = bits(a), v = bits(b);
-    return u > v ? u - v : v - u;
-}
-
 /* the hash of the bits of every result, 20000 arguments a function: the
    bits of x86-64 (gcc 14, glibc 2.41, 22 Oct 2026). A machine that
    computes another bit fails here */
@@ -190,31 +160,54 @@ static void test_bits(void)
     for (int f = 0; f < NFUNC; f++) {
         seed = 1000 + (uint64_t)f;
         uint64_t h = 0xcbf29ce484222325ull;
-        unsigned same = 0, n = 20000;
-        uint64_t worst = 0;
-        for (unsigned i = 0; i < n; i++) {
+        for (unsigned i = 0; i < 20000; i++) {
             double x = 0, y = 0;
             args(f, &x, &y);
-            double r = ours(f, x, y), c = libc(f, x, y);
-            uint64_t u = bits(r);
+            uint64_t u = bits(ours(f, x, y));
             for (int b = 0; b < 8; b++)
                 h = (h ^ ((u >> (8 * b)) & 0xff)) * 0x100000001b3ull;
-            uint64_t d = ulps(r, c);
-            CHECK(d <= 1, "%s(%a, %a) = %a, the C library %a", names[f], x, y,
-                  r, c);
-            same += d == 0;
-            if (d != UINT64_MAX && d > worst)
-                worst = d;
         }
         CHECK(h == golden[f], "%s: hash %#llx, expected %#llx", names[f],
               (unsigned long long)h, (unsigned long long)golden[f]);
-        if (getenv("LIMBA_MATH_VERBOSE"))
-            fprintf(stderr,
-                    "%s: hash %#llx, %u of %u as the C library, worst "
-                    "%llu ulp\n",
-                    names[f], (unsigned long long)h, same, n,
-                    (unsigned long long)worst);
     }
+}
+
+/* the precision: each result one of the two doubles around the exact one
+   (mpmath), so below 1 ulp; how many are the nearest, on request */
+static void test_reference(void)
+{
+    FILE *in = fopen("tests/math/reference.txt", "r");
+    CHECK(in, "tests/math/reference.txt: cannot read");
+    if (!in)
+        return;
+    char name[16];
+    unsigned lines = 0, nearest[NFUNC] = {0}, count[NFUNC] = {0};
+    while (fscanf(in, "%15s", name) == 1) {
+        int f = 0;
+        while (f < NFUNC && strcmp(names[f], name))
+            f++;
+        unsigned long long xb, yb = 0, nb, ob;
+        bool ok = f < NFUNC && fscanf(in, "%llx", &xb) == 1 &&
+                  (f != POW || fscanf(in, "%llx", &yb) == 1) &&
+                  fscanf(in, "%llx %llx", &nb, &ob) == 2;
+        CHECK(ok, "tests/math/reference.txt: line %u malformed", lines + 1);
+        if (!ok)
+            break;
+        lines++;
+        double x = from_bits(xb), y = from_bits(yb);
+        uint64_t r = bits(ours(f, x, y));
+        CHECK(r == nb || r == ob,
+              "%s(%a, %a) = %a, outside 1 ulp: exact between %a and %a",
+              names[f], x, y, from_bits(r), from_bits(nb), from_bits(ob));
+        nearest[f] += r == nb;
+        count[f]++;
+    }
+    fclose(in);
+    CHECK(lines >= 7000, "tests/math/reference.txt: %u lines", lines);
+    if (getenv("LIMBA_MATH_VERBOSE"))
+        for (int f = 0; f < NFUNC; f++)
+            fprintf(stderr, "%s: %u of %u rounded to nearest\n", names[f],
+                    nearest[f], count[f]);
 }
 
 /* value and sign; a NaN as any NaN */
@@ -276,8 +269,9 @@ int main(void)
     limba_set_program("test_math");
     test_special();
     test_bits();
-    printf("test_math: %u checks: special cases, bits on fixed arguments, "
-           "within 1 ulp of the C library; %d failures\n",
+    test_reference();
+    printf("test_math: %u checks: special cases, the same bits on fixed "
+           "arguments, within 1 ulp of mpmath; %d failures\n",
            checked, failures);
     return failures ? 1 : 0;
 }

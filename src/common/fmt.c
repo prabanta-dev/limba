@@ -7,10 +7,10 @@
  * Python's: positional when the exponent of the first digit is in -4..15,
  * else d.ddde+XX with at least two digits.
  *
- * The rounding and the reading back are exact steps of common/decimal.c
- * where their numbers fit; elsewhere, for now, snprintf and strtod of the
- * C library do the same (the slow way, still to be written: proposta
- * § 2, question 3).
+ * The rounding and the reading back are the exact steps of
+ * common/decimal.c (128 bits where they fit, the integers of bigint.c
+ * elsewhere): no conversion of the C library, the same text on every
+ * machine.
  */
 #include "limba/fmt.h"
 
@@ -18,9 +18,15 @@
 
 #include <math.h>
 #include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+
+/* s into buf, its length */
+static size_t put(char *buf, const char *s)
+{
+    size_t n = strlen(s);
+    memcpy(buf, s, n + 1);
+    return n;
+}
 
 /* the exponent of the first digit of a > 0: 10^E <= a < 10^(E+1);
    false if the exact steps cannot tell */
@@ -91,40 +97,26 @@ static int fast_digits(char *e, double a, bool neg, int ex, int p, bool f32)
     return memcmp(&r, &a, sizeof(a)) == 0;
 }
 
-/* the same by the C library: snprintf, then strtod or strtof */
-static int slow_digits(char *e, double v, int p, bool f32)
-{
-    snprintf(e, LIMBA_FMT_F64_MAX, "%.*e", p - 1, v);
-    if (f32) {
-        float back = strtof(e, NULL), fv = (float)v;
-        return memcmp(&back, &fv, sizeof(fv)) == 0;
-    }
-    double back = strtod(e, NULL);
-    return memcmp(&back, &v, sizeof(v)) == 0;
-}
-
 /* v, a float when f32 */
 static size_t fmt(char *buf, double v, bool f32)
 {
     if (isnan(v)) /* every NaN alike, whatever its sign and bits */
-        return (size_t)snprintf(buf, LIMBA_FMT_F64_MAX, "nan");
+        return put(buf, "nan");
     if (isinf(v))
-        return (size_t)snprintf(buf, LIMBA_FMT_F64_MAX, v < 0 ? "-inf" : "inf");
+        return put(buf, v < 0 ? "-inf" : "inf");
     char e[LIMBA_FMT_F64_MAX];
     bool neg = signbit(v);
     double a = fabs(v);
     int ex = 0;
-    bool fast = a != 0 && first_exponent(a, &ex);
     if (a == 0)
         strcpy(e, neg ? "-0e+00" : "0e+00");
-    else
-        for (int p = 1; p <= 17; p++) {
-            int r = fast ? fast_digits(e, a, neg, ex, p, f32) : -1;
-            if (r < 0)
-                r = slow_digits(e, v, p, f32);
-            if (r)
+    else {
+        first_exponent(a, &ex); /* exact for every finite a */
+        /* 17 digits (9 for a float) always read back: the loop ends */
+        for (int p = 1; p <= 17; p++)
+            if (fast_digits(e, a, neg, ex, p, f32) > 0)
                 break;
-        }
+    }
     /* e is [-]d[.ddd]e(+|-)XX: its digits and the exponent of the first */
     const char *s = e;
     if (neg)
@@ -134,7 +126,12 @@ static size_t fmt(char *buf, double v, bool f32)
     for (; *s != 'e'; s++)
         if (*s != '.')
             digits[nd++] = *s;
-    int exp = atoi(s + 1);
+    int exp = 0;
+    bool eneg = s[1] == '-';
+    for (s += 2; *s; s++)
+        exp = exp * 10 + (*s - '0');
+    if (eneg)
+        exp = -exp;
     while (nd > 1 && digits[nd - 1] == '0')
         nd--;
     size_t n = 0;
@@ -166,8 +163,13 @@ static size_t fmt(char *buf, double v, bool f32)
             memcpy(buf + n, digits + 1, nd - 1);
             n += nd - 1;
         }
-        n += (size_t)snprintf(buf + n, LIMBA_FMT_F64_MAX - n, "e%c%02d",
-                              exp < 0 ? '-' : '+', exp < 0 ? -exp : exp);
+        int x = exp < 0 ? -exp : exp;
+        buf[n++] = 'e';
+        buf[n++] = exp < 0 ? '-' : '+';
+        if (x >= 100)
+            buf[n++] = (char)('0' + x / 100);
+        buf[n++] = (char)('0' + x / 10 % 10);
+        buf[n++] = (char)('0' + x % 10);
     }
     buf[n] = 0;
     return n;
@@ -195,22 +197,30 @@ static bool fixed_minus(double v)
 size_t limba_fmt_f64_fixed(char *buf, double v, int decimals)
 {
     if (isnan(v)) /* nan, never -nan, as the short form */
-        return (size_t)snprintf(buf, LIMBA_FMT_FIXED_MAX, "nan");
+        return put(buf, "nan");
     if (isinf(v))
-        return (size_t)snprintf(buf, LIMBA_FMT_FIXED_MAX,
-                                v < 0 ? "-inf" : "inf");
+        return put(buf, v < 0 ? "-inf" : "inf");
     int d = decimals < 0                        ? 0
             : decimals > LIMBA_FMT_DECIMALS_MAX ? LIMBA_FMT_DECIMALS_MAX
                                                 : decimals;
     uint64_t n = 0;
     double a = fabs(v);
     if (a != 0 && !limba_dec_round(a, d, &n)) {
-        /* the slow way, for now the C library, with the same minus */
+        /* past 64 bits: the digits of the integers of bigint.c, most
+           significant first, then the same layout as below */
+        char big[LIMBA_FMT_FIXED_MAX];
+        size_t nb = limba_dec_round_text(a, d, big, sizeof(big));
         size_t k = 0;
         if (fixed_minus(v))
             buf[k++] = '-';
-        return k +
-               (size_t)snprintf(buf + k, LIMBA_FMT_FIXED_MAX - k, "%.*f", d, a);
+        size_t pad = nb < (size_t)d + 1 ? (size_t)d + 1 - nb : 0;
+        for (size_t i = 0; i < pad + nb; i++) {
+            buf[k++] = i < pad ? '0' : big[i - pad];
+            if (d > 0 && i + 1 == pad + nb - (size_t)d)
+                buf[k++] = '.';
+        }
+        buf[k] = 0;
+        return k;
     }
     char dig[LIMBA_FMT_DECIMALS_MAX + 24];
     int nd = 0;

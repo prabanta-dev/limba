@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Reals are written and read without any conversion of the C library:
+  where 128 bits do not reach, the integers and rationals of `bigint.c`
+  give the exact digits and the nearest real (the fixed form past 64
+  bits, 17 digits, long texts with a sticky digit past 800, halfway
+  points). Big integers are written with digits of Limba's own too.
+  `bigint.c` keeps its 128-bit shortcuts only where the compiler has
+  128-bit integers, with the same results (`LIMBA_NO_INT128` tests the
+  long way). `test_reals` adds the slow way: halfway points between
+  doubles, texts past 800 digits, ties of the fixed form past 64 bits.
+- `test_math` checks two things: the same bits on every machine (a
+  hash, no reference) and the precision against mpmath, each result one
+  of the two doubles around the exact one (`tests/math/reference.txt`,
+  written by `tools/math_reference.py`); the comparison with the C
+  library is gone.
+
 - The BigInt library of the run time: `big_gcd`, `big_lcm`, `big_sqrt`,
   `big_root` (truncated toward zero), `big_divisible`, `big_divexact` and
   `big_powmod` (in 0 .. |m| - 1). As for `big_div`, the IR checks before
