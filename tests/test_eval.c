@@ -8,13 +8,14 @@
  * tests/eval, every .lit: the interpreter itself, against what its header
  *     says: "; output: <line>" per printed line, "; result: <n>",
  *     "; trap: <code>", "; module: wrong" (a check the IR must make
- *     before a call of the run time is missing) or "; memory: broken" (a
- *     rule of the strings in
- *     memory broken, found by check_mem, on in every run here), and
- *     "; max memory: <bytes>" for a budget other than 64 MiB; run twice,
- *     the second time with a collection before each value made and,
- *     unless memory is to be broken, without check_mem, whose counts would
- *     keep alive what memory holds before the collection looks. An oracle
+ *     before an access or a call of the run time is missing) or
+ *     "; memory: broken" (a rule of the strings in memory broken, found
+ *     by check_mem, on in every run here), "; max memory: <bytes>" for a
+ *     budget other than 64 MiB, and "; message: <text>" for the words of
+ *     a trap or of an exception no one caught; run twice, the second time
+ *     with a collection before each value made and, unless memory is to
+ *     be broken, without check_mem, whose counts would keep alive what
+ *     memory holds before the collection looks. An oracle
  *     is checked before it judges.
  * tests/eval, tests/ir/ok, tests/opt (before ";; expect"), every .lit with
  *     a @main: the same program not optimised, fully optimised, and with
@@ -114,6 +115,8 @@ static void golden(const char *path)
     int64_t value = 0;
     bool has_value = false;
     uint64_t memory = 0;
+    char msg[256];
+    bool has_msg = false;
     for (const char *p = text; *p == ';'; p = strchr(p, '\n') + 1) {
         const char *eol = strchr(p, '\n');
         size_t n = (size_t)(eol - p);
@@ -131,6 +134,11 @@ static void golden(const char *path)
             status = LIMBA_EVAL_BAD;
         } else if (!strncmp(p, "; memory: broken", 16)) {
             status = LIMBA_EVAL_BADMEM;
+        } else if (!strncmp(p, "; message: ", 11) && n - 11 < sizeof(msg)) {
+            /* of the exception no one caught, or of the trap */
+            memcpy(msg, p + 11, n - 11);
+            msg[n - 11] = 0;
+            has_msg = true;
         } else if (!strncmp(p, "; max memory: ", 14)) {
             memory = strtoull(p + 14, NULL, 10);
         }
@@ -155,6 +163,10 @@ static void golden(const char *path)
         CHECK(!has_value || (int64_t)r.ret == value,
               "%s%s: returned %" PRId64 ", expected %" PRId64, path, how,
               (int64_t)r.ret, value);
+        CHECK(!has_msg || (r.msg && r.msglen == strlen(msg) &&
+                           !memcmp(r.msg, msg, r.msglen)),
+              "%s%s: message \"%.*s\", expected \"%s\"", path, how,
+              (int)r.msglen, r.msg ? r.msg : "", msg);
         CHECK(r.outlen == wlen && !memcmp(r.out, want, wlen),
               "%s%s: printed\n%s---\nexpected\n%s", path, how, r.out, want);
         limba_eval_result_free(&r);

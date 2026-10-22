@@ -1,0 +1,56 @@
+; output: 10
+; output: 11
+; output: 20
+; output: 21
+; trap: 1001
+; message: x
+; a par_for in the body of a par_for, not caught: the inner one raises at
+; 11 and 21, each outer index runs, then the lowest (1, with the inner's
+; lowest) leaves the program with its words ("luxia: Inner: x"); the slot
+; of the env is the caller's. Each par_for keeps its own message (one
+; for all lost the outer's); the case is Meri's (tests/vm)
+language "luxia"
+exception 1001 "Inner"
+
+func @inner : fn(ptr, i64) -> void {
+b0(v0: ptr, v1: i64):
+  v2 = load i64 v0
+  v3 = add i64 v2, v1
+  call.rt void print_i64(v3)
+  call.rt void print_nl()
+  v4 = iconst i64 1
+  v5 = icmp.eq i1 v1, v4
+  cbr v5, b1, b2
+b1:
+  v6 = iconst i32 1001
+  v7 = iconst i32 0
+  v8 = sconst str "x"
+  raise v6, v7, v8
+b2:
+  ret
+}
+
+func @outer : fn(ptr, i64) -> void {
+  slot 8 align 8
+b0(v0: ptr, v1: i64):
+  v2 = slot ptr $0
+  v3 = iconst i64 10
+  v4 = mul i64 v1, v3
+  store v4, v2
+  v5 = faddr ptr @inner
+  v6 = iconst i64 0
+  v7 = iconst i64 1
+  call.rt void par_for(v5, v2, v6, v7)
+  ret
+}
+
+func @main : fn() -> i64 {
+b0:
+  v0 = faddr ptr @outer
+  v1 = null ptr
+  v2 = iconst i64 1
+  v3 = iconst i64 2
+  call.rt void par_for(v0, v1, v2, v3)
+  v4 = iconst i64 0
+  ret v4
+}

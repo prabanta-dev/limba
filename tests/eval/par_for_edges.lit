@@ -1,0 +1,28 @@
+; output: 9223372036854775807
+; output: done
+; result: 0
+; par_for over no index runs nothing; over the last i64 alone runs it once
+; and ends: the index never goes past hi, which may be INT64_MAX (it
+; wrapped there and ran on); the case is Meri's (tests/vm)
+func @body : fn(ptr, i64) -> void {
+b0(v0: ptr, v1: i64):
+  call.rt void print_i64(v1)
+  call.rt void print_nl()
+  ret
+}
+
+func @main : fn() -> i64 {
+b0:
+  v0 = faddr ptr @body
+  v1 = null ptr
+  v2 = iconst i64 5
+  v3 = iconst i64 4
+  call.rt void par_for(v0, v1, v2, v3)
+  v4 = iconst i64 9223372036854775807
+  call.rt void par_for(v0, v1, v4, v4)
+  v5 = sconst str "done"
+  call.rt void print_str(v5)
+  call.rt void print_nl()
+  v6 = iconst i64 0
+  ret v6
+}

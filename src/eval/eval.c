@@ -91,7 +91,10 @@ typedef struct {
        at the end) */
     uint64_t exc_msg;
     bool pos_given;
-    uint64_t par_msg; /* par_for: the message of the lowest index kept */
+    /* par_for: the message of the lowest index each par_for running
+       keeps, the innermost last (one may run in the body of another) */
+    uint64_t *par_msgs;
+    size_t npar, cappar;
     /* the C stack the run may use: a call of the program deeper than
        budget bytes from base is the trap STACK, never a crash of the
        interpreter itself */
@@ -289,7 +292,8 @@ static void collect(E *e)
     for (size_t i = 0; i < e->npinned; i++)
         e->pinned[i]->marked = 1;
     mark(e, &set, e->exc_msg); /* the exceptions on their way */
-    mark(e, &set, e->par_msg);
+    for (size_t i = 0; i < e->npar; i++)
+        mark(e, &set, e->par_msgs[i]);
     amap_free(&set);
     size_t j = 0;
     for (size_t i = 0; i < e->ncounted; i++)
@@ -1859,36 +1863,44 @@ static bool par_for(E *e, const uint64_t *a)
         return false;
     }
     bool raised = false;
-    int64_t code = 0;
+    int64_t code = 0, lo = (int64_t)a[2], hi = (int64_t)a[3];
     uint32_t pos = 0;
-    for (int64_t i = (int64_t)a[2]; i <= (int64_t)a[3]; i++) {
+    size_t slot = e->npar; /* its own message, held for the collection */
+    LIMBA_GROW(e->par_msgs, e->npar, e->cappar);
+    e->par_msgs[e->npar++] = 0;
+    /* lo to hi, hi included and never past it: hi may be INT64_MAX */
+    for (int64_t i = lo; lo <= hi; i++) {
         uint64_t args[2] = {a[1], (uint64_t)i}, ret;
-        if (call(e, body, args, &ret))
-            continue;
-        if (e->status != LIMBA_EVAL_TRAP || !limba_exception_catchable(e->code))
-            return false; /* fatal: no more iterations */
-        if (!raised) {    /* the lowest index: kept */
-            raised = true;
-            code = e->code;
-            pos = e->pos;
-            e->par_msg = exc_message(e);
+        if (!call(e, body, args, &ret)) {
+            if (e->status != LIMBA_EVAL_TRAP ||
+                !limba_exception_catchable(e->code)) {
+                e->npar = slot;
+                return false; /* fatal: no more iterations */
+            }
+            if (!raised) { /* the lowest index: kept */
+                raised = true;
+                code = e->code;
+                pos = e->pos;
+                e->par_msgs[slot] = exc_message(e);
+            }
+            e->status = LIMBA_EVAL_OK;
+            e->code = 0;
+            e->pos = 0;
+            e->pos_given = false;
+            e->exc_msg = 0;
         }
-        e->status = LIMBA_EVAL_OK;
-        e->code = 0;
-        e->pos = 0;
-        e->pos_given = false;
-        e->exc_msg = 0;
-        if (i == INT64_MAX)
+        if (i == hi)
             break;
     }
+    uint64_t msg = e->par_msgs[slot];
+    e->npar = slot;
     if (!raised)
         return true;
     e->status = LIMBA_EVAL_TRAP;
     e->code = code;
     e->pos = pos;
     e->pos_given = true;
-    e->exc_msg = e->par_msg;
-    e->par_msg = 0;
+    e->exc_msg = msg;
     return false;
 }
 
@@ -2406,6 +2418,7 @@ void limba_eval(const limba_module *m, const char *entry,
         val_free(e.vals[i]);
     free(e.vals);
     free(e.pinned);
+    free(e.par_msgs);
     amap_free(&e.heap);
     for (size_t k = 0; k < e.cstrs.cap; k++) /* C strings never freed */
         if (e.cstrs.key[k] > 1)
