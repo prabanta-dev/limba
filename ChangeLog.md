@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Reals written and read by exact steps of Limba's own, the same on
+  every machine, wherever their numbers fit in 128 bits: the rounding of
+  a real to its digits (the shortest form and `x:w:d`), the reading back
+  of up to 15 digits (Clinger's fast path), and integers of base 2, 8
+  and 16 read as reals. The C library answers the rest, for now. The
+  text printed and read does not change. Every NaN is written `nan`; the
+  minus of the fixed form is that of the sign bit, also on a value that
+  rounds to zero (`-0.00`). `test_reals` checks 240 000 cases against
+  the C library.
+
 - Globals with data: the initial value of a global may be its bytes, in
   the layout of its type, and relocations that write into them the
   address of a function, the address of a global plus an offset, or a

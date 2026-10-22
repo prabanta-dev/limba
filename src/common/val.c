@@ -5,6 +5,7 @@
  */
 #include "limba/val.h"
 
+#include "common/decimal.h"
 #include "common/xalloc.h"
 
 #include <math.h>
@@ -126,6 +127,88 @@ bool limba_val_big(const char *s, size_t len, char *digits, size_t *n,
     return ok;
 }
 
+/* the decimal literal t (digits, '.', digits, 'e', sign, digits, as
+   num_literal leaves it) as d * 10^k: false past 19 significant digits
+   or with an exponent past 100000 (the slow way reads those) */
+static bool dec_parts(const char *t, uint64_t *d, long *k)
+{
+    uint64_t v = 0;
+    long x = 0;
+    int nsig = 0;
+    bool frac = false;
+    for (; *t && *t != 'e'; t++) {
+        if (*t == '.') {
+            frac = true;
+            continue;
+        }
+        int c = *t - '0';
+        if (nsig == 0 && c == 0) {
+            x -= frac;
+            continue;
+        }
+        if (nsig < 19) {
+            v = v * 10 + (uint64_t)c;
+            nsig++;
+            x -= frac;
+        } else if (c != 0)
+            return false;
+        else
+            x += !frac;
+    }
+    if (*t == 'e') {
+        t++;
+        bool minus = *t == '-';
+        if (*t == '-' || *t == '+')
+            t++;
+        long ev = 0;
+        for (; *t; t++) {
+            ev = ev * 10 + (*t - '0');
+            if (ev > 100000)
+                return false;
+        }
+        x += minus ? -ev : ev;
+    }
+    while (v && v % 10 == 0) {
+        v /= 10;
+        x++;
+    }
+    *d = v;
+    *k = x;
+    return true;
+}
+
+/* the digits of base 2, 8 or 16 in t, rounded once to 53 bits (24 if
+   f32), ties to even, exactly: a scaling by a power of two cannot round */
+static double pow2_digits(const char *t, unsigned base, bool f32)
+{
+    unsigned b = base == 16 ? 4 : base == 8 ? 3 : 1;
+    uint64_t acc = 0;
+    long extra = 0;
+    bool sticky = false;
+    for (; *t; t++) {
+        uint64_t dv = (uint64_t)digit_of(*t, base);
+        if (acc >> (64 - b) == 0)
+            acc = acc << b | dv;
+        else {
+            sticky |= dv != 0;
+            extra += b;
+        }
+    }
+    int prec = f32 ? 24 : 53, nb = 0;
+    for (uint64_t c = acc; c; c >>= 1)
+        nb++;
+    if (nb > prec) {
+        int sh = nb - prec;
+        uint64_t rem = acc & ((1ull << sh) - 1), half = 1ull << (sh - 1);
+        acc >>= sh;
+        extra += sh;
+        if (rem > half || (rem == half && (sticky || (acc & 1))))
+            acc++;
+    }
+    double r = ldexp((double)acc, extra > 100000 ? 100000 : (int)extra);
+    return f32 ? (double)(float)r : r; /* past the float range: inf */
+}
+
 bool limba_val_real(const char *s, size_t len, bool f32, uint64_t *bits)
 {
     const char *p;
@@ -142,41 +225,18 @@ bool limba_val_real(const char *s, size_t len, bool f32, uint64_t *bits)
             return false; /* nan has no sign */
         d = NAN;
     } else {
-        /* room for 0x, a hexadecimal digit for each binary one, p0 */
-        char *buf = limba_xmalloc(n + 8), *text = buf;
+        char *buf = limba_xmalloc(n + 1);
         int kind = num_literal(p, n, buf, &base);
-        if (kind == 1 && base != 10) {
-            /* the digits as hexadecimal ones, for a rounding done once:
-               a digit of base 2^b is b bits, zeros pad the first */
-            unsigned b = base == 16 ? 4 : base == 8 ? 3 : 1;
-            size_t nbits = strlen(buf) * b, pad = (4 - nbits % 4) % 4;
-            size_t nh = (nbits + pad) / 4;
-            text = limba_xmalloc(nh + 8);
-            memcpy(text, "0x", 2);
-            for (size_t h = 0; h < nh; h++) {
-                unsigned v = 0;
-                for (size_t q = h * 4; q < h * 4 + 4; q++) {
-                    size_t at = q - pad; /* the bit in the digits */
-                    unsigned one =
-                        q < pad ? 0
-                                : ((unsigned)digit_of(buf[at / b], base) >>
-                                   (b - 1 - at % b)) &
-                                      1;
-                    v = v << 1 | one;
-                }
-                text[2 + h] = "0123456789abcdef"[v];
-            }
-            memcpy(text + 2 + nh, "p0", 3);
-        }
+        uint64_t dd;
+        long k;
         d = 0;
-        if (kind) {
-            if (f32)
-                d = strtof(text, NULL);
-            else
-                d = strtod(text, NULL);
-        }
-        if (text != buf)
-            free(text);
+        if (kind == 1 && base != 10)
+            d = pow2_digits(buf, base, f32);
+        else if (kind && dec_parts(buf, &dd, &k) &&
+                 (dd == 0 || limba_dec_read(dd, (int)k, f32, &d)))
+            d = dd == 0 ? 0 : d;
+        else if (kind) /* the slow way, for now the C library (question 3) */
+            d = f32 ? strtof(buf, NULL) : strtod(buf, NULL);
         free(buf);
         if (!kind || isinf(d))
             return false;
