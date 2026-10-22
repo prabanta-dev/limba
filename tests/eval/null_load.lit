@@ -1,0 +1,11 @@
+; module: wrong
+; a field of nil read (nil + 8), with no nil check before
+func @main : fn() -> i64 {
+b0:
+  v0 = null ptr
+  v1 = iconst i64 0
+  v2 = addr ptr v0, v1, 0, 8
+  v3 = load i64 v2
+  call.rt void print_i64(v3)
+  ret v3
+}

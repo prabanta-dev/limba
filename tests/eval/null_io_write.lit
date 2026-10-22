@@ -1,0 +1,10 @@
+; module: wrong
+; io_write of 4 bytes from nil: the nil check comes before, in the IR
+func @main : fn() -> i64 {
+b0:
+  v0 = null ptr
+  v1 = iconst i64 4
+  call.rt void io_write(v0, v1)
+  v2 = iconst i64 0
+  ret v2
+}

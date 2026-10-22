@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- An access to memory that skips its nil check (load, store, load.inv,
+  memcpy, memset, retain, release, the routines of the run time that take
+  a pointer) no longer crashes the reference interpreter: n bytes that
+  touch the first 64 KiB, or whose end wraps, make a wrong module, as a
+  call of BigInt without its checks does. `lir_run` names that end
+  "wrong module".
+
 - Exceptions in the IR (`progetto_ir.md` § 11i): identities of 32 bits
   (below 1000 the codes of `traps.def`, now with `LengthError` 108, and
   the predefined families 900-903), a table of the module that names

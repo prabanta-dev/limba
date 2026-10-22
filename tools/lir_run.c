@@ -30,7 +30,7 @@
 
 static const char *const status_text[] = {
     "returned",    "trap",      "unreachable", "limit",
-    "unsupported", "bad entry", "halt",        "memory rule broken",
+    "unsupported", "wrong module", "halt",        "memory rule broken",
 };
 
 int main(int argc, char **argv)

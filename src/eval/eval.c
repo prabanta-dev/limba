@@ -484,6 +484,24 @@ static void out_f64(E *e, double v)
 
 static void store(void *p, limba_id t, uint64_t v);
 static bool mem_store(E *e, uintptr_t p, limba_id t, uint64_t v);
+
+/* a wrong module: a check the IR owes an access or a call is missing */
+static bool bad_module(E *e)
+{
+    e->status = LIMBA_EVAL_BAD;
+    return false;
+}
+
+/* n bytes from p can be no memory of the program: they touch the first
+   64 KiB, where Linux maps nothing (vm.mmap_min_addr), so nil or a field
+   of nil, or their end wraps. The nil check comes before, in the IR
+   (progetto_ir.md § 11c): an access that skips it is a wrong module,
+   never a crash of the oracle */
+#define LOW_MEMORY ((uintptr_t)1 << 16)
+static bool wild(uintptr_t p, uint64_t n)
+{
+    return n && (p < LOW_MEMORY || n > UINTPTR_MAX - p);
+}
 static bool forget(E *e, uintptr_t p, size_t n);
 static bool no_str(E *e, uintptr_t p, size_t n);
 static bool badmem(E *e);
@@ -827,13 +845,6 @@ static bool runtime_big(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     return false;
 }
 
-/* a call that skips a check the IR owes it: a wrong module */
-static bool bad_module(E *e)
-{
-    e->status = LIMBA_EVAL_BAD;
-    return false;
-}
-
 /* the C strings (luxia-0.md § 9.9): malloc and free of C, as a C library
    would have them; out of the budget, as memory of C */
 static bool runtime_c(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
@@ -854,14 +865,14 @@ static bool runtime_c(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     }
     case LIMBA_RT_CSTR_VALUE: {
         const char *p = (const char *)(uintptr_t)a[0];
-        if (!p)
+        if (wild((uintptr_t)p, 1))
             return bad_module(e); /* the nil check comes before */
         *r = sv(str_make(e, p, strlen(p)));
         return true;
     }
     case LIMBA_RT_CSTR_VALUE_N: {
         const char *p = (const char *)(uintptr_t)a[0];
-        if (!p || (int64_t)a[1] < 0)
+        if ((int64_t)a[1] < 0 || wild((uintptr_t)p, a[1]))
             return bad_module(e);
         *r = sv(str_make(e, p, (size_t)a[1]));
         return true;
@@ -887,7 +898,8 @@ static bool runtime_arrays(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     switch (rt) {
     case LIMBA_RT_MEM_TRANSLATE: {
         const uint8_t *t = (const uint8_t *)(uintptr_t)a[2];
-        if (n < 0 || (n && (!p || !t)))
+        if (n < 0 ||
+            (n && (wild((uintptr_t)p, (uint64_t)n) || wild((uintptr_t)t, 256))))
             return bad_module(e);
         if (!n)
             return true;
@@ -902,8 +914,8 @@ static bool runtime_arrays(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     }
     case LIMBA_RT_MEM_REVERSE: {
         size_t size = (size_t)a[2], len;
-        if (n < 0 || !size || (n && !p) ||
-            __builtin_mul_overflow((size_t)n, size, &len))
+        if (n < 0 || !size || __builtin_mul_overflow((size_t)n, size, &len) ||
+            wild((uintptr_t)p, len))
             return bad_module(e);
         if (n < 2)
             return true;
@@ -940,7 +952,8 @@ static bool runtime_arrays(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_MEM_COUNT: {
         const uint8_t *q = (const uint8_t *)(uintptr_t)a[2];
         int64_t m = (int64_t)a[3];
-        if (n < 0 || m < 1 || !q || (n && !p))
+        if (n < 0 || m < 1 || wild((uintptr_t)q, (uint64_t)m) ||
+            wild((uintptr_t)p, (uint64_t)n))
             return bad_module(e);
         if (e->lim.check_mem && (!no_str(e, (uintptr_t)p, (size_t)n) ||
                                  !no_str(e, (uintptr_t)q, (size_t)m)))
@@ -1033,7 +1046,7 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
            of read_line, the output that of print_* */
         uint8_t *p = (uint8_t *)(uintptr_t)a[0];
         int64_t n = (int64_t)a[1];
-        if (n < 0 || (n && !p))
+        if (n < 0 || wild((uintptr_t)p, (uint64_t)n))
             return bad_module(e);
         if (n && e->lim.check_mem && !no_str(e, (uintptr_t)p, (size_t)n))
             return false;
@@ -1391,6 +1404,8 @@ static bool forget(E *e, uintptr_t p, size_t n)
 
 static bool mem_load(E *e, uintptr_t p, limba_id t, uint64_t *r)
 {
+    if (wild(p, e->m->types[t].size))
+        return bad_module(e);
     *r = load((void *)p, t);
     if (!e->lim.check_mem)
         return true;
@@ -1402,6 +1417,8 @@ static bool mem_load(E *e, uintptr_t p, limba_id t, uint64_t *r)
 /* store str takes a reference on the new value, then releases the old */
 static bool mem_store(E *e, uintptr_t p, limba_id t, uint64_t v)
 {
+    if (wild(p, e->m->types[t].size))
+        return bad_module(e);
     if (e->lim.check_mem) {
         if (t == LIMBA_T_STR || t == LIMBA_T_REF) {
             if (p & 7)
@@ -1423,6 +1440,8 @@ static bool mem_store(E *e, uintptr_t p, limba_id t, uint64_t v)
 /* memcpy moves the str of the source with it, uncounted */
 static bool mem_copy(E *e, uintptr_t dst, uintptr_t src, size_t len)
 {
+    if (wild(dst, len) || wild(src, len))
+        return bad_module(e);
     if (!e->lim.check_mem || !e->words.live) {
         memmove((void *)dst, (void *)src, len);
         return true;
@@ -1447,6 +1466,8 @@ static bool mem_copy(E *e, uintptr_t dst, uintptr_t src, size_t len)
 
 static bool mem_fill(E *e, uintptr_t dst, int byte, size_t len)
 {
+    if (wild(dst, len))
+        return bad_module(e);
     if (e->lim.check_mem && !forget(e, dst, len))
         return false;
     memset((void *)dst, byte, len);
@@ -1496,6 +1517,8 @@ static bool rc_inst(E *e, const limba_inst *in, uint64_t p, uint64_t nv)
     uint64_t size = e->m->types[in->imm].size;
     if (n < 0 || (n && size > UINT64_MAX / (uint64_t)n))
         return trap(e, LIMBA_TRAP_RANGE);
+    if (wild(p, (uint64_t)n * size)) /* every engine reads them */
+        return bad_module(e);
     if (!e->lim.check_mem)
         return true;
     int d = in->op == LIMBA_OP_RETAIN ? 1 : -1;

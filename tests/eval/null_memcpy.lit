@@ -1,0 +1,15 @@
+; module: wrong
+; memcpy from nil, 16 bytes, with no nil check before: a wrong module,
+; never a crash of the oracle (Luxia's case, p3/nullcopy)
+memory strict
+language "luxia"
+
+func @main : fn() -> void export {
+  slot 16 align 8
+b0:
+  v0 = slot ptr $0
+  v1 = null ptr
+  v3 = iconst i64 16
+  memcpy v0, v1, v3
+  ret
+}
