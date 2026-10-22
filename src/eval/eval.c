@@ -96,7 +96,7 @@ typedef struct {
     bool armed;
     estr **sconst; /* the string of each sconst, made once: immortal */
     bool checked;  /* the counts checked once, at the end or at a stop */
-    bool in_end;   /* the end of the input met: final (luxia_0.md § 9.2) */
+    bool in_end;   /* the end of the input met: final (luxia-0.md § 9.2) */
     /* the collection of strings and BigInts no longer held (collect) */
     estr **vals; /* every string and BigInt made, not yet freed */
     size_t nvals, capvals;
@@ -493,7 +493,7 @@ static size_t utf8(uint32_t c, char *buf)
     return n;
 }
 
-/* ---- BigInt (luxia_0.md § 3.12) ---- */
+/* ---- BigInt (luxia-0.md § 3.12) ---- */
 
 /* the number of a handle: its words are the box's, read only */
 static limba_big big_get(uint64_t v)
@@ -765,7 +765,7 @@ static bool bad_module(E *e)
     return false;
 }
 
-/* the C strings (luxia_0.md § 9.9): malloc and free of C, as a C library
+/* the C strings (luxia-0.md § 9.9): malloc and free of C, as a C library
    would have them; out of the budget, as memory of C */
 static bool runtime_c(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
 {
@@ -809,7 +809,7 @@ static bool runtime_c(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     return runtime_arrays(e, rt, a, r);
 }
 
-/* the routines of arrays (luxia_0.md § 9.5): the tract, the pattern,
+/* the routines of arrays (luxia-0.md § 9.5): the tract, the pattern,
    nil and dangling are checked before, in the IR */
 static bool runtime_arrays(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
 {

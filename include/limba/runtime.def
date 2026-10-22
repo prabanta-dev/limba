@@ -21,7 +21,7 @@
 /* console. Every function of output may end the program at an error of
    writing, found when its buffer is written, perhaps later than the
    write that filled it: the trap IO without a position, or for a closed
-   output (EPIPE) exit status 141 and no message (luxia_0.md § 10.1) */
+   output (EPIPE) exit status 141 and no message (luxia-0.md § 10.1) */
 LIMBA_RT(PRINT_I64, "print_i64", "(i64) -> void",
          LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
 /* the text of a real is limba/fmt.h, byte for byte: limba_fmt_f64 for
@@ -77,7 +77,7 @@ LIMBA_RT(STR_FROM_BOOL, "str_from_bool", "(i1) -> str", LIMBA_RTA_ALLOC)
 LIMBA_RT(READ_LINE, "read_line", "(ptr) -> i1",
          LIMBA_RTA_IO | LIMBA_RTA_ALLOC | LIMBA_RTA_WRITES_MEM |
              LIMBA_RTA_MAY_TRAP)
-/* val (luxia_0.md § 9): a number of the text, spaces and tabs around, a
+/* val (luxia-0.md § 9): a number of the text, spaces and tabs around, a
    sign, then a literal of Luxia; str_to_i64 takes an integer in lo..hi
    (the last two operands), str_to_f64 an integer or a real rounded once
    to f64 (or inf, -inf, nan), and writes it at the pointer; false, and
@@ -118,7 +118,7 @@ LIMBA_RT(STR_FROM_F32, "str_from_f32", "(f32) -> str", LIMBA_RTA_ALLOC)
 /* is p a live block of mem_alloc (its start, not freed)? The dangling
    check: check ptr_live(p), 105 right before an access through p */
 LIMBA_RT(PTR_LIVE, "ptr_live", "(ptr) -> i1", LIMBA_RTA_READS_HEAP)
-/* BigInt (luxia_0.md § 3.12, progetto_ir.md § 11d): a ref counted as a
+/* BigInt (luxia-0.md § 3.12, progetto_ir.md § 11d): a ref counted as a
    str, immutable, 0 for the handle 0; every operation gives a new value.
    The checks come before, in the IR: a divisor is never 0, an exponent
    never negative (read without a sign), a real finite and integral */
@@ -162,7 +162,7 @@ LIMBA_RT(PRINT_BIG, "print_big", "(ref) -> void", LIMBA_RTA_IO)
 LIMBA_RT(STR_FROM_BIG, "str_from_big", "(ref) -> str", LIMBA_RTA_ALLOC)
 /* val: the text of an integer of Luxia (limba_val_big), any size */
 LIMBA_RT(STR_TO_BIG, "str_to_big", "(str, ptr) -> i1", LIMBA_RTA_WRITES_MEM)
-/* C strings (luxia_0.md § 9.9): memory of C, not of the program. new
+/* C strings (luxia-0.md § 9.9): memory of C, not of the program. new
    copies with a 0 after (a 0 inside is the trap RANGE, a failed malloc
    NOMEM); value copies up to the first 0, value_n n bytes (the pointer
    not null, n >= 0: checked before, in the IR); free frees what new or C
@@ -172,7 +172,7 @@ LIMBA_RT(CSTR_NEW, "cstr_new", "(str) -> ptr",
 LIMBA_RT(CSTR_VALUE, "cstr_value", "(ptr) -> str", LIMBA_RTA_ALLOC)
 LIMBA_RT(CSTR_VALUE_N, "cstr_value_n", "(ptr, i64) -> str", LIMBA_RTA_ALLOC)
 LIMBA_RT(CSTR_FREE, "cstr_free", "(ptr) -> void", LIMBA_RTA_WRITES_MEM)
-/* the routines of arrays of luxia_0.md § 9.5, checked before, in the IR
+/* the routines of arrays of luxia-0.md § 9.5, checked before, in the IR
    (count >= 0, the tract inside its array, the pattern not empty, nil
    and dangling): no trap, and with n = 0 no pointer is read. translate:
    a[i] := table[a[i]] for the n bytes at a, the 256 bytes of table read
@@ -185,7 +185,7 @@ LIMBA_RT(MEM_TRANSLATE, "mem_translate", "(ptr, i64, ptr) -> void",
 LIMBA_RT(MEM_REVERSE, "mem_reverse", "(ptr, i64, i64) -> void",
          LIMBA_RTA_WRITES_MEM)
 LIMBA_RT(MEM_COUNT, "mem_count", "(ptr, i64, ptr, i64) -> i64", 0)
-/* readbytes and writebytes (luxia_0.md § 9.1, § 9.2), the tract checked
+/* readbytes and writebytes (luxia-0.md § 9.1, § 9.2), the tract checked
    before, as for mem_*: with n = 0 no pointer is read. io_read reads up
    to n bytes of the standard input at a, from the stream of read_line,
    fewer only at its end, and returns how many; the end is final: after

@@ -2,7 +2,7 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * opt.h - the optimiser of the Limba IR: one pipeline, the same for every
- * program that optimises (limba, prabanta), run to a fixed point on each
+ * program that optimises (limba, the front ends), run to a fixed point on each
  * function.
  */
 #ifndef LIMBA_OPT_H

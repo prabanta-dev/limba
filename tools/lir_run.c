@@ -12,7 +12,7 @@
  * range at prog.luxia:12:5"; a module without a language gets "lir_run".
  * The output is written at the end: an error there, after a run that did
  * not stop on its own error, is the trap IO without a position; a closed
- * output (EPIPE) ends with status 141 and no message (luxia_0.md § 10.1).
+ * output (EPIPE) ends with status 141 and no message (luxia-0.md § 10.1).
  */
 #include "eval/eval.h"
 #include "limba/ir.h"

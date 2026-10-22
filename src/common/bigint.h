@@ -13,8 +13,8 @@
  * them, its memory the only bound. The result may be one of the
  * operands.
  */
-#ifndef LIMBA_FRONT_BIGINT_H
-#define LIMBA_FRONT_BIGINT_H
+#ifndef LIMBA_BIGINT_H
+#define LIMBA_BIGINT_H
 
 #include <stdbool.h>
 #include <stddef.h>

@@ -16,8 +16,8 @@
  * At the end the builder also reports every use that some path reaches
  * without a definition: the check of definite assignment.
  */
-#ifndef LIMBA_FRONT_SSA_H
-#define LIMBA_FRONT_SSA_H
+#ifndef LIMBA_IR_SSA_H
+#define LIMBA_IR_SSA_H
 
 #include "ir/internal.h"
 #include "limba/ir.h"
