@@ -22,7 +22,7 @@
 #include <stdio.h>
 
 /* bumped whenever the binary form or the tables change incompatibly */
-#define LIMBA_IR_VERSION 7
+#define LIMBA_IR_VERSION 8
 
 typedef uint32_t limba_id;
 #define LIMBA_NONE UINT32_MAX
@@ -62,6 +62,7 @@ enum limba_format {
     LIMBA_F_CHECK,    /* condition; imm = error code */
     LIMBA_F_PARAM,    /* block parameter: nothing */
     LIMBA_F_RC,       /* imm = type; pointer, count */
+    LIMBA_F_RAISE,    /* identity, position, message (a terminator) */
 };
 
 /* what an optimisation may assume */
@@ -135,6 +136,9 @@ enum {
     /* reads which blocks of mem_alloc are alive: not pure, changed by
        mem_free and by any call that may free */
     LIMBA_RTA_READS_HEAP = 1u << 6,
+    /* calls a function of the program (par_for): does what it does,
+       exceptions included */
+    LIMBA_RTA_CALLS_PROGRAM = 1u << 7,
 };
 
 enum limba_rt {
@@ -165,6 +169,23 @@ enum limba_trap {
 
 /* what failed, for the message; NULL for a code no check has */
 const char *limba_trap_text(int64_t code);
+
+/* ---- exceptions (progetto_ir.md § 11i) ---- */
+
+/* the predefined families, identities below 1000 like the traps */
+enum limba_family {
+#define LIMBA_TRAP(name, code, text)
+#define LIMBA_FAMILY(name, code) LIMBA_FAMILY_##name = code,
+#include "limba/traps.def"
+#undef LIMBA_FAMILY
+#undef LIMBA_TRAP
+};
+
+/* an identity of Limba: a code of traps.def or a predefined family */
+bool limba_exception_builtin(int64_t id);
+/* may a handler catch it? Never memory or stack run out (7, 28) nor
+   their family */
+bool limba_exception_catchable(int64_t id);
 
 /* ---- types ---- */
 
@@ -306,6 +327,9 @@ typedef struct {
     uint32_t ninsts;
     uint32_t cap;
     uint32_t nparams;
+    /* the block that catches what this one raises, + 1; 0 for none
+       (progetto_ir.md § 11i): limba_block_handler */
+    uint32_t handler;
 } limba_block;
 
 /* a place in the source a front end compiled: a file (a string id), a
@@ -339,6 +363,16 @@ enum limba_memory { LIMBA_MEM_STRICT, LIMBA_MEM_FB };
 
 typedef struct limba_strtab limba_strtab;
 typedef struct limba_hash limba_hash;
+
+/* an exception of the module: its identity (below 1000 those of
+   traps.def), its name in the language, its family (-1 for none) */
+typedef struct {
+    int32_t id;
+    limba_id name;
+    int32_t parent;
+} limba_exception;
+
+struct limba_fsum;
 
 /* how the language of a module words one of its traps */
 typedef struct {
@@ -379,6 +413,15 @@ typedef struct limba_module {
     uint32_t npos, cappos;
     limba_initdata *inits; /* the values of the LIMBA_INIT_DATA globals */
     uint32_t ninits, capinits;
+    /* the exceptions the language names (progetto_ir.md § 11i) */
+    limba_exception *excs;
+    uint32_t nexcs, capexcs;
+    /* the set "under a handler": one byte a function, after
+       limba_handled_compute; and what limba_handled_note kept of the
+       functions whose body went (NULL until a note) */
+    uint8_t *handled;
+    struct limba_fsum *fsums;
+    uint32_t nfsums;
 } limba_module;
 
 /* ---- the program ---- */
@@ -470,6 +513,21 @@ limba_id limba_extern_find(const limba_module *m, limba_id name);
 void limba_func_clear(limba_func *f);
 
 limba_id limba_block_add(limba_func *f);
+/* the handler of block b, LIMBA_NONE for none; give it one */
+limba_id limba_block_handler(const limba_func *f, limba_id b);
+void limba_block_set_handler(limba_func *f, limba_id b, limba_id h);
+/* an exception of the module (progetto_ir.md § 11i) */
+void limba_exception_add(limba_module *m, int32_t id, limba_id name,
+                         int32_t parent);
+/* its name, NULL if the module does not name it */
+const char *limba_exception_name(const limba_module *m, int64_t id,
+                                 size_t *len);
+/* the set "under a handler" (progetto_ir.md § 11i): note keeps what it
+   needs of function fid before its body is cleared; compute fills
+   m->handled from the bodies and the notes; handled reads it */
+void limba_handled_note(limba_module *m, limba_id fid);
+void limba_handled_compute(limba_module *m);
+bool limba_module_handled(const limba_module *m, limba_id fid);
 limba_id limba_slot_add(limba_func *f, uint32_t size, uint32_t align);
 /* the same, typed: t holds a str (checked by the verifier) */
 limba_id limba_slot_add_typed(limba_func *f, uint32_t size, uint32_t align,

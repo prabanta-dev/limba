@@ -215,3 +215,10 @@ LIMBA_RT(BIG_DIVEXACT, "big_divexact", "(ref, ref) -> ref",
          LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
 LIMBA_RT(BIG_POWMOD, "big_powmod", "(ref, ref, ref) -> ref",
          LIMBA_RTA_PURE | LIMBA_RTA_ALLOC)
+/* parallel for (progetto_ir.md § 11i): body(env, i) for every i of
+   lo..hi, the body a function fn(ptr, i64) -> void; all of them run,
+   then the exception of the lowest index that raised, if any, leaves
+   par_for (R2). In sequence for now */
+LIMBA_RT(PAR_FOR, "par_for", "(ptr, ptr, i64, i64) -> void",
+         LIMBA_RTA_CALLS_PROGRAM | LIMBA_RTA_MAY_TRAP | LIMBA_RTA_WRITES_MEM |
+             LIMBA_RTA_IO | LIMBA_RTA_ALLOC)

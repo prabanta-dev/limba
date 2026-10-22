@@ -289,12 +289,67 @@ static void test_data(void)
     limba_module_free(m);
 }
 
+/* the set "under a handler" (progetto_ir.md § 11i): a protected block,
+   what it calls, an indirect call by signature, a body of par_for; not
+   a function only its caller's callers reach, nor one of another type */
+static void test_handled(void)
+{
+    const char text[] =
+        "func @leaf : fn() -> void {\nb0:\n  ret\n}\n"
+        "func @other : fn(i64) -> void {\nb0(v0: i64):\n  ret\n}\n"
+        "func @taken : fn() -> void {\nb0:\n  ret\n}\n"
+        "func @untaken : fn() -> void {\nb0:\n  ret\n}\n"
+        "func @body : fn(ptr, i64) -> void {\nb0(v0: ptr, v1: i64):\n"
+        "  ret\n}\n"
+        "func @prot : fn(ptr) -> void {\nb0(v0: ptr):\n  br b1\n"
+        "b1 handler b2:\n  call void @leaf()\n"
+        "  call.ind void fn() -> void v0()\n  ret\n"
+        "b2(v1: i32, v2: i32, v3: str):\n  ret\n}\n"
+        "func @main : fn() -> void {\nb0:\n  v0 = faddr ptr @taken\n"
+        "  call void @prot(v0)\n  v1 = faddr ptr @body\n"
+        "  v2 = iconst i64 0\n  call.rt void par_for(v1, v0, v2, v2)\n"
+        "  call void @untaken()\n  ret\n}\n";
+    limba_diag d = {{0}, 0};
+    limba_module *m = limba_parse(text, sizeof(text) - 1, &d);
+    CHECK(m && limba_verify(m, &d) == 0, "handled: %s", d.msg);
+    if (!m)
+        return;
+    static const struct {
+        const char *name;
+        bool in;
+    } want[] = {{"leaf", true},     {"other", false}, {"taken", true},
+                {"untaken", false}, {"body", true},   {"prot", true},
+                {"main", false}};
+    for (size_t i = 0; i < sizeof(want) / sizeof(want[0]); i++) {
+        limba_id f = limba_func_find(
+            m, limba_str_intern(m, want[i].name, strlen(want[i].name)));
+        CHECK(limba_module_handled(m, f) == want[i].in,
+              "handled: @%s %s the set", want[i].name,
+              want[i].in ? "not in" : "in");
+    }
+    /* the same from notes, the bodies gone */
+    for (uint32_t i = 0; i < m->nfuncs; i++) {
+        limba_handled_note(m, i);
+        limba_func_clear(&m->funcs[i]);
+    }
+    limba_handled_compute(m);
+    for (size_t i = 0; i < sizeof(want) / sizeof(want[0]); i++) {
+        limba_id f = limba_func_find(
+            m, limba_str_intern(m, want[i].name, strlen(want[i].name)));
+        CHECK(limba_module_handled(m, f) == want[i].in,
+              "handled from notes: @%s %s the set", want[i].name,
+              want[i].in ? "not in" : "in");
+    }
+    limba_module_free(m);
+}
+
 int main(void)
 {
     limba_set_program("test_ir");
     test_leb128();
     test_messages();
     test_data();
+    test_handled();
     int ok = each("tests/ir/ok", test_ok);
     int bad = each("tests/ir/bad", test_bad);
     CHECK(ok > 0 && bad > 0, "no test files found");

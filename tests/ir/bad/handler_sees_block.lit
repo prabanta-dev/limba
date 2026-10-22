@@ -1,0 +1,11 @@
+; expect: does not dominate
+; a handler that reads a value of the protected block
+func @f : fn() -> i64 {
+b0:
+  br b1
+b1 handler b2:
+  v0 = iconst i64 1
+  ret v0
+b2(v1: i32, v2: i32, v3: str):
+  ret v0
+}

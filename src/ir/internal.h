@@ -33,6 +33,8 @@ static inline limba_id limba_sig_param(const limba_sig *s, uint32_t i)
 
 /* false if t is not a function type */
 bool limba_type_sig(const limba_module *m, limba_id t, limba_sig *s);
+/* free what limba_handled_note kept (module.c, at the end) */
+void limba_handled_free(limba_module *m);
 /* false if rt is out of range or its text is malformed */
 bool limba_rt_sig(limba_id rt, limba_sig *s);
 /* the signature of a call instruction; false if the callee is invalid */

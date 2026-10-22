@@ -30,3 +30,18 @@ LIMBA_TRAP(INVALID_FREE, 106, "invalid dispose")
 /* an error of reading or writing the standard streams (not the end of
    the input); a write error has no position, as the output is buffered */
 LIMBA_TRAP(IO, 107, "input/output error")
+/* two lengths that must be equal differ: an open array assigned to one
+   of another length (Luxia 1, progetto_ir.md § 11i) */
+LIMBA_TRAP(LENGTH, 108, "length mismatch")
+
+/* the predefined families of exceptions (progetto_ir.md § 11i): not
+   checks, no instruction traps with them; a program may raise them, and
+   its exception table names them. Their members: CONSTRAINT 6, 11,
+   100-105, 108; STORAGE 7, 28 (never caught); PROGRAM 106; INPUT_OUTPUT
+   107. Defined only where LIMBA_FAMILY is */
+#ifdef LIMBA_FAMILY
+LIMBA_FAMILY(CONSTRAINT, 900)
+LIMBA_FAMILY(STORAGE, 901)
+LIMBA_FAMILY(PROGRAM, 902)
+LIMBA_FAMILY(INPUT_OUTPUT, 903)
+#endif

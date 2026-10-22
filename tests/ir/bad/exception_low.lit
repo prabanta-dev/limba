@@ -1,0 +1,3 @@
+; expect: below 1000 only the identities of traps.def
+; an identity below 1000 that Limba does not have
+exception 500 "Mine"

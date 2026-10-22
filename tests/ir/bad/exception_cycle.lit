@@ -1,0 +1,4 @@
+; expect: its families make a cycle
+; two exceptions each the family of the other
+exception 1000 "A" parent 1001
+exception 1001 "B" parent 1000

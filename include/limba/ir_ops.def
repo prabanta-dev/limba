@@ -143,3 +143,11 @@ LIMBA_OP(RELEASE, "release", LIMBA_F_RC,
    stores, never past what may free the block (mem_free, a call) */
 LIMBA_OP(LOADINV, "load.inv", LIMBA_F_LOAD,
          LIMBA_OPF_READS_MEM | LIMBA_OPF_MAY_TRAP)
+
+/* raise an exception (progetto_ir.md § 11i): its identity (i32), its
+   position (i32, an index of the positions, 0 for none) and its message
+   (str, whose reference it gives away). To the handler of the block, or
+   out of the function; raising again is raise with the parameters of the
+   handler */
+LIMBA_OP(RAISE, "raise", LIMBA_F_RAISE,
+         LIMBA_OPF_TERMINATOR | LIMBA_OPF_NO_RESULT | LIMBA_OPF_MAY_TRAP)

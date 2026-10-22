@@ -24,6 +24,8 @@ typedef struct limba_verifier {
     uint32_t *pos;  /* position of each instruction in its block */
     uint8_t *kinds; /* operand kinds of the current instruction */
     uint32_t capkinds;
+    uint8_t *ish; /* is block b a handler (progetto_ir.md § 11i)? */
+    uint32_t capish;
 } vctx;
 
 #define FAIL(...)                                                              \
@@ -375,6 +377,42 @@ static bool check_symbols(vctx *v)
             if (m->messages[j].code == msg->code)
                 FAIL("two messages for code %" PRId64, msg->code);
     }
+    /* the exceptions (progetto_ir.md § 11i): distinct identities, those
+       below 1000 of Limba, a name, a family that exists, no cycle */
+    for (uint32_t i = 0; i < m->nexcs; i++) {
+        const limba_exception *x = &m->excs[i];
+        size_t n = 0;
+        if (x->id < 0 || (x->id < 1000 && !limba_exception_builtin(x->id)))
+            FAIL("exception %" PRId32 ": below 1000 only the identities of "
+                 "traps.def",
+                 x->id);
+        if (x->name >= nstr || (limba_str(m, x->name, &n), n == 0))
+            FAIL("exception %" PRId32 ": no name", x->id);
+        for (uint32_t j = 0; j < i; j++)
+            if (m->excs[j].id == x->id)
+                FAIL("exception %" PRId32 " twice", x->id);
+    }
+    for (uint32_t i = 0; i < m->nexcs; i++) {
+        int32_t at = m->excs[i].parent;
+        for (uint32_t steps = 0; at >= 0; steps++) {
+            if (steps > m->nexcs)
+                FAIL("exception %" PRId32 ": its families make a cycle",
+                     m->excs[i].id);
+            uint32_t j = 0;
+            while (j < m->nexcs && m->excs[j].id != at)
+                j++;
+            if (j == m->nexcs) {
+                if (!limba_exception_builtin(at))
+                    FAIL("exception %" PRId32 ": family %" PRId32
+                         " does not exist",
+                         m->excs[i].id, at);
+                break;
+            }
+            at = m->excs[j].parent;
+        }
+        if (at < -1)
+            FAIL("exception %" PRId32 ": a family below -1", m->excs[i].id);
+    }
     /* the data already given to a global */
     uint8_t *seen = limba_xcalloc((size_t)m->ninits + 1, 1);
     bool gok = check_globals(v, seen);
@@ -492,6 +530,9 @@ static bool target(vctx *v, uint32_t u, uint32_t k, bool allow_args)
         IFAIL(u, "branch to b%" PRIu32 ", which does not exist", b);
     if (b == 0)
         IFAIL(u, "branch to the entry block");
+    if (v->ish[b])
+        IFAIL(u, "branch to b%" PRIu32 ", a handler: reached by errors only",
+              b);
     const limba_block *bl = &f->blocks[b];
     if (n != bl->nparams)
         IFAIL(u, "b%" PRIu32 " takes %" PRIu32 " arguments, given %" PRIu32, b,
@@ -812,6 +853,12 @@ static bool check_inst(vctx *v, uint32_t u)
         break;
     case LIMBA_F_PARAM:
         break;
+    case LIMBA_F_RAISE:
+        if (!vals(v, u, t, 3))
+            return false;
+        if (t[0] != LIMBA_T_I32 || t[1] != LIMBA_T_I32 || t[2] != LIMBA_T_STR)
+            IFAIL(u, "raise: an i32 identity, an i32 position and a str");
+        break;
     case LIMBA_F_RC:
         if (!vals(v, u, t, 2))
             return false;
@@ -915,6 +962,39 @@ static bool check_func(vctx *v)
             FAIL("@%s: parameter %" PRIu32 " of b0 has the wrong type", fname,
                  i);
 
+    /* the handlers (progetto_ir.md § 11i): blocks that exist, reached by
+       errors only (target() refuses a branch to one), with the three
+       values of an occurrence; the entry is not protected */
+    if (v->capish < f->nblocks) {
+        v->capish = f->nblocks;
+        v->ish = limba_xrealloc(v->ish, v->capish, 1);
+    }
+    memset(v->ish, 0, f->nblocks);
+    for (uint32_t b = 0; b < f->nblocks; b++) {
+        uint32_t h = f->blocks[b].handler;
+        if (!h)
+            continue;
+        if (h - 1 >= f->nblocks || h - 1 == 0)
+            FAIL("@%s, b%" PRIu32 ": a handler that does not exist, or the "
+                 "entry",
+                 fname, b);
+        if (b == 0)
+            FAIL("@%s: the entry block is protected", fname);
+        v->ish[h - 1] = 1;
+    }
+    for (uint32_t b = 0; b < f->nblocks; b++) {
+        if (!v->ish[b])
+            continue;
+        const limba_block *hb = &f->blocks[b];
+        static const limba_id want[3] = {LIMBA_T_I32, LIMBA_T_I32, LIMBA_T_STR};
+        bool ok = hb->nparams == 3;
+        for (uint32_t i = 0; ok && i < 3; i++)
+            ok = f->insts[hb->insts[i]].type == want[i];
+        if (!ok)
+            FAIL("@%s, b%" PRIu32 ": a handler takes (i32, i32, str)", fname,
+                 b);
+    }
+
     limba_cfg_free(&v->cfg);
     if (!limba_cfg_build(f, &v->cfg))
         FAIL("@%s: a branch to a block that does not exist", fname);
@@ -938,6 +1018,7 @@ int limba_verify_decls(const limba_module *m, limba_diag *d)
     limba_cfg_free(&v.cfg);
     free(v.pos);
     free(v.kinds);
+    free(v.ish);
     return ok ? 0 : -1;
 }
 
@@ -963,6 +1044,7 @@ void limba_verifier_free(limba_verifier *v)
     limba_cfg_free(&v->cfg);
     free(v->pos);
     free(v->kinds);
+    free(v->ish);
     free(v);
 }
 

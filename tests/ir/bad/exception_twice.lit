@@ -1,0 +1,4 @@
+; expect: exception 1000 twice
+; the same identity twice
+exception 1000 "A"
+exception 1000 "B"

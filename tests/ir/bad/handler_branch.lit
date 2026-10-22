@@ -1,0 +1,10 @@
+; expect: a handler: reached by errors only
+; a normal branch to a handler
+func @f : fn() -> void {
+b0:
+  br b1
+b1 handler b2:
+  br b2(v0, v1, v2)
+b2(v0: i32, v1: i32, v2: str):
+  ret
+}

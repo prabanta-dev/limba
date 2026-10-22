@@ -45,6 +45,7 @@ bool limba_operand_kinds(const limba_func *f, const limba_inst *in,
         return n == 2;
     case LIMBA_F_TERN:
     case LIMBA_F_MEM3:
+    case LIMBA_F_RAISE:
         return n == 3;
     case LIMBA_F_CALL:
     case LIMBA_F_CALL_EXT:
@@ -121,6 +122,81 @@ static uint32_t *xzero(uint32_t n)
     return limba_xcalloc(n + 1, sizeof(uint32_t));
 }
 
+static int pair_cmp(const void *a, const void *b)
+{
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+/* add to c the edges p -> handler(x) for every predecessor p of a
+   protected block x, to a fixed point (a handler may be protected): each
+   round makes the pairs again from the normal edges and those of the
+   round before, sorted and unique; the rounds are the depth of nesting */
+static void error_edges(const limba_func *f, limba_cfg *c)
+{
+    uint32_t n = c->n;
+    bool any = false;
+    for (uint32_t b = 0; b < n && !any; b++)
+        any = f->blocks[b].handler && f->blocks[b].handler - 1 < n;
+    if (!any)
+        return;
+    uint32_t nn = c->sfirst[n]; /* the normal edges */
+    uint64_t *err = NULL;       /* (from << 32 | to), sorted */
+    size_t nerr = 0;
+    for (;;) {
+        size_t cap = nn + nerr + 1, k = 0;
+        uint64_t *cand = limba_xmalloc(cap * sizeof(uint64_t));
+        /* every edge into a protected x, normal or of an error, gives
+           its source an edge to the handler of x */
+        for (uint32_t b = 0; b < n; b++)
+            for (uint32_t i = c->sfirst[b]; i < c->sfirst[b + 1]; i++) {
+                uint32_t x = c->succ[i], h = f->blocks[x].handler;
+                if (h && h - 1 < n)
+                    cand[k++] = (uint64_t)b << 32 | (h - 1);
+            }
+        for (size_t i = 0; i < nerr; i++) {
+            uint32_t x = (uint32_t)err[i], h = f->blocks[x].handler;
+            if (h && h - 1 < n)
+                cand[k++] = (err[i] >> 32) << 32 | (h - 1);
+        }
+        for (size_t i = 0; i < nerr; i++)
+            cand[k++] = err[i];
+        qsort(cand, k, sizeof(uint64_t), pair_cmp);
+        size_t u = 0;
+        for (size_t i = 0; i < k; i++)
+            if (!u || cand[i] != cand[u - 1])
+                cand[u++] = cand[i];
+        bool same = u == nerr;
+        free(err);
+        err = cand;
+        nerr = u;
+        if (same)
+            break;
+    }
+    /* the rows again: each block's own edges, then its edges of errors */
+    uint32_t *sfirst = xzero(n);
+    for (uint32_t b = 0; b < n; b++)
+        sfirst[b + 1] = c->sfirst[b + 1] - c->sfirst[b];
+    for (size_t i = 0; i < nerr; i++)
+        sfirst[(err[i] >> 32) + 1]++;
+    for (uint32_t b = 0; b < n; b++)
+        sfirst[b + 1] += sfirst[b];
+    uint32_t *succ = limba_xmalloc((sfirst[n] + 1) * sizeof(uint32_t));
+    uint32_t *fill = limba_xmalloc((n + 1) * sizeof(uint32_t));
+    memcpy(fill, sfirst, (n + 1) * sizeof(uint32_t));
+    for (uint32_t b = 0; b < n; b++)
+        for (uint32_t i = c->sfirst[b]; i < c->sfirst[b + 1]; i++)
+            succ[fill[b]++] = c->succ[i];
+    for (size_t i = 0; i < nerr; i++)
+        succ[fill[err[i] >> 32]++] = (uint32_t)err[i];
+    free(fill);
+    free(err);
+    free(c->sfirst);
+    free(c->succ);
+    c->sfirst = sfirst;
+    c->succ = succ;
+}
+
 bool limba_cfg_build(const limba_func *f, limba_cfg *c)
 {
     uint32_t n = f->nblocks;
@@ -146,6 +222,10 @@ bool limba_cfg_build(const limba_func *f, limba_cfg *c)
                 c->succ[i] = 0; /* keep the graph usable */
             }
     }
+    /* the edges of errors (progetto_ir.md § 11i): to the handler of a
+       protected block from each of its predecessors, so that the handler
+       sees nothing the block defines; again for a protected handler */
+    error_edges(f, c);
     /* predecessors: the same edges turned round */
     for (uint32_t i = 0; i < c->sfirst[n]; i++)
         c->pfirst[c->succ[i] + 1]++;

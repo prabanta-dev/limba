@@ -33,6 +33,8 @@ typedef struct {
     uint64_t *vnum; /* written number of each value id */
     uint32_t capvnum;
     uint64_t *bnum; /* written number of each block id */
+    uint64_t *hnum; /* written number of each block's handler + 1, 0 none */
+    uint32_t caphnum;
     uint32_t capbnum;
     fixup *vfix, *bfix;
     uint32_t nvfix, capvfix, nbfix, capbfix;

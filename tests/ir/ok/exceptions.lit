@@ -1,0 +1,39 @@
+; exceptions (progetto_ir.md § 11i): the table of the language, a protected
+; block with its handler, a handler that is protected in turn, raise
+; again with the values of the handler, a raise of the program, par_for
+language "luxia"
+exception 900 "ConstraintError"
+exception 101 "RangeError" parent 900
+exception 1000 "ParseError"
+exception 1001 "BadDigit" parent 1000
+
+func @digit : fn(i64) -> i64 {
+b0(v0: i64):
+  v1 = iconst i64 10
+  v2 = icmp.ult i1 v0, v1
+  br b1(v0)
+b1(v3: i64) handler b2:
+  check v2, 101
+  ret v3
+b2(v4: i32, v5: i32, v6: str) handler b3:
+  raise v4, v5, v6
+b3(v7: i32, v8: i32, v9: str):
+  v10 = iconst i32 1001
+  v11 = iconst i32 0
+  v12 = sconst str "not a digit"
+  raise v10, v11, v12
+}
+
+func @body : fn(ptr, i64) -> void {
+b0(v0: ptr, v1: i64):
+  ret
+}
+
+func @all : fn(ptr) -> void {
+b0(v0: ptr):
+  v1 = faddr ptr @body
+  v2 = iconst i64 1
+  v3 = iconst i64 10
+  call.rt void par_for(v1, v0, v2, v3)
+  ret
+}

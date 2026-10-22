@@ -221,6 +221,19 @@ static bool module(P *p)
             if (!lp_integer(p, &code) || !lp_string(p, &text))
                 return false;
             limba_message_add(p->m, code, text);
+        } else if (lp_accept_word(p, "exception")) {
+            /* exception 1000 "ParseError" parent 900 (progetto_ir.md
+               § 11i) */
+            int64_t id, parent = -1;
+            limba_id name;
+            if (!lp_integer(p, &id) || !lp_string(p, &name))
+                return false;
+            if (lp_accept_word(p, "parent") && !lp_integer(p, &parent))
+                return false;
+            if (id < INT32_MIN || id > INT32_MAX || parent < INT32_MIN ||
+                parent > INT32_MAX)
+                return lp_fail(p, "%s", "an identity past 32 bits");
+            limba_exception_add(p->m, (int32_t)id, name, (int32_t)parent);
         } else if (lp_accept_word(p, "type")) {
             if (!structure(p))
                 return false;
@@ -276,6 +289,7 @@ limba_module *limba_parse(const char *text, size_t len, limba_diag *d)
     free(p.buf);
     free(p.vnum);
     free(p.bnum);
+    free(p.hnum);
     free(p.vfix);
     free(p.bfix);
     free(p.ops);
@@ -286,5 +300,6 @@ limba_module *limba_parse(const char *text, size_t len, limba_diag *d)
         limba_module_free(p.m);
         return NULL;
     }
+    limba_handled_compute(p.m); /* the set "under a handler", § 11i */
     return p.m;
 }

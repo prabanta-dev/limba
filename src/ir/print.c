@@ -374,6 +374,8 @@ static void print_func(FILE *out, const limba_module *m, const limba_func *f)
             }
             fputc(')', out);
         }
+        if (bl->handler)
+            fprintf(out, " handler b%" PRIu32, bl->handler - 1);
         fputs(":\n", out);
         for (uint32_t k = bl->nparams; k < bl->ninsts; k++)
             print_inst(&p, bl->insts[k]);
@@ -412,6 +414,17 @@ void limba_print(const limba_module *m, FILE *out)
         const char *s = limba_str(m, m->messages[i].text, &n);
         fprintf(out, "message %" PRId64 " ", m->messages[i].code);
         print_bytes(out, s, n);
+        fputc('\n', out);
+    }
+    for (uint32_t i = 0; i < m->nexcs; i++) {
+        const limba_exception *x = &m->excs[i];
+        size_t n = 0;
+        const char *s =
+            x->name < limba_str_count(m) ? limba_str(m, x->name, &n) : "";
+        fprintf(out, "exception %" PRId32 " ", x->id);
+        print_bytes(out, s, n);
+        if (x->parent >= 0)
+            fprintf(out, " parent %" PRId32, x->parent);
         fputc('\n', out);
     }
 

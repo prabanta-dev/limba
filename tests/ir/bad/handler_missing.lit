@@ -1,0 +1,8 @@
+; expect: its handler is never defined
+; a handler block that does not exist
+func @f : fn() -> void {
+b0:
+  br b1
+b1 handler b9:
+  ret
+}

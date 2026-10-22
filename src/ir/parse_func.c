@@ -41,6 +41,19 @@ static void grow_nums(uint64_t **arr, uint32_t *cap, uint32_t need)
     *cap = c;
 }
 
+/* room for the handler of block ids below need, new ones none */
+static void grow_handlers(P *p, uint32_t need)
+{
+    if (need <= p->caphnum)
+        return;
+    uint32_t c = p->caphnum ? p->caphnum : 64;
+    while (c < need)
+        c *= 2;
+    p->hnum = limba_xrealloc(p->hnum, c, sizeof(*p->hnum));
+    memset(p->hnum + p->caphnum, 0, (c - p->caphnum) * sizeof(*p->hnum));
+    p->caphnum = c;
+}
+
 /* the hash of blocks uses bnum; same trick */
 static bool bnum_same(const void *ctx, uint32_t id)
 {
@@ -233,6 +246,7 @@ static bool statement(P *p)
         break;
     case LIMBA_F_TERN:
     case LIMBA_F_MEM3:
+    case LIMBA_F_RAISE:
         if (!values(p, 3))
             return false;
         break;
@@ -425,6 +439,15 @@ static bool label(P *p)
                 return false;
         }
     }
+    if (lp_accept_word(p, "handler")) {
+        /* bN handler bM: the block that catches what bN raises */
+        if (lp_peek(p)->kind != TK_BLOCK)
+            return lp_fail(p, "%s expected", "a handler block");
+        uint64_t h = lp_peek(p)->num;
+        p->i++;
+        grow_handlers(p, b + 1);
+        p->hnum[b] = h + 1;
+    }
     return lp_expect(p, TK_COLON, "':' after the block");
 }
 
@@ -450,6 +473,18 @@ static bool resolve(P *p)
             return false;
         }
         f->operands[p->bfix[k].index] = id;
+    }
+    for (uint32_t b = 0; b < f->nblocks && b < p->caphnum; b++) {
+        if (!p->hnum[b])
+            continue;
+        uint32_t id = find_block(p, p->hnum[b] - 1);
+        if (id == UINT32_MAX) {
+            limba_diag_set(p->d, 0,
+                           "b%" PRIu64 ": its handler is never defined",
+                           p->bnum[b]);
+            return false;
+        }
+        limba_block_set_handler(f, b, id);
     }
     return true;
 }
@@ -477,6 +512,8 @@ bool lp_func(P *p)
     p->nvfix = p->nbfix = 0;
     grow_nums(&p->vnum, &p->capvnum, 1);
     grow_nums(&p->bnum, &p->capbnum, 1);
+    if (p->caphnum)
+        memset(p->hnum, 0, p->caphnum * sizeof(*p->hnum));
 
     while (lp_accept_word(p, "slot")) {
         uint32_t size, align;

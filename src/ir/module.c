@@ -158,6 +158,9 @@ void limba_module_free(limba_module *m)
         free(m->inits[i].relocs);
     }
     free(m->inits);
+    free(m->excs);
+    free(m->handled);
+    limba_handled_free(m);
     free(m->externs);
     free(m->members);
     free(m->types);
@@ -489,6 +492,53 @@ limba_id limba_block_add(limba_func *f)
     limba_id id = f->nblocks++;
     memset(&f->blocks[id], 0, sizeof(f->blocks[id]));
     return id;
+}
+
+limba_id limba_block_handler(const limba_func *f, limba_id b)
+{
+    return b < f->nblocks && f->blocks[b].handler ? f->blocks[b].handler - 1
+                                                  : LIMBA_NONE;
+}
+
+void limba_block_set_handler(limba_func *f, limba_id b, limba_id h)
+{
+    f->blocks[b].handler = h == LIMBA_NONE ? 0 : h + 1;
+}
+
+void limba_exception_add(limba_module *m, int32_t id, limba_id name,
+                         int32_t parent)
+{
+    LIMBA_GROW(m->excs, m->nexcs, m->capexcs);
+    m->excs[m->nexcs++] = (limba_exception){id, name, parent};
+}
+
+const char *limba_exception_name(const limba_module *m, int64_t id, size_t *len)
+{
+    for (uint32_t i = 0; i < m->nexcs; i++)
+        if (m->excs[i].id == id && m->excs[i].name < limba_str_count(m))
+            return limba_str(m, m->excs[i].name, len);
+    return NULL;
+}
+
+bool limba_exception_builtin(int64_t id)
+{
+    if (limba_trap_text(id))
+        return true;
+    switch (id) {
+#define LIMBA_TRAP(name, code, text)
+#define LIMBA_FAMILY(name, code) case code:
+#include "limba/traps.def"
+#undef LIMBA_FAMILY
+#undef LIMBA_TRAP
+        return true;
+    }
+    return false;
+}
+
+bool limba_exception_catchable(int64_t id)
+{
+    return id != LIMBA_TRAP_NOMEM && id != LIMBA_TRAP_STACK &&
+           id != LIMBA_FAMILY_STORAGE;
 }
 
 void limba_message_add(limba_module *m, int64_t code, limba_id text)

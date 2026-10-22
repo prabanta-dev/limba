@@ -4,7 +4,7 @@
  * binary.c - the binary form (.lir): what Limba writes and Meri reads.
  *
  *   "LIR\0"  version  runtime-fingerprint  ops-fingerprint  memory  name
- *   strings  language  messages  target  types  globals  externs
+ *   strings  language  messages  exceptions  target  types  globals  externs
  *   functions
  *
  * A global is name, type, flags, init, value; a LIMBA_INIT_DATA one has 0
@@ -69,6 +69,7 @@ static void w_func(limba_wbuf *w, const limba_func *f)
     limba_w_uleb(w, f->nblocks);
     for (uint32_t b = 0; b < f->nblocks; b++) {
         const limba_block *bl = &f->blocks[b];
+        limba_w_uleb(w, bl->handler); /* + 1, 0 none */
         limba_w_uleb(w, bl->nparams);
         for (uint32_t k = 0; k < bl->nparams; k++)
             limba_w_uleb(w, f->insts[bl->insts[k]].type);
@@ -185,6 +186,13 @@ int limba_writer_end(limba_writer *wr, const limba_module *m, uint8_t **buf,
     for (uint32_t i = 0; i < m->nmessages; i++) {
         limba_w_sleb(&w, m->messages[i].code);
         limba_w_uleb(&w, m->messages[i].text);
+    }
+    /* the exceptions of the language (progetto_ir.md § 11i) */
+    limba_w_uleb(&w, m->nexcs);
+    for (uint32_t i = 0; i < m->nexcs; i++) {
+        limba_w_sleb(&w, m->excs[i].id);
+        limba_w_uleb(&w, m->excs[i].name);
+        limba_w_sleb(&w, m->excs[i].parent);
     }
     limba_w_uleb(&w, m->target == LIMBA_NONE ? 0 : (uint64_t)m->target + 1);
 
@@ -348,6 +356,7 @@ static bool r_func(limba_rbuf *r, limba_module *m, limba_diag *d)
     for (uint32_t b = 0; b < nblocks && !r->bad; b++)
         limba_block_add(f);
     for (uint32_t b = 0; b < nblocks && !r->bad; b++) {
+        f->blocks[b].handler = r_id(r); /* checked by limba_verify */
         uint32_t np = limba_r_count(r, 1);
         for (uint32_t k = 0; k < np && !r->bad; k++)
             limba_param_add(f, b, r_id(r));
@@ -422,6 +431,17 @@ limba_module *limba_read(const uint8_t *buf, size_t len, limba_diag *d)
     for (uint32_t i = 0; i < nmsg && !r.bad; i++) {
         int64_t code = limba_r_sleb(&r);
         limba_message_add(m, code, r_id(&r));
+    }
+    uint32_t nexc = limba_r_count(&r, 3);
+    for (uint32_t i = 0; i < nexc && !r.bad; i++) {
+        int64_t id = limba_r_sleb(&r);
+        limba_id name = r_id(&r);
+        int64_t parent = limba_r_sleb(&r);
+        if (id < INT32_MIN || id > INT32_MAX || parent < INT32_MIN ||
+            parent > INT32_MAX)
+            r.bad = true;
+        else
+            limba_exception_add(m, (int32_t)id, name, (int32_t)parent);
     }
     m->target = r_opt(&r);
 
@@ -559,6 +579,7 @@ limba_module *limba_read(const uint8_t *buf, size_t len, limba_diag *d)
                              : "bytes after the end of the module");
         goto fail;
     }
+    limba_handled_compute(m); /* the set "under a handler", § 11i */
     return m;
 fail:
     limba_module_free(m);

@@ -1,0 +1,8 @@
+; expect: the entry block is protected
+; the entry block with a handler
+func @f : fn() -> void {
+b0 handler b1:
+  ret
+b1(v0: i32, v1: i32, v2: str):
+  ret
+}
