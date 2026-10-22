@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Luxia leaves for a repository of its own (`../Luxia`): its front end,
+  specification, diagnostics, API (`limba_luxia.h`), random programs
+  (`lx_gen`), benchmarks and their tests. Limba keeps what every language
+  shares: the IR, the optimiser, the reference interpreter, `lir_gen`, the
+  SSA construction (now `src/ir/ssa.c`) and exact numbers (now
+  `src/common/bigint.c`). `limba` reads and writes the IR only (`.lit`,
+  `.lir`); a Luxia source is compiled by `luxia --emit=lir`. `test_front`
+  becomes `test_common` (integers, rationals, the text of reals); its
+  types and scopes went with Luxia.
+
 - The random programs compare records and arrays whole, in conditions
   and in lines printed for that: a variable with itself, with a copy of
   it changed in one place or not, with an aggregate, another variable or

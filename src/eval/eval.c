@@ -23,7 +23,7 @@
 #include "limba/val.h"
 #include "common/leb128.h"
 #include "common/xalloc.h"
-#include "front/bigint.h"
+#include "common/bigint.h"
 #include "ir/internal.h"
 
 #include <errno.h>

@@ -2,12 +2,11 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * main.c - the limba program. It reads and writes the IR: the text form
- * (.lit) and the binary form (.lir), verifying it on the way; and it reads
- * Luxia sources (.luxia), for now as far as their tokens.
+ * (.lit) and the binary form (.lir), verifying and optimising it on the
+ * way. The languages make the IR with their own programs (luxia).
  */
 #include "limba/ir.h"
 #include "limba/opt.h"
-#include "luxia.h"
 
 #include <errno.h>
 #ifdef __GLIBC__
@@ -19,42 +18,22 @@
 
 static void usage(FILE *out)
 {
-    fputs("Usage: limba [options] <input.lit | input.lir | input.luxia>\n"
+    fputs("Usage: limba [options] <input.lit | input.lir>\n"
           "\n"
           "Reads the IR in its text (.lit) or binary (.lir) form, verifies\n"
-          "it and writes it in the other form. Reads a Luxia source\n"
-          "(.luxia), reports its errors and writes its IR.\n"
+          "it and writes it in the other form.\n"
           "\n"
           "Options\n"
           "  --emit=lir|lit  the form to write; by default the other one\n"
-          "  --emit=tokens   the tokens of a Luxia source, one per line\n"
-          "  --emit=ast      the syntax tree of a Luxia source\n"
           "  -o FILE         where to write; by default a .lir goes next to\n"
           "                  the input, a .lit to the standard output\n"
           "  --check         verify only, write nothing\n"
           "  -O0, -O1        optimise: no (default) or yes\n"
           "  --stats         what each pass changed, on standard error\n"
-          "  --verify        verify the IR a Luxia source gives, and after\n"
-          "                  every pass (always on in the builds that are\n"
-          "                  not release; --check verifies anyway)\n"
+          "  --verify        verify after every pass (always on in the\n"
+          "                  builds that are not release)\n"
           "  --verify-each   the same\n"
           "  --skip=a,b      passes not to run (also LIMBA_OPTSKIP)\n"
-          "  --suppress=a,b  checks off in the whole Luxia source\n"
-          "                  (index_check, range_check, overflow_check,\n"
-          "                  division_check, conversion_check,\n"
-          "                  shift_check, nil_check, dangling_check,\n"
-          "                  all_checks); where\n"
-          "                  one would fail, the behaviour is undefined\n"
-          "  --target=P      the platform whose C the C types by name\n"
-          "                  follow: x86_64-linux, aarch64-linux,\n"
-          "                  x86_64-windows (by default this one)\n"
-          "  -I DIR          where the units of the program are looked for\n"
-          "                  after the directory of the program (repeat\n"
-          "                  it for more, in order)\n"
-          "  --stdlib=DIR    the directory of the units of the standard\n"
-          "                  library\n"
-          "  --restrict=no_external  no boundary with C: an external\n"
-          "                  routine or a C type is an error\n"
           "  -h, --help      this text\n",
           out);
 }
@@ -99,8 +78,7 @@ static char *slurp(const char *path, size_t *len)
     return buf;
 }
 
-/* the command, with room for the directories of -I */
-static int run(int argc, char **argv, const char **dirs)
+static int run(int argc, char **argv)
 {
 #ifdef __GLIBC__
     /* a compiler lives briefly and grows: the heap grows by 64 MiB at a
@@ -110,9 +88,7 @@ static int run(int argc, char **argv, const char **dirs)
     mallopt(M_MMAP_THRESHOLD, 1 << 30);
     mallopt(M_TRIM_THRESHOLD, 1 << 30);
 #endif
-    const char *in = NULL, *outpath = NULL, *emit = NULL, *suppress = NULL;
-    const char *target = NULL, *restrict_ = NULL, *stdlib = NULL;
-    int ndirs = 0;
+    const char *in = NULL, *outpath = NULL, *emit = NULL;
     bool check = false;
     int level = 0;
     limba_opt_options opt = {false, NULL, NULL, NULL};
@@ -131,24 +107,10 @@ static int run(int argc, char **argv, const char **dirs)
             opt.verify_each = true;
         } else if (!strncmp(a, "--skip=", 7)) {
             opt.skip = a + 7;
-        } else if (!strncmp(a, "--suppress=", 11)) {
-            suppress = a + 11;
-        } else if (!strncmp(a, "--target=", 9)) {
-            target = a + 9;
-        } else if (!strncmp(a, "--restrict=", 11)) {
-            restrict_ = a + 11;
-        } else if (!strcmp(a, "-I") && i + 1 < argc) {
-            dirs[ndirs++] = argv[++i];
-        } else if (!strncmp(a, "-I", 2) && a[2]) {
-            dirs[ndirs++] = a + 2;
-        } else if (!strncmp(a, "--stdlib=", 9)) {
-            stdlib = a + 9;
         } else if (!strncmp(a, "--emit=", 7)) {
             emit = a + 7;
-            if (strcmp(emit, "lir") && strcmp(emit, "lit") &&
-                strcmp(emit, "tokens") && strcmp(emit, "ast")) {
-                fprintf(stderr,
-                        "limba: --emit takes lir, lit, tokens or ast\n");
+            if (strcmp(emit, "lir") && strcmp(emit, "lit")) {
+                fprintf(stderr, "limba: --emit takes lir or lit\n");
                 return 2;
             }
         } else if (!strcmp(a, "-o") && i + 1 < argc) {
@@ -167,17 +129,9 @@ static int run(int argc, char **argv, const char **dirs)
         usage(stderr);
         return 2;
     }
-    if (ends_with(in, ".luxia"))
-        return limba_luxia_main(in, emit, outpath, check, level, &opt, suppress,
-                                target, restrict_, dirs, stdlib);
     bool binary_in = ends_with(in, ".lir");
     if (!binary_in && !ends_with(in, ".lit")) {
-        fprintf(stderr, "limba: %s: a .lit, .lir or .luxia file is expected\n",
-                in);
-        return 2;
-    }
-    if (emit && (!strcmp(emit, "tokens") || !strcmp(emit, "ast"))) {
-        fprintf(stderr, "limba: --emit=%s is for a .luxia source\n", emit);
+        fprintf(stderr, "limba: %s: a .lit or .lir file is expected\n", in);
         return 2;
     }
     if (!emit)
@@ -249,13 +203,5 @@ static int run(int argc, char **argv, const char **dirs)
 
 int main(int argc, char **argv)
 {
-    /* the directories of -I, ended by NULL */
-    const char **dirs = calloc((size_t)argc + 1, sizeof(*dirs));
-    if (!dirs) {
-        fprintf(stderr, "limba: out of memory\n");
-        return 1;
-    }
-    int status = run(argc, argv, dirs);
-    free(dirs);
-    return status;
+    return run(argc, argv);
 }
