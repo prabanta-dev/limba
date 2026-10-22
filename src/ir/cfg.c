@@ -144,7 +144,9 @@ static void error_edges(const limba_func *f, limba_cfg *c)
     uint64_t *err = NULL;       /* (from << 32 | to), sorted */
     size_t nerr = 0;
     for (;;) {
-        size_t cap = nn + nerr + 1, k = 0;
+        /* the normal edges, the errors turned to the handlers' handlers,
+           the errors kept */
+        size_t cap = nn + 2 * nerr + 1, k = 0;
         uint64_t *cand = limba_xmalloc(cap * sizeof(uint64_t));
         /* every edge into a protected x, normal or of an error, gives
            its source an edge to the handler of x */

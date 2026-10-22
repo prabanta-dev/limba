@@ -17,6 +17,13 @@
   that may fail to another handler, inlining gives the inlined blocks the
   handler of the call. The set "under a handler" is computed for every
   module.
+- The random programs of `lir_gen` have exceptions: protected regions,
+  nested also in handlers and loops, conditional `raise`, handlers that
+  catch all, catch one identity, run a `finally` that raises again or
+  raise another, short helpers that raise, indirect calls and `par_for`.
+  The OPTDIFF net compares also the position and the message of an
+  exception no one caught. It found an overflow of a buffer in the edges
+  of errors of nested handlers, fixed.
 
 - Reals are written and read without any conversion of the C library:
   where 128 bits do not reach, the integers and rationals of `bigint.c`

@@ -10,6 +10,13 @@
  * small bound; a function calls only the functions made before it. The
  * weights favour what the passes look for: constants, x - x, x * 1,
  * repeated expressions, branches on constants, values nobody uses.
+ *
+ * Exceptions (progetto_ir.md § 11i): a try is a protected region, its
+ * blocks all naming the handler, which catches everything, catches one
+ * identity and raises the others again, runs a finally that raises again,
+ * or raises another; tries nest, also inside handlers and loops. A raise
+ * is conditional, now and then of an identity no handler may catch; a
+ * helper may be the body of a par_for, writing to the slot of its caller.
  */
 #include "gen.h"
 
@@ -35,8 +42,19 @@ typedef struct {
     uint32_t nvals, capvals;
     int depth;
     int budget;
-    uint32_t slot; /* the value holding the address of slot $0 */
-    int calls;     /* calls made by the current function */
+    uint32_t slot;    /* the value holding the address of slot $0 */
+    int calls;        /* calls made by the current function */
+    limba_id handler; /* of the blocks made now, LIMBA_NONE for none */
+    int trys;         /* tries open */
+    limba_id body;    /* the function par_for runs, LIMBA_NONE for none */
+    /* a try whose region begins with a loop: its handler, the region
+       opened by loop() once the values the loop starts with are made */
+    limba_id open_try;
+    /* a try whose region ends with the way into a loop: the handler the
+       loop has, LIMBA_NONE for none */
+    bool close_try;
+    limba_id close_to;
+    bool main; /* the current function is @main */
 } G;
 
 static uint64_t rnd(G *g)
@@ -66,6 +84,15 @@ static uint32_t emit(G *g, unsigned op, limba_id t, unsigned cc, int64_t imm,
                      int64_t imm2, const uint32_t *ops, uint32_t n)
 {
     return limba_inst_add(F(g), g->cur, op, t, cc, imm, imm2, ops, n);
+}
+
+/* a new block, in the region open now */
+static limba_id block(G *g)
+{
+    limba_id b = limba_block_add(F(g));
+    if (g->handler != LIMBA_NONE)
+        limba_block_set_handler(F(g), b, g->handler);
+    return b;
 }
 
 static void keep(G *g, limba_id t, uint32_t v)
@@ -305,10 +332,9 @@ static void br(G *g, limba_id b, const uint32_t *args, uint32_t n)
 
 static void diamond(G *g)
 {
-    limba_func *f = F(g);
     uint32_t c = condition(g);
-    limba_id bt = limba_block_add(f), be = limba_block_add(f);
-    limba_id bm = limba_block_add(f);
+    limba_id bt = block(g), be = block(g);
+    limba_id bm = block(g);
     uint32_t nm = 1 + below(g, 2);
     limba_id types[2];
     uint32_t params[2];
@@ -338,7 +364,6 @@ static void diamond(G *g)
 
 static void loop(G *g)
 {
-    limba_func *f = F(g);
     uint32_t trip;
     if (chance(g, 60)) {
         trip =
@@ -356,20 +381,59 @@ static void loop(G *g)
         types[i] = rand_type(g);
         init[1 + i] = pick(g, types[i]);
     }
-    limba_id bh = limba_block_add(f), bb = limba_block_add(f);
-    limba_id bx = limba_block_add(f);
+    /* now and then the way in tests a condition first (a zero-trip guard),
+       and in a region the header checks one from outside, which LICM may
+       move before the loop only where the same handler catches it */
+    uint32_t guard = chance(g, 30) ? condition(g) : UINT32_MAX;
+    uint32_t inv = UINT32_MAX;
+    if (g->close_try ||
+        ((g->handler != LIMBA_NONE || g->open_try != LIMBA_NONE) &&
+         chance(g, 40))) { /* from memory: no pass knows it */
+        uint32_t k =
+            emit(g, LIMBA_OP_ICONST, LIMBA_T_I64, 0, below(g, 8), 0, NULL, 0);
+        uint32_t o[2] = {g->slot, k};
+        uint32_t a = emit(g, LIMBA_OP_ADDR, LIMBA_T_PTR, 0, 8, 0, o, 2);
+        uint32_t x = emit(g, LIMBA_OP_LOAD, LIMBA_T_I64, 0, 0, 0, &a, 1);
+        inv = cmp(g, LIMBA_T_I64, x, pick(g, LIMBA_T_I64));
+    }
+    if (g->open_try != LIMBA_NONE) { /* the try begins here */
+        g->handler = g->open_try;
+        g->open_try = LIMBA_NONE;
+        limba_id bp = block(g);
+        br(g, bp, NULL, 0);
+        g->cur = bp;
+    }
+    if (g->close_try) { /* the try ends here: the loop is outside it */
+        g->handler = g->close_to;
+        g->close_try = false;
+    }
+    limba_id bh = block(g), bb = block(g);
+    limba_id bx = block(g);
     uint32_t hp[3];
     hp[0] = limba_param_add(F(g), bh, LIMBA_T_I64);
     for (uint32_t i = 0; i < nacc; i++)
         hp[1 + i] = limba_param_add(F(g), bh, types[i]);
-    br(g, bh, init, 1 + nacc);
+    if (guard != UINT32_MAX) {
+        uint32_t ops[2 + 3 + 3] = {guard, bh, 1 + nacc};
+        for (uint32_t i = 0; i < 1 + nacc; i++)
+            ops[3 + i] = init[i];
+        ops[3 + 1 + nacc] = bx;
+        ops[4 + 1 + nacc] = 0;
+        emit(g, LIMBA_OP_CBR, LIMBA_T_VOID, 0, 0, 0, ops, 5 + 1 + nacc);
+    } else {
+        br(g, bh, init, 1 + nacc);
+    }
 
     g->cur = bh;
+    if (inv != UINT32_MAX)
+        emit(g, LIMBA_OP_CHECK, LIMBA_T_VOID, 0, chance(g, 50) ? 100 : 9, 0,
+             &inv, 1);
     uint32_t c[2] = {hp[0], trip};
     uint32_t go = emit(g, LIMBA_OP_ICMP, LIMBA_T_I1, LIMBA_CC_SLT, 0, 0, c, 2);
     uint32_t ops[5] = {go, bb, 0, bx, 0};
     emit(g, LIMBA_OP_CBR, LIMBA_T_VOID, 0, 0, 0, ops, 5);
 
+    uint32_t before = g->nvals;
     for (uint32_t i = 0; i < 1 + nacc; i++)
         keep(g, i ? types[i - 1] : LIMBA_T_I64, hp[i]);
     uint32_t outer = g->nvals;
@@ -383,21 +447,22 @@ static void loop(G *g)
         next[1 + i] = pick(g, types[i]);
     br(g, bh, next, 1 + nacc);
     g->depth--;
-    g->nvals = outer; /* the header's parameters dominate the exit */
+    /* the header's parameters dominate the exit, unless the guard
+       jumps there too */
+    g->nvals = guard != UINT32_MAX ? before : outer;
     g->cur = bx;
 }
 
 static void switch_stmt(G *g)
 {
-    limba_func *f = F(g);
     uint32_t three = emit(g, LIMBA_OP_ICONST, LIMBA_T_I64, 0, 3, 0, NULL, 0);
     uint32_t sel =
         op2(g, LIMBA_OP_AND, LIMBA_T_I64, pick(g, LIMBA_T_I64), three);
     limba_id t = rand_type(g);
-    limba_id cases[3], bd = limba_block_add(f);
+    limba_id cases[3], bd = block(g);
     for (int k = 0; k < 3; k++)
-        cases[k] = limba_block_add(F(g));
-    limba_id bm = limba_block_add(F(g));
+        cases[k] = block(g);
+    limba_id bm = block(g);
     uint32_t param = limba_param_add(F(g), bm, t);
     /* values 0, 1 and 5: 2 and 3 go to the default, 5 never matches */
     static const int64_t values[3] = {0, 1, 5};
@@ -429,15 +494,217 @@ static void call_stmt(G *g)
 {
     if (g->fid == 0 || g->depth > 0 || g->calls >= 3)
         return;
-    g->calls++;
     limba_id callee = below(g, g->fid);
+    if (callee == g->body)
+        return;
+    g->calls++;
+    limba_id type = g->m->funcs[callee].type;
     limba_sig s;
-    limba_type_sig(g->m, g->m->funcs[callee].type, &s);
-    uint32_t args[4];
+    limba_type_sig(g->m, type, &s);
+    uint32_t args[1 + 4], v;
     for (uint32_t i = 0; i < s.n; i++)
-        args[i] = pick(g, limba_sig_param(&s, i));
-    uint32_t v = emit(g, LIMBA_OP_CALL, s.ret, 0, callee, 0, args, s.n);
+        args[1 + i] = pick(g, limba_sig_param(&s, i));
+    if (chance(g, 25)) { /* through its address */
+        args[0] = emit(g, LIMBA_OP_FADDR, LIMBA_T_PTR, 0, callee, 0, NULL, 0);
+        v = emit(g, LIMBA_OP_CALLIND, s.ret, 0, type, 0, args, 1 + s.n);
+    } else {
+        v = emit(g, LIMBA_OP_CALL, s.ret, 0, callee, 0, args + 1, s.n);
+    }
     keep(g, s.ret, v);
+}
+
+/* ---- exceptions ---- */
+
+/* the identities raised: the table's (below), traps, a family, one the
+   table does not name; now and then one no handler may catch */
+static int32_t identity(G *g)
+{
+    static const int32_t pool[] = {1000, 1001, 1002, 1003, 1003, 1004,
+                                   100,  6,    108,  900,  902};
+    static const int32_t fatal[] = {7, 28, 901};
+    if (chance(g, 3))
+        return fatal[below(g, 3)];
+    return pool[below(g, sizeof(pool) / sizeof(pool[0]))];
+}
+
+/* raise an occurrence: a new one, or now and then the identity made at
+   run time from a value in scope */
+static void raise_new(G *g)
+{
+    uint32_t o[3];
+    if (chance(g, 20)) {
+        uint32_t three =
+            emit(g, LIMBA_OP_ICONST, LIMBA_T_I32, 0, 3, 0, NULL, 0);
+        uint32_t base =
+            emit(g, LIMBA_OP_ICONST, LIMBA_T_I32, 0, 1000, 0, NULL, 0);
+        uint32_t k =
+            op2(g, LIMBA_OP_AND, LIMBA_T_I32, pick(g, LIMBA_T_I32), three);
+        o[0] = op2(g, LIMBA_OP_ADD, LIMBA_T_I32, k, base);
+    } else {
+        o[0] =
+            emit(g, LIMBA_OP_ICONST, LIMBA_T_I32, 0, identity(g), 0, NULL, 0);
+    }
+    /* positions 1 and 2 are in the module, 0 is none */
+    o[1] = emit(g, LIMBA_OP_ICONST, LIMBA_T_I32, 0, below(g, 3), 0, NULL, 0);
+    static const char *const words[] = {"", "bad digit", "deep", "x"};
+    const char *w = words[below(g, 4)];
+    o[2] = emit(g, LIMBA_OP_SCONST, LIMBA_T_STR, 0,
+                limba_str_intern(g->m, w, strlen(w)), 0, NULL, 0);
+    emit(g, LIMBA_OP_RAISE, LIMBA_T_VOID, 0, 0, 0, o, 3);
+}
+
+/* if a condition holds, raise */
+static void raise_stmt(G *g)
+{
+    uint32_t c = condition(g);
+    limba_id br_ = block(g), bc = block(g);
+    uint32_t ops[5] = {c, br_, 0, bc, 0};
+    emit(g, LIMBA_OP_CBR, LIMBA_T_VOID, 0, 0, 0, ops, 5);
+    uint32_t mark = g->nvals;
+    g->cur = br_;
+    raise_new(g);
+    g->nvals = mark; /* what the raise made dominates nothing */
+    g->cur = bc;
+}
+
+static void print_i32(G *g, uint32_t v)
+{
+    v = emit(g, LIMBA_OP_SEXT, LIMBA_T_I64, 0, 0, 0, &v, 1);
+    emit(g, LIMBA_OP_CALLRT, LIMBA_T_VOID, 0, LIMBA_RT_PRINT_I64, 0, &v, 1);
+    emit(g, LIMBA_OP_CALLRT, LIMBA_T_VOID, 0, LIMBA_RT_PRINT_NL, 0, NULL, 0);
+}
+
+static void print_s(G *g, uint32_t s)
+{
+    emit(g, LIMBA_OP_CALLRT, LIMBA_T_VOID, 0, LIMBA_RT_PRINT_STR, 0, &s, 1);
+    emit(g, LIMBA_OP_CALLRT, LIMBA_T_VOID, 0, LIMBA_RT_PRINT_NL, 0, NULL, 0);
+}
+
+/* try: the region, then its handler, both flowing to a join that takes
+   values; the handler sees only what was in scope before the region */
+static void try_stmt(G *g)
+{
+    limba_id outer = g->handler;
+    limba_id bh = block(g); /* protected by the outer region, if any */
+    uint32_t hp[3];
+    hp[0] = limba_param_add(F(g), bh, LIMBA_T_I32);
+    hp[1] = limba_param_add(F(g), bh, LIMBA_T_I32);
+    hp[2] = limba_param_add(F(g), bh, LIMBA_T_STR);
+    limba_id bj = block(g);
+    uint32_t nm = below(g, 3);
+    limba_id types[2];
+    uint32_t params[2];
+    for (uint32_t i = 0; i < nm; i++) {
+        types[i] = rand_type(g);
+        params[i] = limba_param_add(F(g), bj, types[i]);
+    }
+    uint32_t args[2];
+
+    uint32_t mark = g->nvals;
+    g->trys++;
+    if (g->depth < 2 && chance(g, 30)) { /* the region begins with a loop */
+        g->open_try = bh;
+        loop(g);
+    } else {
+        g->handler = bh;
+        limba_id bp = block(g);
+        br(g, bp, NULL, 0);
+        g->cur = bp;
+    }
+    if (chance(g, 50)) { /* what a call raises, perhaps once in line, and
+                            what fails after it */
+        call_stmt(g);
+        if (chance(g, 50)) {
+            uint32_t c = condition(g);
+            emit(g, LIMBA_OP_CHECK, LIMBA_T_VOID, 0, 100, 0, &c, 1);
+        }
+    }
+    statements(g, 1 + (int)below(g, 5));
+    /* how the handler ends: 0 and 1 may go on after the try */
+    unsigned kind = below(g, 4);
+    if (kind >= 2 && g->depth < 2 && chance(g, 40)) {
+        /* only the region reaches the join: it may end with the way
+           into a loop that is not in it */
+        g->close_try = true;
+        g->close_to = outer;
+        loop(g);
+    }
+    if (g->handler == bh && chance(g, 15))
+        raise_new(g);
+    else {
+        for (uint32_t i = 0; i < nm; i++)
+            args[i] = pick(g, types[i]);
+        br(g, bj, args, nm);
+    }
+    g->nvals = mark;
+    g->handler = outer;
+
+    g->depth++;
+    g->cur = bh;
+    keep(g, LIMBA_T_I32, hp[0]);
+    keep(g, LIMBA_T_I32, hp[1]);
+    switch (kind) {
+    case 0: /* catch them all */
+        print_i32(g, hp[0]);
+        print_s(g, hp[2]);
+        statements(g, (int)below(g, 3));
+        for (uint32_t i = 0; i < nm; i++)
+            args[i] = pick(g, types[i]);
+        br(g, bj, args, nm);
+        break;
+    case 1: { /* one identity, the others raised again */
+        uint32_t k =
+            emit(g, LIMBA_OP_ICONST, LIMBA_T_I32, 0, identity(g), 0, NULL, 0);
+        uint32_t c[2] = {hp[0], k};
+        uint32_t is =
+            emit(g, LIMBA_OP_ICMP, LIMBA_T_I1, LIMBA_CC_EQ, 0, 0, c, 2);
+        limba_id bc = block(g), br_ = block(g);
+        uint32_t ops[5] = {is, bc, 0, br_, 0};
+        emit(g, LIMBA_OP_CBR, LIMBA_T_VOID, 0, 0, 0, ops, 5);
+        uint32_t inner = g->nvals;
+        g->cur = bc;
+        print_s(g, hp[2]);
+        statements(g, (int)below(g, 3));
+        for (uint32_t i = 0; i < nm; i++)
+            args[i] = pick(g, types[i]);
+        br(g, bj, args, nm);
+        g->nvals = inner;
+        g->cur = br_;
+        emit(g, LIMBA_OP_RAISE, LIMBA_T_VOID, 0, 0, 0, hp, 3);
+        break;
+    }
+    case 2: /* finally: raised again */
+        print_i32(g, hp[1]);
+        statements(g, (int)below(g, 3));
+        emit(g, LIMBA_OP_RAISE, LIMBA_T_VOID, 0, 0, 0, hp, 3);
+        break;
+    default: /* another exception */
+        statements(g, (int)below(g, 2));
+        raise_new(g);
+    }
+    g->depth--;
+    g->trys--;
+    g->nvals = mark;
+    g->cur = bj;
+    for (uint32_t i = 0; i < nm; i++)
+        keep(g, types[i], params[i]);
+}
+
+/* par_for over a few indices, outside loops and branches like a call; the
+   body writes to the slot of this function */
+static void par_for_stmt(G *g)
+{
+    if (g->body == LIMBA_NONE || g->body >= g->fid || g->depth > 0 ||
+        g->calls >= 3)
+        return;
+    g->calls++;
+    int64_t lo = below(g, 3), hi = lo + below(g, 4) - 1;
+    uint32_t o[4];
+    o[0] = emit(g, LIMBA_OP_FADDR, LIMBA_T_PTR, 0, g->body, 0, NULL, 0);
+    o[1] = g->slot;
+    o[2] = emit(g, LIMBA_OP_ICONST, LIMBA_T_I64, 0, lo, 0, NULL, 0);
+    o[3] = emit(g, LIMBA_OP_ICONST, LIMBA_T_I64, 0, hi, 0, NULL, 0);
+    emit(g, LIMBA_OP_CALLRT, LIMBA_T_VOID, 0, LIMBA_RT_PAR_FOR, 0, o, 4);
 }
 
 static void print_stmt(G *g)
@@ -474,7 +741,7 @@ static void memory_stmt(G *g)
 static void statement(G *g)
 {
     g->budget--;
-    unsigned r = below(g, 100);
+    unsigned r = below(g, 111);
     if (r < 25)
         int_op(g);
     else if (r < 37)
@@ -502,8 +769,14 @@ static void statement(G *g)
     else if (chance(g, 25)) { /* a failed check ends the program */
         uint32_t c = condition(g);
         emit(g, LIMBA_OP_CHECK, LIMBA_T_VOID, 0, 9, 0, &c, 1);
-    } else
+    } else if (r < 100)
         print_stmt(g);
+    else if (r < 105 && g->depth < 3 && g->trys < 2)
+        try_stmt(g);
+    else if (r < 108 && (g->trys || !g->main || chance(g, 30)))
+        raise_stmt(g); /* outside a try in main the end of the program */
+    else
+        par_for_stmt(g);
 }
 
 static void statements(G *g, int n)
@@ -519,20 +792,37 @@ static void body(G *g, limba_id fid, bool is_main)
     g->fid = fid;
     g->nvals = 0;
     g->depth = 0;
-    g->budget = 15 + (int)below(g, 50);
+    /* now and then a helper short enough to go in line, with what it
+       raises */
+    g->budget = !is_main && chance(g, 40) ? 2 + (int)below(g, 6)
+                                          : 15 + (int)below(g, 50);
     g->calls = 0;
+    g->handler = LIMBA_NONE;
+    g->trys = 0;
+    g->main = is_main;
     limba_func *f = F(g);
     limba_sig s;
     limba_type_sig(g->m, f->type, &s);
     g->cur = limba_block_add(f);
+    uint32_t first = 0;
     for (uint32_t i = 0; i < s.n; i++) {
         limba_id t = limba_sig_param(&s, i);
-        keep(g, t, limba_param_add(F(g), g->cur, t));
+        uint32_t v = limba_param_add(F(g), g->cur, t);
+        if (i == 0)
+            first = v;
+        if (t != LIMBA_T_PTR)
+            keep(g, t, v);
     }
-    limba_slot_add(F(g), 64, 8);
-    g->slot = emit(g, LIMBA_OP_SLOT, LIMBA_T_PTR, 0, 0, 0, NULL, 0);
+    if (fid == g->body) { /* the slot of the caller, of 64 bytes */
+        g->slot = first;
+    } else {
+        limba_slot_add(F(g), 64, 8);
+        g->slot = emit(g, LIMBA_OP_SLOT, LIMBA_T_PTR, 0, 0, 0, NULL, 0);
+    }
     while (g->budget > 0)
         statement(g);
+    if (!is_main && chance(g, 40)) /* what its callers may catch */
+        raise_stmt(g);
     if (is_main)
         for (int i = 0; i < 3; i++) {
             uint32_t v = pick(g, LIMBA_T_I64);
@@ -541,20 +831,54 @@ static void body(G *g, limba_id fid, bool is_main)
             emit(g, LIMBA_OP_CALLRT, LIMBA_T_VOID, 0, LIMBA_RT_PRINT_NL, 0,
                  NULL, 0);
         }
+    if (s.ret == LIMBA_T_VOID) {
+        emit(g, LIMBA_OP_RET, LIMBA_T_VOID, 0, 0, 0, NULL, 0);
+        return;
+    }
     uint32_t r = pick(g, s.ret);
     emit(g, LIMBA_OP_RET, LIMBA_T_VOID, 0, 0, 0, &r, 1);
 }
 
 limba_module *limba_gen(uint64_t seed)
 {
-    G g = {.s = seed};
+    G g = {.s = seed, .body = LIMBA_NONE, .open_try = LIMBA_NONE};
     g.m = limba_module_new();
     uint32_t helpers = below(&g, 4);
+    if (helpers && chance(&g, 50))
+        g.body = 0; /* the first helper is the body of par_for */
+    /* the exceptions named, often none: then lir_run words them by code */
+    if (chance(&g, 60)) {
+        static const struct {
+            int32_t id;
+            const char *name;
+            int32_t parent;
+        } table[] = {
+            {900, "ConstraintError", -1}, {902, "ProgramError", -1},
+            {100, "IndexError", 900},     {6, "OverflowError", 900},
+            {108, "LengthError", 900},    {1000, "ParseError", -1},
+            {1001, "BadDigit", 1000},     {1002, "BadSign", 1000},
+            {1003, "Empty", -1},
+        };
+        for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+            limba_exception_add(
+                g.m, table[i].id,
+                limba_str_intern(g.m, table[i].name, strlen(table[i].name)),
+                table[i].parent);
+    }
+    limba_id file = limba_str_intern(g.m, "gen.lx", 6);
+    limba_pos_add(g.m, file, 3, 7);
+    limba_pos_add(g.m, file, 12, 1);
     char name[16];
     for (uint32_t i = 0; i <= helpers; i++) {
         limba_id params[3], ret = LIMBA_T_I64;
         uint32_t n = 0;
-        if (i < helpers) {
+        if (i == g.body) {
+            params[0] = LIMBA_T_PTR;
+            params[1] = LIMBA_T_I64;
+            n = 2;
+            ret = LIMBA_T_VOID;
+            snprintf(name, sizeof(name), "f%u", i);
+        } else if (i < helpers) {
             n = below(&g, 4);
             for (uint32_t k = 0; k < n; k++)
                 params[k] = rand_type(&g);

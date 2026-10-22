@@ -42,8 +42,11 @@ static char *print(const limba_module *m)
 
 static bool same(const limba_eval_result *a, const limba_eval_result *b)
 {
+    /* an exception no one caught: also its position and its message */
     return a->status == b->status && a->code == b->code && a->ret == b->ret &&
-           a->outlen == b->outlen && !memcmp(a->out, b->out, a->outlen);
+           a->outlen == b->outlen && !memcmp(a->out, b->out, a->outlen) &&
+           a->pos == b->pos && a->msglen == b->msglen &&
+           (!a->msglen || !memcmp(a->msg, b->msg, a->msglen));
 }
 
 static uint64_t env(const char *name, uint64_t dflt)
@@ -58,7 +61,8 @@ int main(void)
     uint64_t first = env("LIMBA_GEN_FIRST", 1);
     uint64_t count = env("LIMBA_GEN_SEEDS", 200);
     uint64_t ended[6] = {0}, compared = 0, limited = 0, insts = 0;
-    uint64_t traps[3] = {0}; /* overflow 6, check 9, division 11 */
+    /* overflow 6, check 9, division 11, the others (raised, checks) */
+    uint64_t traps[4] = {0};
     int reported = 0;
 
     for (uint64_t seed = first; seed < first + count; seed++) {
@@ -77,7 +81,10 @@ int main(void)
         limba_eval(m, "main", &limits, &base);
         ended[base.status]++;
         if (base.status == LIMBA_EVAL_TRAP)
-            traps[base.code == 6 ? 0 : base.code == 9 ? 1 : 2]++;
+            traps[base.code == 6    ? 0
+                  : base.code == 9  ? 1
+                  : base.code == 11 ? 2
+                                    : 3]++;
         limba_module_free(m);
         if (base.status == LIMBA_EVAL_LIMIT) {
             limited++;
@@ -141,11 +148,12 @@ int main(void)
     printf("test_gen: %" PRIu64 " seeds from %" PRIu64 ", %" PRIu64
            " instructions; ended: %" PRIu64 " returned, %" PRIu64
            " trapped (%" PRIu64 " overflow, %" PRIu64 " check, %" PRIu64
-           " division), %" PRIu64 " unreachable, %" PRIu64
+           " division, %" PRIu64 " other), %" PRIu64 " unreachable, %" PRIu64
            " at the limit; %" PRIu64 " optimised runs agreed, %" PRIu64
            " not compared (limit), %d failures\n",
            count, first, insts, ended[LIMBA_EVAL_OK], ended[LIMBA_EVAL_TRAP],
-           traps[0], traps[1], traps[2], ended[LIMBA_EVAL_UNREACHABLE],
-           ended[LIMBA_EVAL_LIMIT], compared, limited, failures);
+           traps[0], traps[1], traps[2], traps[3],
+           ended[LIMBA_EVAL_UNREACHABLE], ended[LIMBA_EVAL_LIMIT], compared,
+           limited, failures);
     return failures ? 1 : 0;
 }
