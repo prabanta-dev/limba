@@ -55,7 +55,8 @@ enum limba_format {
     LIMBA_F_CALL_RT,  /* imm = runtime id; arguments */
     LIMBA_F_BR,       /* target block, n, n arguments */
     LIMBA_F_CBR,      /* condition, then (block, n, args), else (same) */
-    LIMBA_F_SWITCH,   /* value, default block, n, n x (lo, hi, block) */
+    LIMBA_F_SWITCH,   /* value, default block, n, n x (low 32 bits of the
+                         case value, high 32 bits, block) */
     LIMBA_F_RET,      /* zero or one value */
     LIMBA_F_NONE,     /* nothing */
     LIMBA_F_TRAP,     /* imm = error code */
