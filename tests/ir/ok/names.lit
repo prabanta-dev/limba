@@ -1,0 +1,36 @@
+; names outside the plain identifiers, as a language writes overloaded
+; routines, operators and instances of generics: quoted, any bytes
+module "names"
+
+type %"Pair[Int64]" = { i64 @0, i64 @8 } size 16 align 8
+
+global @"Lists.Max[Float64]$count" : i64 = 0
+global @"pair:\x01" : %"Pair[Int64]"
+
+func @"+" : fn(i64, i64) -> i64 {
+b0(v0: i64, v1: i64):
+  v2 = add i64 v0, v1
+  ret v2
+}
+
+func @"Lists.Max[Float64]" : fn(f64, f64) -> f64 {
+b0(v0: f64, v1: f64):
+  v2 = fcmp.ogt i1 v0, v1
+  v3 = select f64 v2, v0, v1
+  ret v3
+}
+
+func @"\"quoted\" \\ name" : fn() -> i64 {
+b0:
+  v0 = iconst i64 7
+  ret v0
+}
+
+func @main : fn() -> i64 export {
+b0:
+  v0 = iconst i64 2
+  v1 = call i64 @"+"(v0, v0)
+  v2 = call i64 @"\"quoted\" \\ name"()
+  v3 = add i64 v1, v2
+  ret v3
+}
