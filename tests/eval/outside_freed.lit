@@ -1,0 +1,12 @@
+; module: wrong
+; a block of mem_alloc read after mem_free, with no ptr_live check before
+func @main : fn() -> i64 {
+b0:
+  v0 = iconst i64 16
+  v1 = call.rt ptr mem_alloc(v0)
+  v2 = iconst i64 5
+  store v2, v1
+  call.rt void mem_free(v1)
+  v3 = load i64 v1
+  ret v3
+}

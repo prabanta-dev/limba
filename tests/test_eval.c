@@ -10,7 +10,8 @@
  *     "; trap: <code>", "; module: wrong" (a check the IR must make
  *     before an access or a call of the run time is missing) or
  *     "; memory: broken" (a rule of the strings in memory broken, found
- *     by check_mem, on in every run here), "; max memory: <bytes>" for a
+ *     by check_mem, on in every run here), "; run: unsupported" (what
+ *     the oracle does not run: memory fb), "; max memory: <bytes>" for a
  *     budget other than 64 MiB, and "; message: <text>" for the words of
  *     a trap or of an exception no one caught; run twice, the second time
  *     with a collection before each value made and, unless memory is to
@@ -132,6 +133,8 @@ static void golden(const char *path)
             value = strtoll(p + 8, NULL, 10);
         } else if (!strncmp(p, "; module: wrong", 15)) {
             status = LIMBA_EVAL_BAD;
+        } else if (!strncmp(p, "; run: unsupported", 18)) {
+            status = LIMBA_EVAL_UNSUPPORTED;
         } else if (!strncmp(p, "; memory: broken", 16)) {
             status = LIMBA_EVAL_BADMEM;
         } else if (!strncmp(p, "; message: ", 11) && n - 11 < sizeof(msg)) {
@@ -277,8 +280,9 @@ int main(void)
     each("tests/ir/ok", optdiff);
     each("tests/opt", optdiff);
     CHECK(golden_n > 0 && compared > 0, "no test files found");
-    printf("test_eval: %d programs checked against their output, %d "
-           "optimised runs compared, %d skipped (call.ext), %d failures\n",
-           golden_n, compared, skipped, failures);
+    printf(
+        "test_eval: %d programs checked against their output, %d "
+        "optimised runs compared, %d skipped (call.ext, memory fb), %d failures\n",
+        golden_n, compared, skipped, failures);
     return failures ? 1 : 0;
 }

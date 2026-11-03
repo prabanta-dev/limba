@@ -1,0 +1,12 @@
+; module: wrong
+; a byte of a string read past its end and its NUL, through str_ptr
+func @main : fn() -> i64 {
+b0:
+  v0 = sconst str "abc"
+  v1 = call.rt ptr str_ptr(v0)
+  v2 = iconst i64 4
+  v3 = addr ptr v1, v2, 1, 0
+  v4 = load i8 v3
+  v5 = zext i64 v4
+  ret v5
+}

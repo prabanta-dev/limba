@@ -24,6 +24,7 @@
 #include "limba/val.h"
 #include "common/leb128.h"
 #include "common/xalloc.h"
+#include "objmap.h"
 #include "common/bigint.h"
 #include "ir/internal.h"
 
@@ -77,6 +78,8 @@ typedef struct {
     size_t narena, caparena;
     void **globals;
     amap heap;      /* the blocks of mem_alloc not yet freed, with their size */
+    objmap objs;    /* every object alive, by address: what an access may
+                       touch (progetto_ir.md § 4) */
     amap cstrs;     /* the C strings of cstr_new not yet freed: memory of C,
                        out of the budget */
     amap words;     /* check_mem: the words of memory that hold a str */
@@ -91,6 +94,14 @@ typedef struct {
        at the end) */
     uint64_t exc_msg;
     bool pos_given;
+    /* the message of each trap, made once when first caught: immortal,
+       outside the budget and the values counted (progetto_ir.md § 11i:
+       no memory taken by an exception), freed with the arena */
+    struct trapmsg {
+        int64_t code;
+        estr *s;
+    } *trapmsgs;
+    size_t ntrapmsgs, captrapmsgs;
     /* par_for: the message of the lowest index each par_for running
        keeps, the innermost last (one may run in the body of another) */
     uint64_t *par_msgs;
@@ -310,6 +321,8 @@ static void collect(E *e)
             uint64_t n = val_bytes(x);
             e->used -= n;
             e->valbytes -= n;
+            if (!x->big)
+                objmap_del(&e->objs, (uintptr_t)x->data);
             val_free(x);
         }
     }
@@ -373,6 +386,7 @@ static estr *str_alloc(E *e, size_t n)
     x->mrefs = x->seen = 0;
     x->immortal = x->listed = x->big = x->marked = 0;
     x->data[n] = 0;
+    objmap_add(&e->objs, (uintptr_t)x->data, n + 1);
     return val_add(e, x);
 }
 
@@ -496,15 +510,18 @@ static bool bad_module(E *e)
     return false;
 }
 
-/* n bytes from p can be no memory of the program: they touch the first
+/* n bytes from p are no memory of the program: they touch the first
    64 KiB, where Linux maps nothing (vm.mmap_min_addr), so nil or a field
-   of nil, or their end wraps. The nil check comes before, in the IR
-   (progetto_ir.md § 11c): an access that skips it is a wrong module,
-   never a crash of the oracle */
+   of nil, or their end wraps, or they do not lie in one object alive (a
+   slot of a call running, a global, a block of mem_alloc not freed, a C
+   string of cstr_new, the bytes of a string). The checks come before, in
+   the IR (progetto_ir.md § 4, § 11c): an access that skips them is a
+   wrong module, never a crash of the oracle */
 #define LOW_MEMORY ((uintptr_t)1 << 16)
-static bool wild(uintptr_t p, uint64_t n)
+static bool wild(E *e, uintptr_t p, uint64_t n)
 {
-    return n && (p < LOW_MEMORY || n > UINTPTR_MAX - p);
+    return n && (p < LOW_MEMORY || n > UINTPTR_MAX - p ||
+                 !objmap_holds(&e->objs, p, n));
 }
 static bool forget(E *e, uintptr_t p, size_t n);
 static bool no_str(E *e, uintptr_t p, size_t n);
@@ -864,19 +881,20 @@ static bool runtime_c(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         memcpy(p, s->data, s->len);
         p[s->len] = 0;
         amap_put(&e->cstrs, (uintptr_t)p, s->len + 1);
+        objmap_add(&e->objs, (uintptr_t)p, s->len + 1);
         *r = (uint64_t)(uintptr_t)p;
         return true;
     }
     case LIMBA_RT_CSTR_VALUE: {
         const char *p = (const char *)(uintptr_t)a[0];
-        if (wild((uintptr_t)p, 1))
+        if (wild(e, (uintptr_t)p, 1))
             return bad_module(e); /* the nil check comes before */
         *r = sv(str_make(e, p, strlen(p)));
         return true;
     }
     case LIMBA_RT_CSTR_VALUE_N: {
         const char *p = (const char *)(uintptr_t)a[0];
-        if ((int64_t)a[1] < 0 || wild((uintptr_t)p, a[1]))
+        if ((int64_t)a[1] < 0 || wild(e, (uintptr_t)p, a[1]))
             return bad_module(e);
         *r = sv(str_make(e, p, (size_t)a[1]));
         return true;
@@ -887,6 +905,7 @@ static bool runtime_c(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         /* only what cstr_new made: here there is no C to have made any */
         if (!amap_del(&e->cstrs, a[0]))
             return bad_module(e);
+        objmap_del(&e->objs, a[0]);
         free((void *)(uintptr_t)a[0]);
         return true;
     }
@@ -902,8 +921,8 @@ static bool runtime_arrays(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     switch (rt) {
     case LIMBA_RT_MEM_TRANSLATE: {
         const uint8_t *t = (const uint8_t *)(uintptr_t)a[2];
-        if (n < 0 ||
-            (n && (wild((uintptr_t)p, (uint64_t)n) || wild((uintptr_t)t, 256))))
+        if (n < 0 || (n && (wild(e, (uintptr_t)p, (uint64_t)n) ||
+                            wild(e, (uintptr_t)t, 256))))
             return bad_module(e);
         if (!n)
             return true;
@@ -919,7 +938,7 @@ static bool runtime_arrays(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_MEM_REVERSE: {
         size_t size = (size_t)a[2], len;
         if (n < 0 || !size || __builtin_mul_overflow((size_t)n, size, &len) ||
-            wild((uintptr_t)p, len))
+            wild(e, (uintptr_t)p, len))
             return bad_module(e);
         if (n < 2)
             return true;
@@ -956,8 +975,8 @@ static bool runtime_arrays(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_MEM_COUNT: {
         const uint8_t *q = (const uint8_t *)(uintptr_t)a[2];
         int64_t m = (int64_t)a[3];
-        if (n < 0 || m < 1 || wild((uintptr_t)q, (uint64_t)m) ||
-            wild((uintptr_t)p, (uint64_t)n))
+        if (n < 0 || m < 1 || wild(e, (uintptr_t)q, (uint64_t)m) ||
+            wild(e, (uintptr_t)p, (uint64_t)n))
             return bad_module(e);
         if (e->lim.check_mem && (!no_str(e, (uintptr_t)p, (size_t)n) ||
                                  !no_str(e, (uintptr_t)q, (size_t)m)))
@@ -1050,7 +1069,7 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
            of read_line, the output that of print_* */
         uint8_t *p = (uint8_t *)(uintptr_t)a[0];
         int64_t n = (int64_t)a[1];
-        if (n < 0 || wild((uintptr_t)p, (uint64_t)n))
+        if (n < 0 || wild(e, (uintptr_t)p, (uint64_t)n))
             return bad_module(e);
         if (n && e->lim.check_mem && !no_str(e, (uintptr_t)p, (size_t)n))
             return false;
@@ -1223,6 +1242,7 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         }
         keep(e, p);
         amap_put(&e->heap, (uintptr_t)p, size);
+        objmap_add(&e->objs, (uintptr_t)p, a[0]);
         *r = (uint64_t)(uintptr_t)p;
         return true;
     }
@@ -1236,6 +1256,7 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
             return trap(e, LIMBA_TRAP_INVALID_FREE);
         size_t size = e->heap.val[k];
         amap_del(&e->heap, a[0]);
+        objmap_del(&e->objs, a[0]);
         e->used -= size; /* out of the budget; the bytes stay reserved */
         return !e->lim.check_mem || forget(e, a[0], size);
     }
@@ -1408,7 +1429,7 @@ static bool forget(E *e, uintptr_t p, size_t n)
 
 static bool mem_load(E *e, uintptr_t p, limba_id t, uint64_t *r)
 {
-    if (wild(p, e->m->types[t].size))
+    if (wild(e, p, e->m->types[t].size))
         return bad_module(e);
     *r = load((void *)p, t);
     if (!e->lim.check_mem)
@@ -1421,7 +1442,7 @@ static bool mem_load(E *e, uintptr_t p, limba_id t, uint64_t *r)
 /* store str takes a reference on the new value, then releases the old */
 static bool mem_store(E *e, uintptr_t p, limba_id t, uint64_t v)
 {
-    if (wild(p, e->m->types[t].size))
+    if (wild(e, p, e->m->types[t].size))
         return bad_module(e);
     if (e->lim.check_mem) {
         if (t == LIMBA_T_STR || t == LIMBA_T_REF) {
@@ -1444,7 +1465,7 @@ static bool mem_store(E *e, uintptr_t p, limba_id t, uint64_t v)
 /* memcpy moves the str of the source with it, uncounted */
 static bool mem_copy(E *e, uintptr_t dst, uintptr_t src, size_t len)
 {
-    if (wild(dst, len) || wild(src, len))
+    if (wild(e, dst, len) || wild(e, src, len))
         return bad_module(e);
     if (!e->lim.check_mem || !e->words.live) {
         memmove((void *)dst, (void *)src, len);
@@ -1470,7 +1491,7 @@ static bool mem_copy(E *e, uintptr_t dst, uintptr_t src, size_t len)
 
 static bool mem_fill(E *e, uintptr_t dst, int byte, size_t len)
 {
-    if (wild(dst, len))
+    if (wild(e, dst, len))
         return bad_module(e);
     if (e->lim.check_mem && !forget(e, dst, len))
         return false;
@@ -1521,7 +1542,7 @@ static bool rc_inst(E *e, const limba_inst *in, uint64_t p, uint64_t nv)
     uint64_t size = e->m->types[in->imm].size;
     if (n < 0 || (n && size > UINT64_MAX / (uint64_t)n))
         return trap(e, LIMBA_TRAP_RANGE);
-    if (wild(p, (uint64_t)n * size)) /* every engine reads them */
+    if (wild(e, p, (uint64_t)n * size)) /* every engine reads them */
         return bad_module(e);
     if (!e->lim.check_mem)
         return true;
@@ -1981,9 +2002,24 @@ static const limba_block *jump(const limba_func *f, uint32_t k, uint64_t *v)
 static uint64_t exc_message(E *e)
 {
     if (!e->exc_msg) {
+        for (size_t i = 0; i < e->ntrapmsgs && !e->exc_msg; i++)
+            if (e->trapmsgs[i].code == e->code)
+                e->exc_msg = sv(e->trapmsgs[i].s);
+    }
+    if (!e->exc_msg) {
         size_t n = 0;
         const char *t = limba_trap_message(e->m, e->code, &n);
-        e->exc_msg = sv(str_make(e, t ? t : "", t ? n : 0));
+        if (!t)
+            n = 0;
+        estr *x = keep(e, limba_xcalloc(1, sizeof(estr) + n + 1));
+        x->len = n;
+        x->immortal = 1;
+        if (n)
+            memcpy(x->data, t, n);
+        objmap_add(&e->objs, (uintptr_t)x->data, n + 1);
+        LIMBA_GROW(e->trapmsgs, e->ntrapmsgs, e->captrapmsgs);
+        e->trapmsgs[e->ntrapmsgs++] = (struct trapmsg){e->code, x};
+        e->exc_msg = sv(x);
     }
     return e->exc_msg;
 }
@@ -2030,6 +2066,8 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
         if (!(slots[s] =
                   zalloc_aligned(e, f->slots[s].size, f->slots[s].align)))
             ok = trap(e, LIMBA_TRAP_NOMEM);
+        else
+            objmap_add(&e->objs, (uintptr_t)slots[s], f->slots[s].size);
     const limba_block *bl = &f->blocks[0];
     for (uint32_t i = 0; i < bl->nparams; i++)
         v[bl->insts[i]] = args[i];
@@ -2220,6 +2258,7 @@ done:;
         }
     }
     for (uint32_t s = 0; s < f->nslots && slots[s]; s++) {
+        objmap_del(&e->objs, (uintptr_t)slots[s]);
         free(slots[s]);
         e->used -= zalloc_size(f->slots[s].size, f->slots[s].align);
     }
@@ -2346,6 +2385,13 @@ void limba_eval(const limba_module *m, const char *entry,
         r->out = limba_xcalloc(1, 1);
         return;
     }
+    /* the rules of memory fb (no checks, mem_free as free) are not the
+       oracle's: no language uses them yet (progetto_ir.md § 4) */
+    if (m->memory != LIMBA_MEM_STRICT) {
+        r->status = LIMBA_EVAL_UNSUPPORTED;
+        r->out = limba_xcalloc(1, 1);
+        return;
+    }
 
     e.budget =
         limits && limits->max_memory ? limits->max_memory : (uint64_t)1 << 30;
@@ -2361,6 +2407,7 @@ void limba_eval(const limba_module *m, const char *entry,
             break;
         }
         e.globals[i] = keep(&e, p);
+        objmap_add(&e.objs, (uintptr_t)p, ty->size);
     }
     /* then their values: a relocation may name any global */
     for (uint32_t i = 0; i < m->nglobals && e.status == LIMBA_EVAL_OK; i++) {
@@ -2419,6 +2466,8 @@ void limba_eval(const limba_module *m, const char *entry,
     free(e.vals);
     free(e.pinned);
     free(e.par_msgs);
+    free(e.trapmsgs);
+    objmap_free(&e.objs);
     amap_free(&e.heap);
     for (size_t k = 0; k < e.cstrs.cap; k++) /* C strings never freed */
         if (e.cstrs.key[k] > 1)
