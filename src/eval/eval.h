@@ -6,11 +6,11 @@
  * It runs a verified module from a function with no parameters and records
  * what the program printed, how it ended and what it returned. Not public.
  *
- * Where the IR does not fix a behaviour yet, the interpreter decides, and
- * the decision is provisional (job/docs/progetto_ir.md):
+ * Some rules of the IR it applies (job/docs/progetto_ir.md § 11b):
  *   division by zero, INT_MIN / -1             trap 11
- *   overflow of add.ov / sub.ov / mul.ov        trap 6
+ *   overflow of the .ov operations, signed or not  trap 6
  *   shift by the width or more                  the count modulo the width
+ *                                               (decided, fold does it too)
  *
  * Calls nested deeper than max_depth, or than the stack of the thread the
  * run has for itself holds, are the trap STACK, mem_free of what

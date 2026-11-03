@@ -46,7 +46,7 @@ static bool mergeable(const limba_inst *in)
         return true;
     const limba_op_info *op = &limba_ops[in->op];
     return (op->flags & LIMBA_OPF_PURE) && in->op != LIMBA_OP_PARAM &&
-           in->op != LIMBA_OP_UNDEF && in->type != LIMBA_T_VOID;
+           in->type != LIMBA_T_VOID;
 }
 
 static int64_t key_imm(const limba_inst *in)

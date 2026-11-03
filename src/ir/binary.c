@@ -3,7 +3,8 @@
 /*
  * binary.c - the binary form (.lir): what Limba writes and Meri reads.
  *
- *   "LIR\0"  version  runtime-fingerprint  ops-fingerprint  memory  name
+ *   "LIR\0"  version  runtime-fingerprint  ops-fingerprint  memory
+ *   ptr-bits  name
  *   strings  language  messages  exceptions  target  types  globals  externs
  *   functions
  *
@@ -170,6 +171,7 @@ int limba_writer_end(limba_writer *wr, const limba_module *m, uint8_t **buf,
     limba_w_u64(&w, limba_rt_fingerprint());
     limba_w_u64(&w, ops_fingerprint());
     limba_w_uleb(&w, m->memory);
+    limba_w_uleb(&w, m->ptr_bits);
     limba_w_uleb(&w, m->name == LIMBA_NONE ? 0 : (uint64_t)m->name + 1);
 
     uint32_t nstr = limba_str_count(m);
@@ -420,6 +422,7 @@ limba_module *limba_read(const uint8_t *buf, size_t len, limba_diag *d)
 
     limba_module *m = limba_module_new();
     m->memory = r_id(&r);
+    limba_module_ptr_bits(m, r_id(&r));
     m->name = r_opt(&r);
 
     uint32_t nstr = limba_r_count(&r, 1);

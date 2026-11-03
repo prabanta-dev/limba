@@ -236,10 +236,11 @@ static void int_op(G *g)
         LIMBA_OP_NOT,
     };
     /* rare: they end most programs they appear in */
-    static const unsigned ovs[] = {LIMBA_OP_ADDOV, LIMBA_OP_SUBOV,
-                                   LIMBA_OP_MULOV};
+    static const unsigned ovs[] = {LIMBA_OP_ADDOV,  LIMBA_OP_SUBOV,
+                                   LIMBA_OP_MULOV,  LIMBA_OP_UADDOV,
+                                   LIMBA_OP_USUBOV, LIMBA_OP_UMULOV};
     limba_id t = rand_int_type(g);
-    unsigned op = chance(g, 3) ? ovs[below(g, 3)]
+    unsigned op = chance(g, 3) ? ovs[below(g, 6)]
                                : ops[below(g, sizeof(ops) / sizeof(ops[0]))];
     uint32_t a = pick(g, t), v;
     if (op == LIMBA_OP_NEG || op == LIMBA_OP_NOT) {

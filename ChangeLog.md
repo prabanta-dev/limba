@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- IR version 9. The header says the bits of `ptr`, `str` and `ref`
+  (`ptr_bits`, 64 or 32; text `ptr_bits 32` before any type,
+  `limba_module_ptr_bits`, `limba_target_ptr_bits`): their sizes follow,
+  the verifier checks layouts and the target against it, and the
+  reference interpreter refuses 32 for now. New operations `uadd.ov`,
+  `usub.ov`, `umul.ov` (overflow without a sign, trap 6). A shift by the
+  width or more takes the count modulo the width, for every type, and
+  folding does it too. `undef` is gone: the SSA builder puts the zero of
+  the type where a variable is read unassigned.
+
 - The reference interpreter sees an access outside every object alive
   (a slot of a call running, a global, a block of `mem_alloc` not freed,
   a C string, the bytes of a string), also in mapped memory: a wrong

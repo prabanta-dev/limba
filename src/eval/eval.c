@@ -1639,6 +1639,21 @@ static bool int_bin(E *e, unsigned op, limba_id t, uint64_t a, uint64_t b,
             return trap(e, LIMBA_TRAP_OVERFLOW);
         *r = (uint64_t)(int64_t)w;
         break;
+    case LIMBA_OP_UADDOV:
+    case LIMBA_OP_USUBOV:
+    case LIMBA_OP_UMULOV: {
+        unsigned __int128 x = ua, y = ub;
+        unsigned __int128 max =
+            bits >= 64 ? UINT64_MAX : ((uint64_t)1 << bits) - 1;
+        if (op == LIMBA_OP_USUBOV   ? x < y
+            : op == LIMBA_OP_UADDOV ? x + y > max
+                                    : x * y > max)
+            return trap(e, LIMBA_TRAP_OVERFLOW);
+        *r = (uint64_t)(op == LIMBA_OP_USUBOV   ? x - y
+                        : op == LIMBA_OP_UADDOV ? x + y
+                                                : x * y);
+        break;
+    }
     default:
         return false;
     }
@@ -2386,8 +2401,9 @@ void limba_eval(const limba_module *m, const char *entry,
         return;
     }
     /* the rules of memory fb (no checks, mem_free as free) are not the
-       oracle's: no language uses them yet (progetto_ir.md § 4) */
-    if (m->memory != LIMBA_MEM_STRICT) {
+       oracle's: no language uses them yet (progetto_ir.md § 4); nor are
+       pointers of 32 bits, until a target has them (§ 11b) */
+    if (m->memory != LIMBA_MEM_STRICT || m->ptr_bits != 64) {
         r->status = LIMBA_EVAL_UNSUPPORTED;
         r->out = limba_xcalloc(1, 1);
         return;

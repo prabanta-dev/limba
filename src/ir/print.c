@@ -401,6 +401,7 @@ void limba_print(const limba_module *m, FILE *out)
         fputc('\n', out);
     }
     fprintf(out, "memory %s\n", m->memory == LIMBA_MEM_FB ? "fb" : "strict");
+    fprintf(out, "ptr_bits %" PRIu32 "\n", m->ptr_bits);
     if (m->language != LIMBA_NONE) {
         size_t n;
         const char *s = limba_str(m, m->language, &n);

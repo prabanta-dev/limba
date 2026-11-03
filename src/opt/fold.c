@@ -129,20 +129,16 @@ static bool fold_int_bin(const limba_inst *in, int64_t a, int64_t b, int64_t *r)
     case LIMBA_OP_XOR:
         *r = a ^ b;
         return true;
+    /* the count modulo the width (progetto_ir.md § 11b, N4) */
     case LIMBA_OP_SHL:
-        if (ub >= bits)
-            return false;
-        *r = (int64_t)(ua << ub);
+        *r = (int64_t)(ua << (ub % bits));
         return true;
     case LIMBA_OP_LSHR:
-        if (ub >= bits)
-            return false;
-        *r = (int64_t)(ua >> ub);
+        *r = (int64_t)(ua >> (ub % bits));
         return true;
     case LIMBA_OP_ASHR:
-        if (ub >= bits)
-            return false;
-        *r = a >> ub; /* a is sign-extended: arithmetic in gcc and clang */
+        /* a is sign-extended: arithmetic in gcc and clang */
+        *r = a >> (ub % bits);
         return true;
     case LIMBA_OP_UDIV:
     case LIMBA_OP_UREM:
@@ -166,6 +162,23 @@ static bool fold_int_bin(const limba_inst *in, int64_t a, int64_t b, int64_t *r)
         if (!fits_signed(v, t))
             return false; /* it traps: leave it to run time */
         *r = (int64_t)v;
+        return true;
+    }
+    case LIMBA_OP_UADDOV:
+    case LIMBA_OP_USUBOV:
+    case LIMBA_OP_UMULOV: {
+        unsigned __int128 x = ua, y = ub;
+        unsigned __int128 max =
+            bits >= 64 ? UINT64_MAX : ((uint64_t)1 << bits) - 1;
+        if (in->op == LIMBA_OP_USUBOV   ? x < y
+            : in->op == LIMBA_OP_UADDOV ? x + y > max
+                                        : x * y > max)
+            return false; /* it traps: leave it to run time */
+        *r = limba_int_norm(
+            (int64_t)(uint64_t)(in->op == LIMBA_OP_USUBOV   ? x - y
+                                : in->op == LIMBA_OP_UADDOV ? x + y
+                                                            : x * y),
+            t);
         return true;
     }
     }

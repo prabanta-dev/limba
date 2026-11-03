@@ -1,0 +1,3 @@
+; expect: target: pointers of 64 bits, the module has 32
+ptr_bits 32
+target "x86_64-linux"

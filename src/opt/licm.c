@@ -84,7 +84,7 @@ static bool may_free(const limba_inst *in)
 static bool no_effect(const limba_inst *in)
 {
     const limba_op_info *op = &limba_ops[in->op];
-    if (in->op == LIMBA_OP_PARAM || in->op == LIMBA_OP_UNDEF)
+    if (in->op == LIMBA_OP_PARAM)
         return false;
     if (op->flags & LIMBA_OPF_PURE)
         return true;

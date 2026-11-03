@@ -222,6 +222,16 @@ static bool module(P *p)
                 p->m->memory = LIMBA_MEM_FB;
             else
                 return lp_fail(p, "%s", "memory strict or memory fb");
+        } else if (lp_accept_word(p, "ptr_bits")) {
+            /* ptr_bits 32: the size of ptr, str and ref; before any type */
+            int64_t bits;
+            if (!lp_integer(p, &bits))
+                return false;
+            if (bits != 32 && bits != 64)
+                return lp_fail(p, "%s", "ptr_bits 32 or ptr_bits 64");
+            if (p->m->ntypes != LIMBA_T_FIRST_USER)
+                return lp_fail(p, "%s", "ptr_bits after a type");
+            limba_module_ptr_bits(p->m, (uint32_t)bits);
         } else if (lp_accept_word(p, "language")) {
             /* language "luxia": the prefix of the messages of traps */
             if (!lp_string(p, &p->m->language))

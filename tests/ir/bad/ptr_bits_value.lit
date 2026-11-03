@@ -1,0 +1,2 @@
+; expect: ptr_bits 32 or ptr_bits 64
+ptr_bits 16

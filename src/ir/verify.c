@@ -418,6 +418,11 @@ static bool check_symbols(vctx *v)
     uint32_t nstr = limba_str_count(m);
     if (m->memory != LIMBA_MEM_STRICT && m->memory != LIMBA_MEM_FB)
         FAIL("memory model %" PRIu32 " is unknown", m->memory);
+    if ((m->ptr_bits != 32 && m->ptr_bits != 64) ||
+        m->types[LIMBA_T_PTR].size * 8 != m->ptr_bits ||
+        m->types[LIMBA_T_STR].size * 8 != m->ptr_bits ||
+        m->types[LIMBA_T_REF].size * 8 != m->ptr_bits)
+        FAIL("pointers of %" PRIu32 " bits", m->ptr_bits);
     if (m->name != LIMBA_NONE && m->name >= nstr)
         FAIL("module name out of range");
     if (m->language != LIMBA_NONE && m->language >= nstr)
@@ -427,6 +432,10 @@ static bool check_symbols(vctx *v)
         const char *s = m->target < nstr ? limba_str(m, m->target, &n) : "";
         if (m->target >= nstr || !limba_target_known(s, n))
             FAIL("target: no such platform");
+        if (limba_target_ptr_bits(s, n) != m->ptr_bits)
+            FAIL("target: pointers of %" PRIu32
+                 " bits, the module has %" PRIu32,
+                 limba_target_ptr_bits(s, n), m->ptr_bits);
     }
     /* a module words the traps that exist, and cannot make new ones */
     for (uint32_t i = 0; i < m->nmessages; i++) {

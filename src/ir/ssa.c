@@ -197,10 +197,16 @@ static limba_id find_def(const limba_ssa *s, uint32_t var, limba_id block)
     return id == UINT32_MAX ? LIMBA_NONE : s->defs[id].value;
 }
 
+/* a variable read where nothing assigned it: the zero of its type (the IR
+   has no undef, progetto_ir.md § 11b); the definite assignment the front
+   end asks for still sees it as unassigned */
 static limba_id make_undef(limba_ssa *s, uint32_t var)
 {
-    limba_id v = limba_inst_add(limba_ssa_func(s), 0, LIMBA_OP_UNDEF,
-                                s->vtype[var], 0, 0, 0, NULL, 0);
+    limba_id t = s->vtype[var];
+    unsigned op = limba_type_is_int(t)     ? LIMBA_OP_ICONST
+                  : limba_type_is_float(t) ? LIMBA_OP_FCONST
+                                           : LIMBA_OP_NULLV;
+    limba_id v = limba_inst_add(limba_ssa_func(s), 0, op, t, 0, 0, 0, NULL, 0);
     set_vinfo(s, v, UNDEF_MARK);
     return v;
 }

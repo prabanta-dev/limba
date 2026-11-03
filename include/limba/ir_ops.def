@@ -19,7 +19,6 @@ LIMBA_OP(ICONST, "iconst", LIMBA_F_ICONST, LIMBA_OPF_PURE)
 LIMBA_OP(FCONST, "fconst", LIMBA_F_FCONST, LIMBA_OPF_PURE)
 LIMBA_OP(SCONST, "sconst", LIMBA_F_SCONST, LIMBA_OPF_PURE)
 LIMBA_OP(NULLV, "null", LIMBA_F_TYPED, LIMBA_OPF_PURE)
-LIMBA_OP(UNDEF, "undef", LIMBA_F_TYPED, LIMBA_OPF_PURE)
 
 /* integer arithmetic: the sign is in the operation, not in the type */
 LIMBA_OP(ADD, "add", LIMBA_F_BIN, LIMBA_OPF_PURE | LIMBA_OPF_COMMUTATIVE)
@@ -151,3 +150,11 @@ LIMBA_OP(LOADINV, "load.inv", LIMBA_F_LOAD,
    handler */
 LIMBA_OP(RAISE, "raise", LIMBA_F_RAISE,
          LIMBA_OPF_TERMINATOR | LIMBA_OPF_NO_RESULT | LIMBA_OPF_MAY_TRAP)
+
+/* the same as add, sub, mul, trapping on unsigned overflow (OVERFLOW, 6):
+   the operands and the result are numbers without a sign (Luxia's UInt*) */
+LIMBA_OP(UADDOV, "uadd.ov", LIMBA_F_BIN,
+         LIMBA_OPF_MAY_TRAP | LIMBA_OPF_COMMUTATIVE)
+LIMBA_OP(USUBOV, "usub.ov", LIMBA_F_BIN, LIMBA_OPF_MAY_TRAP)
+LIMBA_OP(UMULOV, "umul.ov", LIMBA_F_BIN,
+         LIMBA_OPF_MAY_TRAP | LIMBA_OPF_COMMUTATIVE)

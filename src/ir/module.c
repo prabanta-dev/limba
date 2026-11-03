@@ -68,6 +68,21 @@ bool limba_target_known(const char *s, size_t len)
     return false;
 }
 
+uint32_t limba_target_ptr_bits(const char *s, size_t len)
+{
+    return limba_target_known(s, len) ? 64 : 0; /* all 64-bit for now */
+}
+
+void limba_module_ptr_bits(limba_module *m, uint32_t bits)
+{
+    m->ptr_bits = bits;
+    if (bits != 32 && bits != 64)
+        return;
+    static const limba_id handles[] = {LIMBA_T_PTR, LIMBA_T_STR, LIMBA_T_REF};
+    for (size_t i = 0; i < sizeof(handles) / sizeof(handles[0]); i++)
+        m->types[handles[i]].size = m->types[handles[i]].align = bits / 8;
+}
+
 bool limba_type_holds_str(const limba_module *m, limba_id t)
 {
     return limba_type_counted(m, t);
@@ -106,6 +121,7 @@ limba_module *limba_module_new(void)
     limba_module *m = limba_xcalloc(1, sizeof(*m));
     m->name = LIMBA_NONE;
     m->memory = LIMBA_MEM_STRICT;
+    m->ptr_bits = 64;
     m->language = LIMBA_NONE;
     m->target = LIMBA_NONE;
     m->strings = limba_strtab_new();

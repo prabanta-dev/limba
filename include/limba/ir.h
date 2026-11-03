@@ -22,7 +22,7 @@
 #include <stdio.h>
 
 /* bumped whenever the binary form or the tables change incompatibly */
-#define LIMBA_IR_VERSION 8
+#define LIMBA_IR_VERSION 9
 
 typedef uint32_t limba_id;
 #define LIMBA_NONE UINT32_MAX
@@ -36,7 +36,7 @@ enum limba_format {
                          (zero-extended), never widened (a NaN keeps its
                          payload) */
     LIMBA_F_SCONST,   /* imm = string id */
-    LIMBA_F_TYPED,    /* nothing but the result type (null, undef) */
+    LIMBA_F_TYPED,    /* nothing but the result type (null) */
     LIMBA_F_UN,       /* one value */
     LIMBA_F_BIN,      /* two values */
     LIMBA_F_TERN,     /* three values */
@@ -400,6 +400,10 @@ typedef struct {
 typedef struct limba_module {
     limba_id name;   /* string id, LIMBA_NONE if unnamed */
     uint32_t memory; /* enum limba_memory; STRICT by default */
+    /* the bits of ptr, str and ref, 64 or 32 (64 by default): the layouts
+       the front end computes follow it. Set with limba_module_ptr_bits,
+       before any type is made */
+    uint32_t ptr_bits;
     /* how the traps of the program are presented, written by the front
        end for its language (optional): the prefix of their messages
        ("luxia"), LIMBA_NONE for the engine's own, and texts that replace
@@ -466,6 +470,12 @@ limba_id limba_str_intern(limba_module *m, const char *s, size_t len);
 /* the platforms a module may name as its target: x86_64-linux,
    aarch64-linux, x86_64-windows */
 bool limba_target_known(const char *s, size_t len);
+/* the bits of a pointer on a platform limba_target_known knows, else 0 */
+uint32_t limba_target_ptr_bits(const char *s, size_t len);
+/* the bits of ptr, str and ref in m (64 or 32; another value only makes
+   the verifier say no): their sizes change with it, so a front end sets
+   it before it makes any type */
+void limba_module_ptr_bits(limba_module *m, uint32_t bits);
 /* the text of a trap in the language of m (checked by the verifier) */
 void limba_message_add(limba_module *m, int64_t code, limba_id text);
 /* the text of a trap in module m: its own message for the code, else that
