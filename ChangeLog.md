@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `doc/ir.md`: the normative description of the IR, version 9 (types,
+  module, every operation, memory, counted handles, exceptions, the text
+  and binary forms, the run-time library, the traps, what the optimiser
+  guarantees), with the points the version leaves open.
+
 - IR version 9. The header says the bits of `ptr`, `str` and `ref`
   (`ptr_bits`, 64 or 32; text `ptr_bits 32` before any type,
   `limba_module_ptr_bits`, `limba_target_ptr_bits`): their sizes follow,
