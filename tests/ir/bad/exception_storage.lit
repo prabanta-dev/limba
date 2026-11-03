@@ -1,0 +1,5 @@
+; expect: in the family 901, which no handler catches
+; an exception of the program under StorageError: no handler could catch it
+exception 901 "StorageError"
+exception 1000 "Full" parent 1001
+exception 1001 "Tight" parent 901

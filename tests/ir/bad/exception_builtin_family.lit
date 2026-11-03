@@ -1,0 +1,4 @@
+; expect: exception 100: its family is 900 in traps.def
+; an identity of Limba keeps the family of traps.def
+exception 902 "ProgramError"
+exception 100 "IndexError" parent 902

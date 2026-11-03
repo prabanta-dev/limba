@@ -34,6 +34,27 @@ typedef struct limba_verifier {
         return false;                                                          \
     } while (0)
 
+/* the family of an identity of Limba (traps.def): -1 for a family itself */
+static int32_t builtin_family(int32_t id)
+{
+    switch (id) {
+    case LIMBA_TRAP_NOMEM:
+    case LIMBA_TRAP_STACK:
+        return LIMBA_FAMILY_STORAGE;
+    case LIMBA_TRAP_INVALID_FREE:
+        return LIMBA_FAMILY_PROGRAM;
+    case LIMBA_TRAP_IO:
+        return LIMBA_FAMILY_INPUT_OUTPUT;
+    case LIMBA_FAMILY_CONSTRAINT:
+    case LIMBA_FAMILY_STORAGE:
+    case LIMBA_FAMILY_PROGRAM:
+    case LIMBA_FAMILY_INPUT_OUTPUT:
+        return -1;
+    default:
+        return LIMBA_FAMILY_CONSTRAINT;
+    }
+}
+
 static const char *name_of(const limba_module *m, limba_id s)
 {
     return s < limba_str_count(m) ? limba_str(m, s, NULL) : "?";
@@ -435,6 +456,12 @@ static bool check_symbols(vctx *v)
         for (uint32_t j = 0; j < i; j++)
             if (m->excs[j].id == x->id)
                 FAIL("exception %" PRId32 " twice", x->id);
+        /* the family of an identity of Limba is the one of traps.def */
+        if (x->id < 1000 && x->parent != -1 &&
+            x->parent != builtin_family(x->id))
+            FAIL("exception %" PRId32 ": its family is %" PRId32
+                 " in traps.def",
+                 x->id, builtin_family(x->id));
     }
     for (uint32_t i = 0; i < m->nexcs; i++) {
         int32_t at = m->excs[i].parent;
@@ -452,10 +479,22 @@ static bool check_symbols(vctx *v)
                          m->excs[i].id, at);
                 break;
             }
+            if (at < 1000) /* an identity of Limba: traps.def goes on */
+                break;
             at = m->excs[j].parent;
         }
         if (at < -1)
             FAIL("exception %" PRId32 ": a family below -1", m->excs[i].id);
+        /* a handler never catches the family 901: an exception of the
+           program in it could not be caught either (progetto_ir.md
+           § 11i), so none goes there */
+        while (m->excs[i].id >= 1000 && at >= 0) {
+            if (at == LIMBA_FAMILY_STORAGE)
+                FAIL("exception %" PRId32 ": in the family 901, which no "
+                     "handler catches",
+                     m->excs[i].id);
+            at = builtin_family(at);
+        }
     }
     /* the data already given to a global */
     uint8_t *seen = limba_xcalloc((size_t)m->ninits + 1, 1);

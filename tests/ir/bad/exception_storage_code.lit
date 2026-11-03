@@ -1,0 +1,3 @@
+; expect: in the family 901, which no handler catches
+; under a code of the family 901, named nowhere in the table
+exception 1000 "Full" parent 7
