@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The reference interpreter sees an access outside every object alive
+  (a slot of a call running, a global, a block of `mem_alloc` not freed,
+  a C string, the bytes of a string), also in mapped memory: a wrong
+  module. It no longer runs a module of `memory fb` (unsupported), and
+  the message a caught trap gives its handler takes no memory. The
+  verifier refuses an exception of the program in the family 901
+  (`StorageError`), which no handler catches, and an identity of Limba
+  with a family other than its own.
+
 - `limba_program()` is public (`limba/ir.h`): the name given by
   `limba_set_program`, the prefix of the messages of whoever hosts Limba.
 
