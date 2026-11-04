@@ -309,6 +309,7 @@ observed.
 | `halt(c)` | `c` | none |
 | a trap or an exception no handler catches | 1 | yes (§ 13.7) |
 | a write to a closed output (`EPIPE`) | 141 | none (§ 15.1) |
+| an error of writing found at the end (the output, a file left open) | 1 | the trap `IO` without a position |
 | an error of the engine: `unreachable` executed, a wrong module, a module the engine does not support, a limit of the engine | not 0 (1 in `lir_run`) | the engine's own, with its own prefix |
 
 Engine errors are not exceptions: no handler catches them.
@@ -664,7 +665,10 @@ respects them.
 4. A `call.ext` reads and writes only memory whose address it receives
    or that has escaped (rule 1).
 5. The error edges (§ 13.4) read all memory: a store before them is
-   observable by the handler.
+   observable by the handler. A promotion of slots to values (mem2reg)
+   therefore never turns a slot that a handler reads into a value defined
+   inside a protected block: the front end keeps there the variables a
+   handler reads (Luxia, step 4).
 
 ### 9.6 The `fb` model
 
@@ -811,7 +815,7 @@ Never caught, anywhere: the codes 7 (`NOMEM`) and 28 (`STACK`) and the
 family 901, even when the program raises them (the program stops, no
 handler runs, no `finally`); `halt`; a closed output (141); `unreachable`;
 the errors of the engines (wrong module, limits). `call.ext` never raises.
-`IO` (107) can be caught.
+`IO` (107) and `INVALID_HANDLE` (109) can be caught.
 
 Outside a protected block the exception leaves the function, to the
 handler of the block of the call in the caller; at the top it ends the
@@ -853,7 +857,11 @@ The program ends with exit status 1 and one line on standard error:
   `traps.def`;
 - an identity with neither a name nor a text: `<prefix>: exception <id>`.
 
-`<prefix>` is the module's `language`, else the engine's name.
+`<prefix>` is the module's `language`, else the engine's name. Every
+engine words it with `limba_report_uncaught` (`limba/ir.h`), and a
+position with `limba_pos_print`. The table may name every code of
+`traps.def`, whether the program raises it or not: then every trap of
+the program has its name in this line.
 
 ### 13.8 The set "under a handler"
 
@@ -1071,6 +1079,7 @@ output only on runs without such errors.
 | `str_from_f64_fixed` | `(f64, i32) -> str` | ALLOC | the real in fixed notation with that many decimals, `limba_fmt_f64_fixed` (a `Float32` is widened exactly first) |
 | `str_from_char` | `(i32) -> str` | ALLOC | the UTF-8 of the code point |
 | `str_from_bool` | `(i1) -> str` | ALLOC | `true` or `false` |
+| `pos_str` | `(i32) -> str` | ALLOC | position k of the table as `limba_pos_print` writes it, `file:line:column`; `""` for 0 or past the table (k read without a sign). A new string, as `str_from_i64` |
 
 ### 15.3 Input and the command line
 
@@ -1110,12 +1119,17 @@ addresses of freed blocks; Meri compares a generation).
 |---|---|---|
 | `math_sqrt`, `math_sin`, `math_cos`, `math_tan`, `math_atan`, `math_exp`, `math_ln`, `math_trunc`, `math_floor`, `math_ceil` | `(f64) -> f64` | PURE |
 | `math_pow` | `(f64, f64) -> f64` | PURE |
+| `math_asin`, `math_acos`, `math_log2`, `math_log10`, `math_sinh`, `math_cosh`, `math_tanh` | `(f64) -> f64` | PURE |
+| `math_atan2` (`y`, `x`), `math_hypot` | `(f64, f64) -> f64` | PURE |
 
 They give **the same bits on every engine and every machine**, and in the
 folding of Limba: one library computes them, `limba/math.h` (musl 1.2.5,
-error below 1 ulp, not always correctly rounded), compiled into every
+error below 1 ulp, 2 for `math_sinh`, `math_cosh` and `math_tanh`, not
+always correctly rounded; `sqrt`, which `asin`, `acos` and `hypot` use, is
+exact), compiled into every
 engine; no engine calls the C library of the system for them. Special
-cases as IEEE 754 § 9.2.1; no `errno`, no observable flag. A function on
+cases as IEEE 754 § 9.2.1 and C99 Annex F (`atan2(±0, −0)` is ±π,
+`hypot(±inf, nan)` is +inf, `log2(±0)` is −inf); no `errno`, no observable flag. A function on
 `f32` is the function on `f64` followed by `fptrunc`. Between versions
 the bits may change only for the better, and the change is declared.
 
@@ -1206,6 +1220,51 @@ the one of the lowest index leaves `par_for` and the others are dropped.
 An exception that no handler may catch (§ 13.3) stops at once. Engines run
 the iterations in sequence (§ 5.1).
 
+### 15.11 Files
+
+| Function | Signature | Attributes | Meaning |
+|---|---|---|---|
+| `file_open` | `(str, i32) -> i64` | IO, MAY_TRAP | opens the file named by the bytes of the string: mode 0 reads, 1 writes (made, or emptied), 2 appends (made if missing); gives its handle |
+| `file_close` | `(i64) -> void` | IO, MAY_TRAP | writes the buffer and closes |
+| `file_flush` | `(i64) -> void` | IO, MAY_TRAP | writes the buffer |
+| `file_read_line` | `(i64, ptr) -> i1` | IO, ALLOC, WRITES_MEM, MAY_TRAP | as `read_line`, on the file |
+| `file_read` | `(i64, ptr, i64) -> i64` | IO, WRITES_MEM, MAY_TRAP | as `io_read`, on the file |
+| `file_write` | `(i64, ptr, i64) -> void` | IO, MAY_TRAP | as `io_write`, into the buffer of the file |
+| `file_exists` | `(str) -> i1` | IO, MAY_TRAP | is there anything of that name? |
+| `file_delete` | `(str) -> void` | IO, MAY_TRAP | removes it |
+
+- **Handles.** A handle is an `i64`: the n-th file opened successfully in
+  the run is n, and a handle is never given again. At most **256** files
+  are open at once. A handle never opened, or closed, is the trap
+  `INVALID_HANDLE` (109), in the family 902.
+- **Names.** The bytes of the string go to the system as they are; a 0
+  byte in a name is the trap `RANGE` (101). A mode other than 0, 1, 2 is
+  checked before, in the IR: a wrong module.
+- **Errors.** Failing to open is the trap `IO` (107) with a message of
+  its own, never the system's words: `not found: <name>` (no such file
+  or directory), `not allowed: <name>` (permission, a read-only file
+  system), `cannot open: <name>` (anything else, a directory too), `too
+  many open files` (the 257th). `file_delete` fails the same way, with
+  `cannot delete: <name>` for anything else. Reading a file opened for
+  writing, writing one opened for reading, and every error of reading or
+  writing are the trap `IO` with the text of `traps.def`. All of them
+  can be caught.
+- **Buffers.** Every file has a buffer of **65 536 bytes**, written with
+  `write(2)` (no other buffer between) when it is full, at `file_flush`
+  and at `file_close`, never before: an error of writing is found by the
+  same call in every engine. Reading goes through the same buffer; the
+  end of a file is final for that handle, as for the standard input.
+  The buffers are memory of the run time: outside the memory budget of
+  the program and of the count of `--check-mem`.
+- **The end of the run.** The files still open are written and closed
+  after the run, also after an exception no one caught or `halt`, after
+  its message. An error there, after a run that ended by itself
+  (returned or `halt`), is the trap `IO` without a position (§ 5.3);
+  after an exception no one caught it adds no second message.
+- The arguments the IR checks before (the range of `file_read` and
+  `file_write`, the mode) are looked at first, then the handle.
+- `lir_run` runs the files for real.
+
 ## 16. Traps and families
 
 `traps.def`. A program never sees a code as a number unless it catches
@@ -1226,12 +1285,13 @@ it; uncaught, it ends the program (§ 13.7).
 | 106 | `INVALID_FREE` | invalid dispose | 902 |
 | 107 | `IO` | input/output error | 903 |
 | 108 | `LENGTH` | length mismatch | 900 |
+| 109 | `INVALID_HANDLE` | invalid file handle | 902 |
 
 | Family | Name | Members |
 |---:|---|---|
 | 900 | `CONSTRAINT` | 6, 11, 100-105, 108 |
 | 901 | `STORAGE` | 7, 28: never caught |
-| 902 | `PROGRAM` | 106 |
+| 902 | `PROGRAM` | 106, 109 |
 | 903 | `INPUT_OUTPUT` | 107 |
 
 No instruction traps with a family's identity; a program may raise one.
@@ -1461,3 +1521,14 @@ The number is the position in `runtime.def`.
 | 26 | `read_line` | 55 | `big_to_f32` | 84 | `big_divexact` |
 | 27 | `str_to_i64` | 56 | `big_add` | 85 | `big_powmod` |
 | 28 | `str_to_f64` | 57 | `big_sub` | 86 | `par_for` |
+
+Added on 4 Nov 2026:
+
+| # | Function | # | Function | # | Function |
+|---:|---|---:|---|---:|---|
+| 87 | `pos_str` | 93 | `file_write` | 99 | `math_hypot` |
+| 88 | `file_open` | 94 | `file_exists` | 100 | `math_log2` |
+| 89 | `file_close` | 95 | `file_delete` | 101 | `math_log10` |
+| 90 | `file_flush` | 96 | `math_atan2` | 102 | `math_sinh` |
+| 91 | `file_read_line` | 97 | `math_asin` | 103 | `math_cosh` |
+| 92 | `file_read` | 98 | `math_acos` | 104 | `math_tanh` |

@@ -1,0 +1,157 @@
+; output: 0.7853981633974483
+; output: 3.141592653589793
+; output: -0.0
+; output: -1.5707963267948966
+; output: 0.5235987755982989
+; output: -0.0
+; output: nan
+; output: 0.0
+; output: 3.141592653589793
+; output: 1.2661036727794992
+; output: 5.0
+; output: inf
+; output: 1.4142135623730951e+308
+; output: 3.0
+; output: -inf
+; output: nan
+; output: 3.321928094887362
+; output: 3.0
+; output: 0.3010299956639812
+; output: 1.1752011936438014
+; output: -0.0
+; output: 1.1169973830808555e+308
+; output: 1.5430806348152437
+; output: 1.0
+; output: inf
+; output: 0.46211715726000974
+; output: -1.0
+; output: -0.0
+; result: 0
+; the functions of mathematics added on 4 Nov 2026 (doc/ir.md § 15.5):
+; the special cases of C99 Annex F (zeros with their sign, infinities,
+; NaN, overflow) and values each the correctly rounded result (checked
+; against mpmath when written), bit for bit through the shortest text
+func @main : fn() -> i64 {
+b0:
+  v0 = fconst f64 0x1.0000000000000p+0
+  v1 = fconst f64 0x1.0000000000000p+0
+  v2 = call.rt f64 math_atan2(v0, v1)
+  call.rt void print_f64(v2)
+  call.rt void print_nl()
+  v3 = fconst f64 0x0.0p+0
+  v4 = fconst f64 -0x0.0p+0
+  v5 = call.rt f64 math_atan2(v3, v4)
+  call.rt void print_f64(v5)
+  call.rt void print_nl()
+  v6 = fconst f64 -0x0.0p+0
+  v7 = fconst f64 0x0.0p+0
+  v8 = call.rt f64 math_atan2(v6, v7)
+  call.rt void print_f64(v8)
+  call.rt void print_nl()
+  v9 = fconst f64 -0x1.0000000000000p+0
+  v10 = fconst f64 -0x0.0p+0
+  v11 = call.rt f64 math_atan2(v9, v10)
+  call.rt void print_f64(v11)
+  call.rt void print_nl()
+  v12 = fconst f64 0x1.0000000000000p-1
+  v13 = call.rt f64 math_asin(v12)
+  call.rt void print_f64(v13)
+  call.rt void print_nl()
+  v14 = fconst f64 -0x0.0p+0
+  v15 = call.rt f64 math_asin(v14)
+  call.rt void print_f64(v15)
+  call.rt void print_nl()
+  v16 = fconst f64 0x1.0000000000000p+1
+  v17 = call.rt f64 math_asin(v16)
+  call.rt void print_f64(v17)
+  call.rt void print_nl()
+  v18 = fconst f64 0x1.0000000000000p+0
+  v19 = call.rt f64 math_acos(v18)
+  call.rt void print_f64(v19)
+  call.rt void print_nl()
+  v20 = fconst f64 -0x1.0000000000000p+0
+  v21 = call.rt f64 math_acos(v20)
+  call.rt void print_f64(v21)
+  call.rt void print_nl()
+  v22 = fconst f64 0x1.3333333333333p-2
+  v23 = call.rt f64 math_acos(v22)
+  call.rt void print_f64(v23)
+  call.rt void print_nl()
+  v24 = fconst f64 0x1.8000000000000p+1
+  v25 = fconst f64 0x1.0000000000000p+2
+  v26 = call.rt f64 math_hypot(v24, v25)
+  call.rt void print_f64(v26)
+  call.rt void print_nl()
+  v27 = fconst f64 inf
+  v28 = fconst f64 nan.0x7ff8000000000000
+  v29 = call.rt f64 math_hypot(v27, v28)
+  call.rt void print_f64(v29)
+  call.rt void print_nl()
+  v30 = fconst f64 0x1.1ccf385ebc8a0p+1023
+  v31 = fconst f64 0x1.1ccf385ebc8a0p+1023
+  v32 = call.rt f64 math_hypot(v30, v31)
+  call.rt void print_f64(v32)
+  call.rt void print_nl()
+  v33 = fconst f64 0x1.0000000000000p+3
+  v34 = call.rt f64 math_log2(v33)
+  call.rt void print_f64(v34)
+  call.rt void print_nl()
+  v35 = fconst f64 0x0.0p+0
+  v36 = call.rt f64 math_log2(v35)
+  call.rt void print_f64(v36)
+  call.rt void print_nl()
+  v37 = fconst f64 -0x1.0000000000000p+0
+  v38 = call.rt f64 math_log2(v37)
+  call.rt void print_f64(v38)
+  call.rt void print_nl()
+  v39 = fconst f64 0x1.4000000000000p+3
+  v40 = call.rt f64 math_log2(v39)
+  call.rt void print_f64(v40)
+  call.rt void print_nl()
+  v41 = fconst f64 0x1.f400000000000p+9
+  v42 = call.rt f64 math_log10(v41)
+  call.rt void print_f64(v42)
+  call.rt void print_nl()
+  v43 = fconst f64 0x1.0000000000000p+1
+  v44 = call.rt f64 math_log10(v43)
+  call.rt void print_f64(v44)
+  call.rt void print_nl()
+  v45 = fconst f64 0x1.0000000000000p+0
+  v46 = call.rt f64 math_sinh(v45)
+  call.rt void print_f64(v46)
+  call.rt void print_nl()
+  v47 = fconst f64 -0x0.0p+0
+  v48 = call.rt f64 math_sinh(v47)
+  call.rt void print_f64(v48)
+  call.rt void print_nl()
+  v49 = fconst f64 0x1.6300000000000p+9
+  v50 = call.rt f64 math_sinh(v49)
+  call.rt void print_f64(v50)
+  call.rt void print_nl()
+  v51 = fconst f64 0x1.0000000000000p+0
+  v52 = call.rt f64 math_cosh(v51)
+  call.rt void print_f64(v52)
+  call.rt void print_nl()
+  v53 = fconst f64 0x0.0p+0
+  v54 = call.rt f64 math_cosh(v53)
+  call.rt void print_f64(v54)
+  call.rt void print_nl()
+  v55 = fconst f64 0x1.6380000000000p+9
+  v56 = call.rt f64 math_cosh(v55)
+  call.rt void print_f64(v56)
+  call.rt void print_nl()
+  v57 = fconst f64 0x1.0000000000000p-1
+  v58 = call.rt f64 math_tanh(v57)
+  call.rt void print_f64(v58)
+  call.rt void print_nl()
+  v59 = fconst f64 -inf
+  v60 = call.rt f64 math_tanh(v59)
+  call.rt void print_f64(v60)
+  call.rt void print_nl()
+  v61 = fconst f64 -0x0.0p+0
+  v62 = call.rt f64 math_tanh(v61)
+  call.rt void print_f64(v62)
+  call.rt void print_nl()
+  v63 = iconst i64 0
+  ret v63
+}

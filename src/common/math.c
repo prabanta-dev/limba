@@ -17,6 +17,15 @@ double limba_musl_atan(double);
 double limba_musl_exp(double);
 double limba_musl_log(double);
 double limba_musl_pow(double, double);
+double limba_musl_atan2(double, double);
+double limba_musl_asin(double);
+double limba_musl_acos(double);
+double limba_musl_hypot(double, double);
+double limba_musl_log2(double);
+double limba_musl_log10(double);
+double limba_musl_sinh(double);
+double limba_musl_cosh(double);
+double limba_musl_tanh(double);
 
 double limba_math_sin(double x)
 {
@@ -51,6 +60,51 @@ double limba_math_ln(double x)
 double limba_math_pow(double x, double y)
 {
     return limba_musl_pow(x, y);
+}
+
+double limba_math_atan2(double y, double x)
+{
+    return limba_musl_atan2(y, x);
+}
+
+double limba_math_asin(double x)
+{
+    return limba_musl_asin(x);
+}
+
+double limba_math_acos(double x)
+{
+    return limba_musl_acos(x);
+}
+
+double limba_math_hypot(double x, double y)
+{
+    return limba_musl_hypot(x, y);
+}
+
+double limba_math_log2(double x)
+{
+    return limba_musl_log2(x);
+}
+
+double limba_math_log10(double x)
+{
+    return limba_musl_log10(x);
+}
+
+double limba_math_sinh(double x)
+{
+    return limba_musl_sinh(x);
+}
+
+double limba_math_cosh(double x)
+{
+    return limba_musl_cosh(x);
+}
+
+double limba_math_tanh(double x)
+{
+    return limba_musl_tanh(x);
 }
 
 bool limba_math_call(uint32_t rt, const double *a, double *out)
@@ -88,6 +142,33 @@ bool limba_math_call(uint32_t rt, const double *a, double *out)
         return true;
     case LIMBA_RT_MATH_CEIL:
         *out = ceil(a[0]);
+        return true;
+    case LIMBA_RT_MATH_ATAN2:
+        *out = limba_math_atan2(a[0], a[1]);
+        return true;
+    case LIMBA_RT_MATH_ASIN:
+        *out = limba_math_asin(a[0]);
+        return true;
+    case LIMBA_RT_MATH_ACOS:
+        *out = limba_math_acos(a[0]);
+        return true;
+    case LIMBA_RT_MATH_HYPOT:
+        *out = limba_math_hypot(a[0], a[1]);
+        return true;
+    case LIMBA_RT_MATH_LOG2:
+        *out = limba_math_log2(a[0]);
+        return true;
+    case LIMBA_RT_MATH_LOG10:
+        *out = limba_math_log10(a[0]);
+        return true;
+    case LIMBA_RT_MATH_SINH:
+        *out = limba_math_sinh(a[0]);
+        return true;
+    case LIMBA_RT_MATH_COSH:
+        *out = limba_math_cosh(a[0]);
+        return true;
+    case LIMBA_RT_MATH_TANH:
+        *out = limba_math_tanh(a[0]);
         return true;
     }
     return false;

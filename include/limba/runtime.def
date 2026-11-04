@@ -222,3 +222,54 @@ LIMBA_RT(BIG_POWMOD, "big_powmod", "(ref, ref, ref) -> ref",
 LIMBA_RT(PAR_FOR, "par_for", "(ptr, ptr, i64, i64) -> void",
          LIMBA_RTA_CALLS_PROGRAM | LIMBA_RTA_MAY_TRAP | LIMBA_RTA_WRITES_MEM |
              LIMBA_RTA_IO | LIMBA_RTA_ALLOC)
+/* the position k of the module (an index of its table, from 1) as the
+   text of a message, "file:line:column" (limba_pos_print); "" for 0 or
+   past the table. A new str, as str_from_i64 */
+LIMBA_RT(POS_STR, "pos_str", "(i32) -> str", LIMBA_RTA_ALLOC)
+/* files (doc/ir.md § 15.11): a handle is an i64 > 0, the n-th file opened
+   successfully in the run is n, never given again; at most 256 open at
+   once. mode 0 reads, 1 writes (made, or emptied), 2 appends (made if
+   missing); another mode is a wrong module. A name is the bytes of the
+   str; a 0 byte in it is the trap RANGE. Opening fails with the trap IO
+   and a message of its own: "not found: <name>", "not allowed: <name>",
+   "cannot open: <name>", "too many open files" (never the system's
+   words). Every handle has a buffer of 65 536 bytes, written with
+   write(2) when full, at flush and at close, so that an error of writing
+   is found by the same call in every engine: the trap IO. A handle never
+   opened, or closed, is the trap INVALID_HANDLE; reading a file opened
+   for writing, or writing one opened for reading, is the trap IO. At the
+   end of the run, also after an exception no one caught or halt, the
+   files still open are written and closed */
+LIMBA_RT(FILE_OPEN, "file_open", "(str, i32) -> i64",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
+LIMBA_RT(FILE_CLOSE, "file_close", "(i64) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
+LIMBA_RT(FILE_FLUSH, "file_flush", "(i64) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
+/* as read_line and io_read, on the file: the end of a file is final */
+LIMBA_RT(FILE_READ_LINE, "file_read_line", "(i64, ptr) -> i1",
+         LIMBA_RTA_IO | LIMBA_RTA_ALLOC | LIMBA_RTA_WRITES_MEM |
+             LIMBA_RTA_MAY_TRAP)
+LIMBA_RT(FILE_READ, "file_read", "(i64, ptr, i64) -> i64",
+         LIMBA_RTA_IO | LIMBA_RTA_WRITES_MEM | LIMBA_RTA_MAY_TRAP)
+/* as io_write, into the buffer of the file */
+LIMBA_RT(FILE_WRITE, "file_write", "(i64, ptr, i64) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
+/* is there a file of that name (anything stat finds)? */
+LIMBA_RT(FILE_EXISTS, "file_exists", "(str) -> i1",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
+/* removes it; failing is the trap IO: "not found: <name>", "not allowed:
+   <name>", "cannot delete: <name>" */
+LIMBA_RT(FILE_DELETE, "file_delete", "(str) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
+/* mathematics, as the functions above (limba/math.h): atan2(y, x),
+   hypot(x, y); sinh, cosh and tanh within 2 ulp, the others within 1 */
+LIMBA_RT(MATH_ATAN2, "math_atan2", "(f64, f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_ASIN, "math_asin", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_ACOS, "math_acos", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_HYPOT, "math_hypot", "(f64, f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_LOG2, "math_log2", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_LOG10, "math_log10", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_SINH, "math_sinh", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_COSH, "math_cosh", "(f64) -> f64", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_TANH, "math_tanh", "(f64) -> f64", LIMBA_RTA_PURE)

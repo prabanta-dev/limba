@@ -1,0 +1,4 @@
+; expect: exception 109: its family is 902 in traps.def
+; the invalid file handle is a ProgramError, as an invalid dispose
+exception 900 "ConstraintError"
+exception 109 "HandleError" parent 900

@@ -1,0 +1,37 @@
+; output: prog.luxia:3:7
+; output: lib/a b.luxia:10:1
+; output: []
+; output: []
+; result: 0
+; pos_str: a position of the table as "file:line:column", "" for 0 and
+; past the table
+pos 1 "prog.luxia" 3 7
+pos 2 "lib/a b.luxia" 10 1
+
+func @main : fn() -> i64 {
+b0:
+  v0 = iconst i32 1
+  v1 = call.rt str pos_str(v0)
+  call.rt void print_str(v1)
+  call.rt void print_nl()
+  v2 = iconst i32 2
+  v3 = call.rt str pos_str(v2)
+  call.rt void print_str(v3)
+  call.rt void print_nl()
+  v4 = sconst str "["
+  v5 = sconst str "]"
+  v6 = iconst i32 0
+  v7 = call.rt str pos_str(v6)
+  call.rt void print_str(v4)
+  call.rt void print_str(v7)
+  call.rt void print_str(v5)
+  call.rt void print_nl()
+  v8 = iconst i32 3
+  v9 = call.rt str pos_str(v8)
+  call.rt void print_str(v4)
+  call.rt void print_str(v9)
+  call.rt void print_str(v5)
+  call.rt void print_nl()
+  v10 = iconst i64 0
+  ret v10
+}

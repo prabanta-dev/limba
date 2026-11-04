@@ -24,6 +24,7 @@
 #include "limba/val.h"
 #include "common/leb128.h"
 #include "common/xalloc.h"
+#include "files.h"
 #include "objmap.h"
 #include "common/bigint.h"
 #include "ir/internal.h"
@@ -119,6 +120,7 @@ typedef struct {
     estr **sconst; /* the string of each sconst, made once: immortal */
     bool checked;  /* the counts checked once, at the end or at a stop */
     bool in_end;   /* the end of the input met: final (luxia-0.md § 9.2) */
+    efiles files;  /* the files the program opened (doc/ir.md § 15.11) */
     /* the collection of strings and BigInts no longer held (collect) */
     estr **vals; /* every string and BigInt made, not yet freed */
     size_t nvals, capvals;
@@ -527,6 +529,8 @@ static bool forget(E *e, uintptr_t p, size_t n);
 static bool no_str(E *e, uintptr_t p, size_t n);
 static bool badmem(E *e);
 static bool runtime_arrays(E *e, uint32_t rt, const uint64_t *a, uint64_t *r);
+static bool runtime_files(E *e, uint32_t rt, const uint64_t *a, uint64_t *r);
+static bool runtime_big(E *e, uint32_t rt, const uint64_t *a, uint64_t *r);
 
 /* UTF-8 of a code point, into buf (4 bytes); its length */
 static size_t utf8(uint32_t c, char *buf)
@@ -993,6 +997,121 @@ static bool runtime_arrays(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         return true;
     }
     }
+    return runtime_files(e, rt, a, r);
+}
+
+/* a trap whose message the run time words: what, then n bytes of name.
+   The str is a value made by the call, in the budget, as its result
+   would be */
+static bool trap_said(E *e, int64_t code, const char *what, const char *name,
+                      size_t n)
+{
+    size_t w = strlen(what);
+    estr *x = str_alloc(e, w + n);
+    memcpy(x->data, what, w);
+    if (n)
+        memcpy(x->data + w, name, n);
+    e->exc_msg = sv(x);
+    return trap(e, code);
+}
+
+/* the end of a call of file_*: its trap, if any, with its words */
+static bool file_done(E *e, int res, const estr *name, bool deleting)
+{
+    switch (res) {
+    case FILES_OK:
+        return true;
+    case FILES_HANDLE:
+        return trap(e, LIMBA_TRAP_INVALID_HANDLE);
+    case FILES_NOTFOUND:
+        return trap_said(e, LIMBA_TRAP_IO, "not found: ", name->data,
+                         name->len);
+    case FILES_DENIED:
+        return trap_said(e, LIMBA_TRAP_IO, "not allowed: ", name->data,
+                         name->len);
+    case FILES_CANNOT:
+        return trap_said(e, LIMBA_TRAP_IO,
+                         deleting ? "cannot delete: " : "cannot open: ",
+                         name->data, name->len);
+    case FILES_TOOMANY:
+        return trap_said(e, LIMBA_TRAP_IO, "too many open files", "", 0);
+    default:
+        return trap(e, LIMBA_TRAP_IO);
+    }
+}
+
+/* pos_str and the files (doc/ir.md § 15.11): the arguments the IR checks
+   before (the tract, the mode) first, as wrong modules, then the handle */
+static bool runtime_files(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
+{
+    const estr *name = str_of(a[0]);
+    switch (rt) {
+    case LIMBA_RT_POS_STR: {
+        uint32_t k = (uint32_t)a[0];
+        size_t n = limba_pos_print(e->m, k, NULL, 0);
+        estr *x = str_alloc(e, n);
+        if (n)
+            limba_pos_print(e->m, k, x->data, n + 1);
+        *r = sv(x);
+        return true;
+    }
+    case LIMBA_RT_FILE_OPEN:
+    case LIMBA_RT_FILE_EXISTS:
+    case LIMBA_RT_FILE_DELETE: {
+        int32_t mode = (int32_t)a[1];
+        if (rt == LIMBA_RT_FILE_OPEN && (mode < 0 || mode > 2))
+            return bad_module(e);
+        if (memchr(name->data, 0, name->len))
+            return trap(e, LIMBA_TRAP_RANGE); /* the system would cut it */
+        char *z = limba_xmalloc(name->len + 1);
+        memcpy(z, name->data, name->len);
+        z[name->len] = 0;
+        int res = FILES_OK;
+        int64_t h = 0;
+        if (rt == LIMBA_RT_FILE_OPEN)
+            res = files_open(&e->files, z, mode, &h);
+        else if (rt == LIMBA_RT_FILE_DELETE)
+            res = files_delete(z);
+        else
+            h = files_exists(z);
+        free(z);
+        *r = (uint64_t)h;
+        return file_done(e, res, name, rt == LIMBA_RT_FILE_DELETE);
+    }
+    case LIMBA_RT_FILE_CLOSE:
+        return file_done(e, files_close(&e->files, (int64_t)a[0]), NULL, 0);
+    case LIMBA_RT_FILE_FLUSH:
+        return file_done(e, files_flush(&e->files, (int64_t)a[0]), NULL, 0);
+    case LIMBA_RT_FILE_READ_LINE: {
+        char *line;
+        size_t len;
+        bool got;
+        int res = files_read_line(&e->files, (int64_t)a[0], &line, &len, &got);
+        if (res != FILES_OK)
+            return file_done(e, res, NULL, false);
+        uint64_t s = sv(str_make(e, got ? line : "", len));
+        free(line);
+        *r = got;
+        return mem_store(e, a[1], LIMBA_T_STR, s);
+    }
+    case LIMBA_RT_FILE_READ:
+    case LIMBA_RT_FILE_WRITE: {
+        uint8_t *p = (uint8_t *)(uintptr_t)a[1];
+        int64_t n = (int64_t)a[2];
+        if (n < 0 || wild(e, (uintptr_t)p, (uint64_t)n))
+            return bad_module(e);
+        if (n && e->lim.check_mem && !no_str(e, (uintptr_t)p, (size_t)n))
+            return false;
+        if (rt == LIMBA_RT_FILE_WRITE)
+            return file_done(
+                e, files_write(&e->files, (int64_t)a[0], p, (size_t)n), NULL,
+                false);
+        size_t got = 0;
+        int res = files_read(&e->files, (int64_t)a[0], p, (size_t)n, &got);
+        *r = got;
+        return file_done(e, res, NULL, false);
+    }
+    }
     return runtime_big(e, rt, a, r);
 }
 
@@ -1273,9 +1392,20 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_MATH_POW:
     case LIMBA_RT_MATH_TRUNC:
     case LIMBA_RT_MATH_FLOOR:
-    case LIMBA_RT_MATH_CEIL: {
-        /* limba/math.h: the same bits as every engine (IR § 11b) */
-        double in[2] = {dv(a[0]), rt == LIMBA_RT_MATH_POW ? dv(a[1]) : 0}, out;
+    case LIMBA_RT_MATH_CEIL:
+    case LIMBA_RT_MATH_ATAN2:
+    case LIMBA_RT_MATH_ASIN:
+    case LIMBA_RT_MATH_ACOS:
+    case LIMBA_RT_MATH_HYPOT:
+    case LIMBA_RT_MATH_LOG2:
+    case LIMBA_RT_MATH_LOG10:
+    case LIMBA_RT_MATH_SINH:
+    case LIMBA_RT_MATH_COSH:
+    case LIMBA_RT_MATH_TANH: {
+        /* limba/math.h: the same bits as every engine (doc/ir.md § 15.5) */
+        bool two = rt == LIMBA_RT_MATH_POW || rt == LIMBA_RT_MATH_ATAN2 ||
+                   rt == LIMBA_RT_MATH_HYPOT;
+        double in[2] = {dv(a[0]), two ? dv(a[1]) : 0}, out;
         limba_math_call(rt, in, &out);
         *r = fbits(out, LIMBA_T_F64);
         return true;
@@ -2384,6 +2514,7 @@ void limba_eval(const limba_module *m, const char *entry,
         e.lim.collect_often = limits->collect_often;
     }
     memset(r, 0, sizeof(*r));
+    files_init(&e.files);
 
     limba_id name = LIMBA_NONE, fid = LIMBA_NONE;
     size_t n = strlen(entry);
@@ -2451,6 +2582,17 @@ void limba_eval(const limba_module *m, const char *entry,
     uint64_t ret = 0;
     if (e.status == LIMBA_EVAL_OK)
         run_on_stack(&e, &m->funcs[fid], &ret);
+    /* the files still open, written and closed, whatever the end; an
+       error there is the trap IO without a position, as one of the
+       standard output, unless the run already stopped on an error of its
+       own (doc/ir.md § 15.11) */
+    if (!files_close_all(&e.files) &&
+        (e.status == LIMBA_EVAL_OK || e.status == LIMBA_EVAL_HALT)) {
+        e.status = LIMBA_EVAL_TRAP;
+        e.code = LIMBA_TRAP_IO;
+        e.pos = 0;
+        e.exc_msg = 0;
+    }
     if (e.status == LIMBA_EVAL_OK && e.lim.check_mem)
         end_check(&e);
     /* an exception that left the entry: the calls left released their

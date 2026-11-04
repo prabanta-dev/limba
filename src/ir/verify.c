@@ -42,6 +42,7 @@ static int32_t builtin_family(int32_t id)
     case LIMBA_TRAP_STACK:
         return LIMBA_FAMILY_STORAGE;
     case LIMBA_TRAP_INVALID_FREE:
+    case LIMBA_TRAP_INVALID_HANDLE:
         return LIMBA_FAMILY_PROGRAM;
     case LIMBA_TRAP_IO:
         return LIMBA_FAMILY_INPUT_OUTPUT;

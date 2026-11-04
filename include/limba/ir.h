@@ -578,6 +578,21 @@ limba_id limba_param_add(limba_func *f, limba_id b, limba_id t);
 /* a position, by index from 1; the last one again if it is the same */
 uint32_t limba_pos_add(limba_module *m, limba_id file, uint32_t line,
                        uint32_t col);
+/* the text of position k of m as a message gives it, "file:line:column",
+   into buf (cap bytes, a NUL at the end if cap > 0); returns its length
+   as snprintf does (cap or more: cut), 0 for k = 0 or past the table */
+size_t limba_pos_print(const limba_module *m, uint32_t k, char *buf,
+                       size_t cap);
+/* the line on out with which an exception no handler caught ends a
+   program (doc/ir.md § 13.7), the same in every engine: the prefix (the
+   language of m, else limba_program()), the name the table of m gives
+   id, the message, " at file:line:column" for a position pos of the
+   table. msg is the message of the occurrence, msglen bytes; NULL when it
+   has none (an error of the output found after the run): then, and when
+   it is empty and id has no name, the text of the trap (of m or of
+   traps.def); "exception <id>" when there is none */
+void limba_report_uncaught(const limba_module *m, int64_t id, const char *msg,
+                           size_t msglen, uint32_t pos, FILE *out);
 /* the position of an instruction, 0 if none */
 static inline uint32_t limba_inst_pos(const limba_func *f, limba_id i)
 {

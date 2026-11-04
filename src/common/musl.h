@@ -29,6 +29,18 @@
 #define exp limba_musl_exp
 #define log limba_musl_log
 #define pow limba_musl_pow
+#define atan2 limba_musl_atan2
+#define asin limba_musl_asin
+#define acos limba_musl_acos
+#define hypot limba_musl_hypot
+#define log2 limba_musl_log2
+#define log10 limba_musl_log10
+#define sinh limba_musl_sinh
+#define cosh limba_musl_cosh
+#define tanh limba_musl_tanh
+#define expm1 limba_musl_expm1
+#define log1p limba_musl_log1p
+#define __log2_data limba_musl___log2_data
 #define __sin limba_musl___sin
 #define __cos limba_musl___cos
 #define __tan limba_musl___tan
@@ -45,11 +57,11 @@
 #define scalbn limba_musl_scalbn
 #define floor limba_musl_floor
 #define fabs limba_musl_fabs
+#define __expo2 limba_musl___expo2
 /* declared by libm.h, not compiled here: renamed all the same, since the
    C library may declare a different function of the same name */
 #define __cosdf limba_musl___cosdf
 #define __cosl limba_musl___cosl
-#define __expo2 limba_musl___expo2
 #define __expo2f limba_musl___expo2f
 #define __lgammaf_r limba_musl___lgammaf_r
 #define __lgamma_r limba_musl___lgamma_r
@@ -78,6 +90,17 @@ double atan(double);
 double exp(double);
 double log(double);
 double pow(double, double);
+double atan2(double, double);
+double asin(double);
+double acos(double);
+double hypot(double, double);
+double log2(double);
+double log10(double);
+double sinh(double);
+double cosh(double);
+double tanh(double);
+double expm1(double);
+double log1p(double);
 double scalbn(double, int);
 double floor(double);
 double fabs(double);

@@ -7,9 +7,10 @@
  *   of the results on fixed arguments, written here once (x86-64, 22 Oct
  *   2026); a machine or compiler that computes one bit differently fails;
  * - the precision against mpmath, within the error the library declares
- *   (below 1 ulp): tests/math/reference.txt, written by
- *   tools/math_reference.py, gives for each argument the two doubles
- *   around the exact result, and the result must be one of them;
+ *   (below 1 ulp, 2 for sinh, cosh and tanh): tests/math/reference.txt,
+ *   written by tools/math_reference.py, gives for each argument the two
+ *   doubles around the exact result, and the result must be one of them
+ *   (within 2 steps of the nearest for the functions of 2 ulp);
  * - the special cases of IEEE 754 § 9.2.1, value and sign.
  * Run from the root of the repository (build.sh test does).
  */
@@ -79,9 +80,36 @@ static double any_finite(void)
     return x;
 }
 
-enum { SIN, COS, TAN, ATAN, EXP, LN, POW, NFUNC };
-static const char *const names[NFUNC] = {"sin", "cos", "tan", "atan",
-                                         "exp", "ln",  "pow"};
+enum {
+    SIN,
+    COS,
+    TAN,
+    ATAN,
+    EXP,
+    LN,
+    POW,
+    ATAN2,
+    ASIN,
+    ACOS,
+    HYPOT,
+    LOG2,
+    LOG10,
+    SINH,
+    COSH,
+    TANH,
+    NFUNC
+};
+static const char *const names[NFUNC] = {
+    "sin",  "cos",  "tan",   "atan", "exp",   "ln",   "pow",  "atan2",
+    "asin", "acos", "hypot", "log2", "log10", "sinh", "cosh", "tanh"};
+/* the error the library declares, in ulp (math.h) */
+static const int ulps[NFUNC] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2};
+
+/* two arguments */
+static bool binary(int f)
+{
+    return f == POW || f == ATAN2 || f == HYPOT;
+}
 
 /* the arguments of function f, the k-th time */
 static void args(int f, double *x, double *y)
@@ -123,6 +151,29 @@ static void args(int f, double *x, double *y)
             *y = uniform(-60, 60);
         }
         break;
+    case ATAN2:
+        *x = next() & 1 ? uniform(-20, 20) : any_finite();
+        *y = next() & 1 ? uniform(-20, 20) : any_finite();
+        break;
+    case ASIN:
+    case ACOS:
+        *x = uniform(-1, 1);
+        break;
+    case HYPOT:
+        *x = next() & 1 ? uniform(-1e3, 1e3) : any_finite();
+        *y = next() & 1 ? uniform(-1e3, 1e3) : any_finite();
+        break;
+    case LOG2:
+    case LOG10:
+        *x = next() & 1 ? uniform(0, 4) : fabs(any_finite());
+        break;
+    case SINH:
+    case COSH:
+        *x = next() & 1 ? uniform(-1, 1) : uniform(-710, 710);
+        break;
+    case TANH:
+        *x = uniform(-20, 20);
+        break;
     }
 }
 
@@ -141,8 +192,26 @@ static double ours(int f, double x, double y)
         return limba_math_exp(x);
     case LN:
         return limba_math_ln(x);
-    default:
+    case POW:
         return limba_math_pow(x, y);
+    case ATAN2:
+        return limba_math_atan2(x, y);
+    case ASIN:
+        return limba_math_asin(x);
+    case ACOS:
+        return limba_math_acos(x);
+    case HYPOT:
+        return limba_math_hypot(x, y);
+    case LOG2:
+        return limba_math_log2(x);
+    case LOG10:
+        return limba_math_log10(x);
+    case SINH:
+        return limba_math_sinh(x);
+    case COSH:
+        return limba_math_cosh(x);
+    default:
+        return limba_math_tanh(x);
     }
 }
 
@@ -150,9 +219,23 @@ static double ours(int f, double x, double y)
    bits of x86-64 (gcc 14, glibc 2.41, 22 Oct 2026). A machine that
    computes another bit fails here */
 static const uint64_t golden[NFUNC] = {
-    0xb75bc577edfe06d8ull, 0x752c64e2dd07432eull, 0x76a0931ee7e1c5c6ull,
-    0x8dda83b3c5bb27adull, 0x16d6ea14f075aebbull, 0x3d4c66095b65f981ull,
+    0xb75bc577edfe06d8ull,
+    0x752c64e2dd07432eull,
+    0x76a0931ee7e1c5c6ull,
+    0x8dda83b3c5bb27adull,
+    0x16d6ea14f075aebbull,
+    0x3d4c66095b65f981ull,
     0x57220fba1d2e905bull,
+    /* the nine of 4 Nov 2026 (gcc 14, glibc 2.41) */
+    0xa926a47a89bf8fdeull,
+    0x4de3884e61fedb79ull,
+    0x0f4cc30c92fd7b09ull,
+    0x7704ba754a63242eull,
+    0xbd5505b8490a32adull,
+    0xd361437f85d6e5c2ull,
+    0x3a16d10afbe1f116ull,
+    0xc8109454b58a2f43ull,
+    0x1b27fb8dd8b66a79ull,
 };
 
 static void test_bits(void)
@@ -173,7 +256,8 @@ static void test_bits(void)
 }
 
 /* the precision: each result one of the two doubles around the exact one
-   (mpmath), so below 1 ulp; how many are the nearest, on request */
+   (mpmath), so below 1 ulp (2 where ulps says so); how many are the nearest, on
+   request */
 static void test_reference(void)
 {
     FILE *in = fopen("tests/math/reference.txt", "r");
@@ -188,7 +272,7 @@ static void test_reference(void)
             f++;
         unsigned long long xb, yb = 0, nb, ob;
         bool ok = f < NFUNC && fscanf(in, "%llx", &xb) == 1 &&
-                  (f != POW || fscanf(in, "%llx", &yb) == 1) &&
+                  (!binary(f) || fscanf(in, "%llx", &yb) == 1) &&
                   fscanf(in, "%llx %llx", &nb, &ob) == 2;
         CHECK(ok, "tests/math/reference.txt: line %u malformed", lines + 1);
         if (!ok)
@@ -196,14 +280,21 @@ static void test_reference(void)
         lines++;
         double x = from_bits(xb), y = from_bits(yb);
         uint64_t r = bits(ours(f, x, y));
-        CHECK(r == nb || r == ob,
-              "%s(%a, %a) = %a, outside 1 ulp: exact between %a and %a",
-              names[f], x, y, from_bits(r), from_bits(nb), from_bits(ob));
+        /* 1 ulp: one of the two; 2 ulp: at most two steps from the
+           nearest */
+        uint64_t d = r > nb ? r - nb : nb - r;
+        bool within =
+            r == nb || r == ob ||
+            (ulps[f] > 1 && (r >> 63) == (nb >> 63) && d <= (uint64_t)ulps[f]);
+        CHECK(within,
+              "%s(%a, %a) = %a, outside %d ulp: exact between %a and %a",
+              names[f], x, y, from_bits(r), ulps[f], from_bits(nb),
+              from_bits(ob));
         nearest[f] += r == nb;
         count[f]++;
     }
     fclose(in);
-    CHECK(lines >= 7000, "tests/math/reference.txt: %u lines", lines);
+    CHECK(lines >= 16000, "tests/math/reference.txt: %u lines", lines);
     if (getenv("LIMBA_MATH_VERBOSE"))
         for (int f = 0; f < NFUNC; f++)
             fprintf(stderr, "%s: %u of %u rounded to nearest\n", names[f],
@@ -262,6 +353,47 @@ static void test_special(void)
     special(POW, 2.0, 1024.0, inf);
     special(POW, 2.0, -1075.0, 0.0);
     special(POW, 2.0, 10.0, 1024.0);
+    double pi = 0x1.921fb54442d18p+1, half_pi = 0x1.921fb54442d18p+0;
+    special(ATAN2, 0.0, -0.0, pi);
+    special(ATAN2, -0.0, -0.0, -pi);
+    special(ATAN2, 0.0, 0.0, 0.0);
+    special(ATAN2, -0.0, 0.0, -0.0);
+    special(ATAN2, 1.0, 0.0, half_pi);
+    special(ATAN2, -1.0, -0.0, -half_pi);
+    special(ATAN2, 1.0, -inf, pi);
+    special(ATAN2, -1.0, inf, -0.0);
+    special(ATAN2, inf, inf, 0x1.921fb54442d18p-1);
+    special(ATAN2, nan, 1.0, nan);
+    special(ASIN, -0.0, 0, -0.0);
+    special(ASIN, 1.0, 0, half_pi);
+    special(ASIN, 1.5, 0, nan);
+    special(ACOS, 1.0, 0, 0.0);
+    special(ACOS, -1.0, 0, pi);
+    special(ACOS, -2.0, 0, nan);
+    special(HYPOT, inf, nan, inf);
+    special(HYPOT, nan, -inf, inf);
+    special(HYPOT, -3.0, 4.0, 5.0);
+    special(HYPOT, nan, 1.0, nan);
+    special(LOG2, 1.0, 0, 0.0);
+    special(LOG2, 0.0, 0, -inf);
+    special(LOG2, -0.0, 0, -inf);
+    special(LOG2, -1.0, 0, nan);
+    special(LOG2, 1024.0, 0, 10.0);
+    special(LOG2, inf, 0, inf);
+    special(LOG10, 1.0, 0, 0.0);
+    special(LOG10, -0.0, 0, -inf);
+    special(LOG10, 1e22, 0, 22.0);
+    special(LOG10, -1.0, 0, nan);
+    special(SINH, -0.0, 0, -0.0);
+    special(SINH, -inf, 0, -inf);
+    special(SINH, 711.0, 0, inf);
+    special(COSH, -0.0, 0, 1.0);
+    special(COSH, -inf, 0, inf);
+    special(COSH, 711.0, 0, inf);
+    special(TANH, -0.0, 0, -0.0);
+    special(TANH, inf, 0, 1.0);
+    special(TANH, -inf, 0, -1.0);
+    special(TANH, nan, 0, nan);
 }
 
 int main(void)
@@ -271,7 +403,7 @@ int main(void)
     test_bits();
     test_reference();
     printf("test_math: %u checks: special cases, the same bits on fixed "
-           "arguments, within 1 ulp of mpmath; %d failures\n",
+           "arguments, within the declared ulp of mpmath; %d failures\n",
            checked, failures);
     return failures ? 1 : 0;
 }

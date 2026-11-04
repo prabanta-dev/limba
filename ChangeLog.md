@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Files in the run-time library: `file_open`, `file_close`, `file_flush`,
+  `file_read_line`, `file_read`, `file_write`, `file_exists`,
+  `file_delete`; handles numbered from 1, at most 256 open, a buffer of
+  64 KiB each written with `write(2)`, errors as the trap IO with words of
+  their own, the new trap 109 "invalid file handle" (ProgramError), the
+  files closed at the end of every run. The reference interpreter runs
+  them for real.
+- `pos_str`: a position of the module as "file:line:column". The words of
+  an exception no one caught, and of a position, are one function of the
+  library (`limba_report_uncaught`, `limba_pos_print`), used by
+  `lir_run`.
+- Nine functions of mathematics from musl, the same bits everywhere:
+  `math_atan2`, `math_asin`, `math_acos`, `math_hypot`, `math_log2`,
+  `math_log10`, `math_sinh`, `math_cosh`, `math_tanh` (2 ulp for the
+  last three, 1 for the others), checked against mpmath.
+
 - `doc/ir.md`: the normative description of the IR, version 9 (types,
   module, every operation, memory, counted handles, exceptions, the text
   and binary forms, the run-time library, the traps, what the optimiser

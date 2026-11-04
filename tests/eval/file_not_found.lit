@@ -1,0 +1,17 @@
+; trap: 107
+; message: not found: lib/eval_files/none/x.txt
+; report: luxia: FileError: not found: lib/eval_files/none/x.txt at f.luxia:1:1
+; opening what is not there: the trap IO with words of its own, never
+; those of the system
+language "luxia"
+exception 903 "InputOutputError"
+exception 107 "FileError" parent 903
+pos 1 "f.luxia" 1 1
+
+func @main : fn() -> i64 {
+b0:
+  v0 = sconst str "lib/eval_files/none/x.txt"
+  v1 = iconst i32 0
+  v2 = call.rt i64 file_open(v0, v1) !1
+  ret v2
+}

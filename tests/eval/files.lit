@@ -1,0 +1,71 @@
+; output: 3
+; output: hello
+; output: world
+; output: tail
+; output: false
+; output: 0
+; output: true
+; output: false
+; result: 0
+; files (doc/ir.md § 15.11): write, flush, append, read lines (a "\r"
+; before "\n" dropped, the last line without one), the end final, the
+; handles numbered from 1, exists and delete. Every file in
+; lib/eval_files, which test_eval makes
+func @main : fn() -> i64 {
+  slot 8 align 8 type str
+b0:
+  v0 = sconst str "lib/eval_files/files.txt"
+  v1 = iconst i32 1
+  v2 = call.rt i64 file_open(v0, v1)
+  v3 = sconst str "hello\nwor"
+  v4 = call.rt ptr str_ptr(v3)
+  v5 = call.rt i64 str_len(v3)
+  call.rt void file_write(v2, v4, v5)
+  call.rt void file_flush(v2)
+  v6 = sconst str "ld\x0d\n"
+  v7 = call.rt ptr str_ptr(v6)
+  v8 = call.rt i64 str_len(v6)
+  call.rt void file_write(v2, v7, v8)
+  call.rt void file_close(v2)
+  v9 = iconst i32 2
+  v10 = call.rt i64 file_open(v0, v9)
+  v11 = sconst str "tail"
+  v12 = call.rt ptr str_ptr(v11)
+  v13 = call.rt i64 str_len(v11)
+  call.rt void file_write(v10, v12, v13)
+  call.rt void file_close(v10)
+  v14 = iconst i32 0
+  v15 = call.rt i64 file_open(v0, v14)
+  call.rt void print_i64(v15)
+  call.rt void print_nl()
+  v16 = slot ptr $0
+  v17 = call.rt i1 file_read_line(v15, v16)
+  v18 = load str v16
+  call.rt void print_str(v18)
+  call.rt void print_nl()
+  v19 = call.rt i1 file_read_line(v15, v16)
+  v20 = load str v16
+  call.rt void print_str(v20)
+  call.rt void print_nl()
+  v21 = call.rt i1 file_read_line(v15, v16)
+  v22 = load str v16
+  call.rt void print_str(v22)
+  call.rt void print_nl()
+  v23 = call.rt i1 file_read_line(v15, v16)
+  call.rt void print_bool(v23)
+  call.rt void print_nl()
+  v24 = iconst i64 4
+  v25 = call.rt i64 file_read(v15, v4, v24)
+  call.rt void print_i64(v25)
+  call.rt void print_nl()
+  call.rt void file_close(v15)
+  v26 = call.rt i1 file_exists(v0)
+  call.rt void print_bool(v26)
+  call.rt void print_nl()
+  call.rt void file_delete(v0)
+  v27 = call.rt i1 file_exists(v0)
+  call.rt void print_bool(v27)
+  call.rt void print_nl()
+  v28 = iconst i64 0
+  ret v28
+}

@@ -1,0 +1,16 @@
+; trap: 1001
+; message: no digit here
+; report: luxia: BadDigit: no digit here at prog.luxia:3:7
+; the line an exception no one caught ends with (doc/ir.md § 13.7):
+; prefix, name, message, position
+language "luxia"
+exception 1001 "BadDigit"
+pos 1 "prog.luxia" 3 7
+
+func @main : fn() -> i64 {
+b0:
+  v0 = iconst i32 1001
+  v1 = iconst i32 1
+  v2 = sconst str "no digit here"
+  raise v0, v1, v2
+}

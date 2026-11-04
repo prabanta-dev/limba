@@ -1,0 +1,28 @@
+; output: 109
+; output: invalid file handle
+; trap: 109
+; message: invalid file handle
+; a handle never opened, or closed, is the trap INVALID_HANDLE (109), in
+; ProgramError: a handler catches it
+func @main : fn() -> i64 {
+b0:
+  v0 = iconst i64 5
+  br b1
+b1 handler b2:
+  call.rt void file_flush(v0)
+  v1 = iconst i64 0
+  ret v1
+b2(v2: i32, v3: i32, v4: str):
+  v5 = sext i64 v2
+  call.rt void print_i64(v5)
+  call.rt void print_nl()
+  call.rt void print_str(v4)
+  call.rt void print_nl()
+  v6 = sconst str "lib/eval_files/handle.txt"
+  v7 = iconst i32 1
+  v8 = call.rt i64 file_open(v6, v7)
+  call.rt void file_close(v8)
+  call.rt void file_delete(v6)
+  call.rt void file_close(v8)
+  ret v8
+}

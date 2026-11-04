@@ -1,0 +1,9 @@
+; trap: 101
+; a 0 byte in a name: the trap RANGE, as cstr_new
+func @main : fn() -> i64 {
+b0:
+  v0 = sconst str "lib/eval_files/a\x00b"
+  v1 = call.rt i1 file_exists(v0)
+  v2 = iconst i64 0
+  ret v2
+}

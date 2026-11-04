@@ -22,6 +22,10 @@
  * word of memory alive, no count of check_mem; one held only by a freed
  * block goes too.
  *
+ * The files of file_* (doc/ir.md § 15.11) are real files, opened with
+ * open(2), written with write(2) from a buffer of 64 KiB each, outside
+ * the budget; those left open are closed at the end of every run.
+ *
  * read_line and io_read read one stream, in; its end is final, and an
  * error in reading it is the trap IO. The output stays in memory, in out:
  * whoever writes it checks the writing (lir_run).

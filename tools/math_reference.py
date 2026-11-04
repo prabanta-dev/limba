@@ -61,6 +61,22 @@ def args(name, rng):
     if name == "ln":
         x = rng.uniform(0, 4) if rng.random() < 0.5 else abs(any_finite(rng))
         return (x if x > 0 else 1.0,)
+    if name == "atan2":
+        return tuple(rng.uniform(-20, 20) if rng.random() < 0.5
+                     else any_finite(rng) for _ in range(2))
+    if name in ("asin", "acos"):
+        return (rng.uniform(-1, 1),)
+    if name == "hypot":
+        return tuple(rng.uniform(-1e3, 1e3) if rng.random() < 0.5
+                     else any_finite(rng) for _ in range(2))
+    if name in ("log2", "log10"):
+        x = rng.uniform(0, 4) if rng.random() < 0.5 else abs(any_finite(rng))
+        return (x if x > 0 else 1.0,)
+    if name in ("sinh", "cosh"):
+        x = rng.uniform(-1, 1) if rng.random() < 0.5 else rng.uniform(-710, 710)
+        return (x,)
+    if name == "tanh":
+        return (rng.uniform(-20, 20),)
     # pow
     if rng.random() < 0.25:
         return (-rng.uniform(0.1, 20), float(rng.randrange(-30, 31)))
@@ -80,13 +96,34 @@ def exact(name, a):
         return mpmath.exp(x)
     if name == "ln":
         return mpmath.log(x)
+    if name == "atan2":
+        return mpmath.atan2(x, mpmath.mpf(a[1]))
+    if name == "asin":
+        return mpmath.asin(x)
+    if name == "acos":
+        return mpmath.acos(x)
+    if name == "hypot":
+        return mpmath.hypot(x, mpmath.mpf(a[1]))
+    if name == "log2":
+        return mpmath.log(x, 2)
+    if name == "log10":
+        return mpmath.log10(x)
+    if name == "sinh":
+        return mpmath.sinh(x)
+    if name == "cosh":
+        return mpmath.cosh(x)
+    if name == "tanh":
+        return mpmath.tanh(x)
     return mpmath.power(x, mpmath.mpf(a[1]))
 
 
 def main():
     rng = random.Random(20261022)
     out = sys.stdout
-    for name in ("sin", "cos", "tan", "atan", "exp", "ln", "pow"):
+    # the first seven, then those of 4 Nov 2026: the lines before stay
+    for name in ("sin", "cos", "tan", "atan", "exp", "ln", "pow", "atan2",
+                 "asin", "acos", "hypot", "log2", "log10", "sinh", "cosh",
+                 "tanh"):
         done = 0
         while done < COUNT:
             a = args(name, rng)

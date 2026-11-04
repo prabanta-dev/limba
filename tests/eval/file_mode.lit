@@ -1,0 +1,9 @@
+; module: wrong
+; a mode other than 0, 1, 2 is checked before, in the IR
+func @main : fn() -> i64 {
+b0:
+  v0 = sconst str "lib/eval_files/mode.txt"
+  v1 = iconst i32 3
+  v2 = call.rt i64 file_open(v0, v1)
+  ret v2
+}

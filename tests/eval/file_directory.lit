@@ -1,0 +1,10 @@
+; trap: 107
+; message: cannot open: lib/eval_files
+; a directory is no file to open
+func @main : fn() -> i64 {
+b0:
+  v0 = sconst str "lib/eval_files"
+  v1 = iconst i32 0
+  v2 = call.rt i64 file_open(v0, v1)
+  ret v2
+}

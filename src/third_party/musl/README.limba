@@ -1,6 +1,7 @@
 The mathematics of musl, compiled into Limba (progetto_ir.md § 11b): the
-functions sin, cos, tan, atan, exp, log and pow that every engine runs, so
-that they give the same bits on every machine.
+functions sin, cos, tan, atan, exp, log, pow, atan2, asin, acos, hypot,
+log2, log10, sinh, cosh and tanh that every engine runs, so that they give
+the same bits on every machine.
 
 Version: musl 1.2.5, https://musl.libc.org/releases/musl-1.2.5.tar.gz
 sha256 a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4
@@ -12,12 +13,15 @@ The files are musl's, unchanged, from these places of the release:
     log_data.c log_data.h pow_data.c pow_data.h __math_oflow.c
     __math_uflow.c __math_xflow.c __math_divzero.c __math_invalid.c
     scalbn.c floor.c fabs.c
+    (4 Nov 2026) atan2.c asin.c acos.c hypot.c log2.c log2_data.c
+    log2_data.h log10.c sinh.c cosh.c tanh.c expm1.c log1p.c __expo2.c
   src/internal/libm.h
   arch/generic/fp_arch.h (empty)
 Only the portable C of src/math/, none of its directories for one
 architecture. build.sh compiles them with -ffp-contract=off -fno-builtin
 -U__FP_FAST_FMA and -include src/common/musl.h, Limba's own header that
 gives every symbol a limba_musl_ name; Limba calls them through
-include/limba/math.h. On a C library without endian.h or features.h
+include/limba/math.h. sqrt, which asin, acos and hypot call, is the C
+library's (IEEE 754 makes it exact, the same bits everywhere). On a C library without endian.h or features.h
 (newlib), src/common/musl_compat/ gives the two (-idirafter: the C
 library's own come first).

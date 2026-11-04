@@ -1,0 +1,26 @@
+; output: 256
+; output: too many open files
+; result: 0
+; at most 256 files open at once; the 257th open is the trap IO, caught
+; here; the 256 still open are closed at the end
+func @main : fn() -> i64 {
+  slot 8 align 8
+b0:
+  v0 = sconst str "lib/eval_files/many.txt"
+  v1 = iconst i32 1
+  v2 = slot ptr $0
+  br b1
+b1 handler b2:
+  v3 = call.rt i64 file_open(v0, v1)
+  store v3, v2
+  br b1
+b2(v4: i32, v5: i32, v6: str):
+  v7 = load i64 v2
+  call.rt void print_i64(v7)
+  call.rt void print_nl()
+  call.rt void print_str(v6)
+  call.rt void print_nl()
+  call.rt void file_delete(v0)
+  v8 = iconst i64 0
+  ret v8
+}

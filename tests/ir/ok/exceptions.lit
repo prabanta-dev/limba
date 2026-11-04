@@ -4,6 +4,8 @@
 language "luxia"
 exception 900 "ConstraintError"
 exception 101 "RangeError" parent 900
+exception 902 "ProgramError"
+exception 109 "HandleError" parent 902
 exception 1000 "ParseError"
 exception 1001 "BadDigit" parent 1000
 
