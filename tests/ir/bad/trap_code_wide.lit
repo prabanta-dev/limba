@@ -1,0 +1,6 @@
+; expect: trap 4294967297: not a code of traps.def nor an exception of the module
+; a code within the i32 a handler receives
+func @main : fn() -> i64 {
+b0:
+  trap 4294967297
+}

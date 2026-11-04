@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- IR version 9, revision of 4 Nov 2026: a stricter verifier and a new
+  fingerprint of the run-time table. `trap` and `check` raise only a code
+  of `traps.def` that is no family, or an exception of the program that
+  the module names (within 32 bits); `print_big` may trap, as every
+  function of output. The random generator no longer checks with the
+  code 9, which no table has.
+
 - Files in the run-time library: `file_open`, `file_close`, `file_flush`,
   `file_read_line`, `file_read`, `file_write`, `file_exists`,
   `file_delete`; handles numbered from 1, at most 256 open, a buffer of

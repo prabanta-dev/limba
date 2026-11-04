@@ -430,7 +430,7 @@ static void loop(G *g)
 
     g->cur = bh;
     if (inv != UINT32_MAX)
-        emit(g, LIMBA_OP_CHECK, LIMBA_T_VOID, 0, chance(g, 50) ? 100 : 9, 0,
+        emit(g, LIMBA_OP_CHECK, LIMBA_T_VOID, 0, chance(g, 50) ? 100 : 101, 0,
              &inv, 1);
     uint32_t c[2] = {hp[0], trip};
     uint32_t go = emit(g, LIMBA_OP_ICMP, LIMBA_T_I1, LIMBA_CC_SLT, 0, 0, c, 2);
@@ -772,7 +772,7 @@ static void statement(G *g)
         memory_stmt(g);
     else if (chance(g, 25)) { /* a failed check ends the program */
         uint32_t c = condition(g);
-        emit(g, LIMBA_OP_CHECK, LIMBA_T_VOID, 0, 9, 0, &c, 1);
+        emit(g, LIMBA_OP_CHECK, LIMBA_T_VOID, 0, 101, 0, &c, 1);
     } else if (r < 100)
         print_stmt(g);
     else if (r < 105 && g->depth < 3 && g->trys < 2)

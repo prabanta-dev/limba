@@ -750,6 +750,18 @@ static bool fits(int64_t x, unsigned bits)
     return x >= -((int64_t)1 << (bits - 1)) && x < ((int64_t)1 << bits);
 }
 
+/* a code trap and check may raise (doc/ir.md § 11): a code of traps.def,
+   never a family, or an identity of the program the table of m names;
+   within the i32 a handler receives */
+static bool trap_code_ok(const limba_module *m, int64_t code)
+{
+    if (code < 0 || code > INT32_MAX)
+        return false;
+    if (code < 1000)
+        return limba_trap_text(code) != NULL;
+    return limba_exception_name(m, code, NULL) != NULL;
+}
+
 static bool check_inst(vctx *v, uint32_t u)
 {
     const limba_module *m = v->m;
@@ -935,14 +947,22 @@ static bool check_inst(vctx *v, uint32_t u)
     case LIMBA_F_NONE:
         break;
     case LIMBA_F_TRAP:
-        if (in->imm < 0)
-            IFAIL(u, "trap with a negative code");
+        if (!trap_code_ok(m, in->imm))
+            IFAIL(u,
+                  "trap %" PRId64 ": not a code of traps.def nor an "
+                  "exception of the module",
+                  in->imm);
         break;
     case LIMBA_F_CHECK:
         if (!vals(v, u, t, 1))
             return false;
-        if (t[0] != LIMBA_T_I1 || in->imm < 0)
-            IFAIL(u, "check: an i1 condition and a code >= 0");
+        if (t[0] != LIMBA_T_I1)
+            IFAIL(u, "check of a condition that is not an i1");
+        if (!trap_code_ok(m, in->imm))
+            IFAIL(u,
+                  "check %" PRId64 ": not a code of traps.def nor an "
+                  "exception of the module",
+                  in->imm);
         break;
     case LIMBA_F_PARAM:
         break;

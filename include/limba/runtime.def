@@ -158,7 +158,8 @@ LIMBA_RT(BIG_POW, "big_pow", "(ref, i64) -> ref",
 /* exactly -1, 0 or 1 */
 LIMBA_RT(BIG_CMP, "big_cmp", "(ref, ref) -> i32", LIMBA_RTA_PURE)
 LIMBA_RT(BIG_SIGN, "big_sign", "(ref) -> i32", LIMBA_RTA_PURE)
-LIMBA_RT(PRINT_BIG, "print_big", "(ref) -> void", LIMBA_RTA_IO)
+LIMBA_RT(PRINT_BIG, "print_big", "(ref) -> void",
+         LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
 LIMBA_RT(STR_FROM_BIG, "str_from_big", "(ref) -> str", LIMBA_RTA_ALLOC)
 /* val: the text of an integer of Luxia (limba_val_big), any size */
 LIMBA_RT(STR_TO_BIG, "str_to_big", "(str, ptr) -> i1", LIMBA_RTA_WRITES_MEM)

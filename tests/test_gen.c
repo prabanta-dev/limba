@@ -81,7 +81,8 @@ int main(void)
     uint64_t first = env("LIMBA_GEN_FIRST", 1);
     uint64_t count = env("LIMBA_GEN_SEEDS", 200);
     uint64_t ended[6] = {0}, compared = 0, limited = 0, insts = 0;
-    /* overflow 6, check 9, division 11, the others (raised, checks) */
+    /* overflow 6, check 101 (RANGE, the checks of lir_gen), division 11,
+       the others (raised, checks) */
     uint64_t traps[4] = {0};
     int reported = 0;
 
@@ -109,10 +110,10 @@ int main(void)
         limba_eval(m, "main", &limits, &base);
         ended[base.status]++;
         if (base.status == LIMBA_EVAL_TRAP)
-            traps[base.code == 6    ? 0
-                  : base.code == 9  ? 1
-                  : base.code == 11 ? 2
-                                    : 3]++;
+            traps[base.code == 6     ? 0
+                  : base.code == 101 ? 1
+                  : base.code == 11  ? 2
+                                     : 3]++;
         limba_module_free(m);
         if (base.status == LIMBA_EVAL_LIMIT) {
             limited++;

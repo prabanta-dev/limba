@@ -39,3 +39,9 @@ b0(v0: ptr):
   call.rt void par_for(v1, v0, v2, v3)
   ret
 }
+
+func @program_check : fn(i1) -> void {
+b0(v0: i1):
+  check v0, 1000
+  ret
+}

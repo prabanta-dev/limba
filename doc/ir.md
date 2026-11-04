@@ -695,9 +695,10 @@ No branch names block 0 or a handler.
 | `trap k` | raises the exception `k` (a terminator) |
 | `check c, k` | raises the exception `k` if the `i1` `c` is 0 |
 
-`k ≥ 0` is an exception identity (§ 13.1): a code of `traps.def`, or an
-identity the module's table names. The trap carries the position of the
-instruction.
+`k` is an exception identity (§ 13.1), and the verifier checks it: a code
+of `traps.def` that is not a family (900-903), or an identity of the
+program (≥ 1000, at most 2^31 − 1) that the module's table names. The
+trap carries the position of the instruction.
 
 ## 12. Strings and counted handles
 
@@ -815,7 +816,12 @@ Never caught, anywhere: the codes 7 (`NOMEM`) and 28 (`STACK`) and the
 family 901, even when the program raises them (the program stops, no
 handler runs, no `finally`); `halt`; a closed output (141); `unreachable`;
 the errors of the engines (wrong module, limits). `call.ext` never raises.
-`IO` (107) and `INVALID_HANDLE` (109) can be caught.
+`IO` (107) can be caught when it comes from reading (`read_line`,
+`io_read`) or from a file (§ 15.11): those calls find it themselves, at
+their position. An error of writing the standard output (`print_*`,
+`io_write`) is found only when the output is written out, maybe after
+the call, and has no position: no handler ever catches it (§ 15.1).
+`INVALID_HANDLE` (109) can be caught.
 
 Outside a protected block the exception leaves the function, to the
 handler of the block of the call in the caller; at the top it ends the
@@ -1170,7 +1176,7 @@ a wrong module.
 | `big_pow` | `(ref, i64) -> ref` | PURE, ALLOC | the exponent read without a sign; exact for the bases 0, 1, −1 with any exponent; `0 ** 0` is 1 |
 | `big_cmp` | `(ref, ref) -> i32` | PURE | exactly −1, 0 or 1 |
 | `big_sign` | `(ref) -> i32` | PURE | −1, 0 or 1 |
-| `print_big` | `(ref) -> void` | IO | the decimal text, a `-` first if negative |
+| `print_big` | `(ref) -> void` | IO, MAY_TRAP | the decimal text, a `-` first if negative |
 | `str_from_big` | `(ref) -> str` | ALLOC | the same text |
 | `str_to_big` | `(str, ptr) -> i1` | WRITES_MEM | `val`: an integer of the language of any size (`limba_val_big` of `limba/val.h`), stored as a `ref` at the pointer; false and nothing stored for another text |
 | `big_gcd` | `(ref, ref) -> ref` | PURE, ALLOC | ≥ 0; 0 for 0 and 0 |
@@ -1330,6 +1336,15 @@ wrong module, with these guarantees, which engines may rely on:
 Not decided; listed so that no engine decides them alone. Each will be
 decided and written here first.
 
+Version 9, revision of 4 Nov 2026: a stricter verifier (the codes of
+`trap` and `check`, § 11) and a new fingerprint of the run-time table
+(`print_big` may trap). The others were decided the same day and come
+with version 10, before the memory model (N3): `i1` without signed
+operations, cases of `switch` compared in their type, unused immediates
+0, `big_lit` checked, no order on `ptr`, a check of provenance in
+`lir_run`; with the standard library: `const` and `export`, arrays past
+4 GiB refused.
+
 1. **Signed operations on `i1`.** `sext` reads an `i1` 1 as −1, while
    `icmp.s*`, `sdiv`, `srem`, `sitofp` and the signed `.ov` operations of
    `lir_run` read it as +1 (so `add.ov i1 0, 1` traps, and `fptosi` to
@@ -1347,17 +1362,13 @@ decided and written here first.
    required, not checked.
 6. **The memory model** (§ 9.5) is a rule for producers; the checks of
    the oracle are weaker (rule 2).
-7. **Codes of `trap` and `check`.** § 11 says the code is an identity of
-   `traps.def` or of the module's table; the verifier accepts any code
-   ≥ 0, and a code above 2^31 − 1 is cut to 32 bits when it reaches a
-   handler.
+7. ~~Codes of `trap` and `check`~~: decided (4 Nov 2026), § 11.
 8. **Cases of `switch`.** The verifier refuses two equal halves, not two
    values that are equal in the type of `v` (`255` and `-1` on `i8`);
    `lir_run` takes the first.
 9. **`print_char` and `str_from_char`** of a value that is not a Unicode
    scalar value (a surrogate, past `0x10FFFF`, negative): not defined.
-10. **`print_big`** writes output but has no `MAY_TRAP`, unlike the other
-    functions of output (§ 15.1).
+10. ~~`print_big` without `MAY_TRAP`~~: corrected (4 Nov 2026).
 11. **`big_lit`** of a text that is not decimal digits: not defined
     (`lir_run` skips the other characters).
 

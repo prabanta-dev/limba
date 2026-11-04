@@ -235,6 +235,20 @@ static void test_messages(void)
     limba_module_free(m);
 }
 
+/* the table of the run time keeps its rule: every function of output
+   (print_*, io_write) may trap, at an error of writing (doc/ir.md § 15.1) */
+static void test_runtime_table(void)
+{
+    for (unsigned i = 0; i < LIMBA_RT_COUNT; i++) {
+        const char *nm = limba_rts[i].name;
+        if (strncmp(nm, "print_", 6) && strcmp(nm, "io_write"))
+            continue;
+        uint32_t want = LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP;
+        CHECK((limba_rts[i].attrs & want) == want,
+              "runtime %s: an output without IO and MAY_TRAP", nm);
+    }
+}
+
 /* the data of a global through the API, and what the text cannot write:
    a kind that does not exist, ids out of range, an addend where none
    belongs, two globals sharing one data */
@@ -405,6 +419,7 @@ int main(void)
     limba_set_program("test_ir");
     test_leb128();
     test_messages();
+    test_runtime_table();
     test_data();
     test_handled();
     int ok = each("tests/ir/ok", test_ok);

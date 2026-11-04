@@ -1,0 +1,8 @@
+; expect: trap 900: not a code of traps.def nor an exception of the module
+; no instruction traps with the identity of a family (doc/ir.md § 16)
+exception 900 "ConstraintError"
+
+func @main : fn() -> i64 {
+b0:
+  trap 900
+}

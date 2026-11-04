@@ -6,11 +6,14 @@
  *   "LIR\0"  version  runtime-fingerprint  ops-fingerprint  memory
  *   ptr-bits  name
  *   strings  language  messages  exceptions  target  types  globals  externs
- *   functions
+ *   functions  positions
  *
  * A global is name, type, flags, init, value; a LIMBA_INIT_DATA one has 0
- * as value, then its bytes (length, bytes) and its relocations (count,
- * then offset, kind, id, addend each).
+ * as value, then its bytes (length, bytes), its fills (count, then offset,
+ * count, length, bytes each) and its relocations (count, then offset,
+ * kind, id, addend each). The positions are the table (file, line,
+ * column), then for every function a byte saying whether it has them and
+ * the position of each instruction in canonical order (doc/ir.md § 14.2).
  *
  * Integers are LEB128 (signed where they may be negative), fingerprints 8
  * bytes little endian. Instructions are written block by block, parameters

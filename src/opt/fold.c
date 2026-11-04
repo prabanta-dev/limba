@@ -7,10 +7,10 @@
  *
  * Folding must give exactly what the machine would: nothing that may trap
  * is folded when it would trap (a division by zero, INT_MIN / -1, an
- * overflowing add.ov), shifts by the width or more are left alone, floats
- * are computed in their own precision; float to integer conversions
- * saturate, as the IR defines them. No float identities: x + 0.0 is not x when
- * x is -0.0, and a NaN has no identity at all.
+ * overflowing add.ov), shifts take the count modulo the width (doc/ir.md
+ * § 7.2), floats are computed in their own precision; float to integer
+ * conversions saturate, as the IR defines them. No float identities:
+ * x + 0.0 is not x when x is -0.0, and a NaN has no identity at all.
  *
  * gvn visits the blocks in dominator-tree order, so an operand is folded
  * (and merged) before its uses; the pipeline repeats for what is left.
