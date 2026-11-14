@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The SSA builder of the front ends: a handler has for predecessors
+  those of the blocks it protects, as for dominance. It reads the value a
+  variable has where they begin, and the check of definite assignment
+  sees the same; the mistakes of a front end (a handler sealed too early,
+  a block given its handler after sealing, a handler that would need a
+  parameter) stop the program. New test `test_ssa`.
+
 - IR version 9, revision of 4 Nov 2026: a stricter verifier and a new
   fingerprint of the run-time table. `trap` and `check` raise only a code
   of `traps.def` that is no family, or an exception of the program that

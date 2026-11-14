@@ -41,7 +41,17 @@ void limba_ssa_def(limba_ssa *s, uint32_t var, limba_id block, limba_id value);
 limba_id limba_ssa_use(limba_ssa *s, uint32_t var, limba_id block,
                        uint32_t tag);
 
-/* a new block, not sealed; seal it once all its predecessors are there */
+/* a new block, not sealed; seal it once all its predecessors are there.
+   A handler (progetto_ir.md § 11i) has for predecessors those of the
+   blocks it protects, as for dominance: it sees the values a variable has
+   where each of them begins, never what they assign. So a block gets its
+   handler before it is sealed, and the handler, its three parameters
+   (i32, i32, str) given first, is sealed after every block it protects
+   (a handler that is itself protected counts as one of them). A variable
+   the handler reads must have the same value at the start of every
+   protected block, as the handler takes no parameter of its own: one the
+   protected blocks assign stays in a slot. The builder stops the program
+   (abort) when any of this does not hold */
 limba_id limba_ssa_block(limba_ssa *s);
 void limba_ssa_seal(limba_ssa *s, limba_id b);
 

@@ -9,6 +9,7 @@
 #include "common/xalloc.h"
 #include "ir/internal.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,6 +31,11 @@ typedef struct {
     uint32_t *inc; /* incomplete parameters: pairs (var, param index) */
     uint32_t ninc, capinc;
     uint32_t nparams; /* parameters made by the builder */
+    /* a handler: the blocks it protects, sealed; their predecessors are
+       its own (progetto_ir.md § 11i) */
+    uint32_t *prot;
+    uint32_t nprot, capprot;
+    limba_id hsealed; /* the handler when it was sealed, + 1; 0 none */
 } bstate;
 
 typedef struct {
@@ -112,6 +118,7 @@ void limba_ssa_free(limba_ssa *s)
     for (uint32_t i = 0; i < s->nb; i++) {
         free(s->b[i].preds);
         free(s->b[i].inc);
+        free(s->b[i].prot);
     }
     for (uint32_t i = 0; i < s->ne; i++)
         free(s->e[i].args);
@@ -221,6 +228,7 @@ static uint32_t new_param(limba_ssa *s, limba_id block, uint32_t var)
 }
 
 static limba_id read_var(limba_ssa *s, uint32_t var, limba_id block);
+static uint32_t new_edge(limba_ssa *s, limba_id from, limba_id to);
 
 static void add_args(limba_ssa *s, uint32_t pi)
 {
@@ -274,10 +282,35 @@ limba_id limba_ssa_use(limba_ssa *s, uint32_t var, limba_id block, uint32_t tag)
     return v;
 }
 
+/* a mistake of the front end, not of its user */
+static void caller_error(const char *what, limba_id b)
+{
+    fprintf(stderr, "liblimba: limba_ssa: %s (block %u)\n", what, b);
+    abort();
+}
+
 void limba_ssa_seal(limba_ssa *s, limba_id b)
 {
     if (s->b[b].sealed)
         return;
+    /* a protected block: its handler, not sealed yet, takes its
+       predecessors */
+    limba_id h = limba_block_handler(limba_ssa_func(s), b);
+    if (h != LIMBA_NONE) {
+        if (h == b || h >= s->nb || s->b[h].sealed)
+            caller_error("a handler sealed before a block it protects", b);
+        bstate *hb = &s->b[h];
+        LIMBA_GROW(hb->prot, hb->nprot, hb->capprot);
+        hb->prot[hb->nprot++] = b;
+        s->b[b].hsealed = h + 1;
+    }
+    /* a handler: an edge from each predecessor of each block it protects,
+       for the values alone; none of them is in the IR */
+    for (uint32_t i = 0; i < s->b[b].nprot; i++) {
+        limba_id p = s->b[b].prot[i];
+        for (uint32_t k = 0; k < s->b[p].npreds; k++)
+            new_edge(s, s->e[s->b[p].preds[k]].from, b);
+    }
     /* incomplete parameters get their arguments, in their order */
     for (uint32_t i = 0; i < s->b[b].ninc; i += 2)
         add_args(s, s->b[b].inc[i + 1]);
@@ -534,6 +567,25 @@ void limba_ssa_finish_edit(limba_ssa *s,
             changed = true;
         }
     }
+
+    /* the handlers: each block sealed with the handler it has now, and no
+       parameter beyond the three of the occurrence (§ 11i) */
+    for (limba_id b = 0; b < s->nb; b++) {
+        if (!F.reach[b])
+            continue;
+        limba_id h = limba_block_handler(limba_ssa_func(s), b);
+        if (s->b[b].hsealed != (h == LIMBA_NONE ? 0 : h + 1))
+            caller_error("a block sealed before it got its handler, or not "
+                         "sealed",
+                         b);
+    }
+    for (uint32_t i = 0; i < s->nparams; i++)
+        if (F.rep[i] == LIMBA_NONE && F.reach[s->params[i].block] &&
+            s->b[s->params[i].block].nprot)
+            caller_error("a variable a handler reads has different values "
+                         "where the blocks it protects begin: keep it in a "
+                         "slot",
+                         s->params[i].block);
 
     /* definite assignment */
     if (undefined) {
