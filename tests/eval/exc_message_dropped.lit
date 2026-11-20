@@ -1,0 +1,22 @@
+; output: abab
+; result: 1000
+; the message a handler receives from a raise is a value of the handler
+; (progetto_ir.md § 11i, doc/ir.md § 12.1): a handler that ends normally
+; does not release it, the engine does, and no string is left behind
+exception 1000 "ParseError"
+
+func @main : fn() -> i64 {
+b0:
+  br b1
+b1 handler b2:
+  v0 = sconst str "ab"
+  v1 = call.rt str str_concat(v0, v0)
+  v2 = iconst i32 1000
+  v3 = iconst i32 0
+  raise v2, v3, v1
+b2(v4: i32, v5: i32, v6: str):
+  call.rt void print_str(v6)
+  call.rt void print_nl()
+  v7 = sext i64 v4
+  ret v7
+}

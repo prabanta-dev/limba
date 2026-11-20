@@ -1,0 +1,27 @@
+; output: abab
+; memory: broken
+; the mistake the case exc_message_dropped avoids: the handler keeps its
+; message in a typed slot and releases it on the way out, one release
+; more than the store took (the slot releases its own at the end)
+exception 1000 "ParseError"
+
+func @main : fn() -> i64 {
+  slot 8 align 8 type str
+b0:
+  br b1
+b1 handler b2:
+  v0 = sconst str "ab"
+  v1 = call.rt str str_concat(v0, v0)
+  v2 = iconst i32 1000
+  v3 = iconst i32 0
+  raise v2, v3, v1
+b2(v4: i32, v5: i32, v6: str):
+  v8 = slot ptr $0
+  store v6, v8
+  v9 = iconst i64 1
+  release str v8, v9
+  call.rt void print_str(v6)
+  call.rt void print_nl()
+  v7 = sext i64 v4
+  ret v7
+}

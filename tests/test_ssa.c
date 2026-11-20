@@ -236,6 +236,56 @@ static void test_nested(void)
     limba_module_free(F.m);
 }
 
+/* the last instruction of block b */
+static const limba_inst *last(const fn *F, limba_id b)
+{
+    const limba_func *f = &F->m->funcs[0];
+    if (b >= f->nblocks || !f->blocks[b].ninsts)
+        return NULL;
+    const limba_block *bl = &f->blocks[b];
+    return &f->insts[bl->insts[bl->ninsts - 1]];
+}
+
+/* try { raise 1000 with m } except { raise again }: the message from a
+   variable, the handler raising its own three parameters */
+static void test_raise(void)
+{
+    fn F = begin();
+    limba_func *f = limba_ssa_func(F.s);
+    uint32_t m = limba_ssa_var(F.s, LIMBA_T_STR);
+    limba_ssa_def(
+        F.s, m, 0,
+        limba_inst_add(f, 0, LIMBA_OP_NULLV, LIMBA_T_STR, 0, 0, 0, NULL, 0));
+    limba_id h = handler(&F);
+    limba_id b1 = protected_block(&F, h);
+    limba_ssa_br(F.s, 0, b1);
+    limba_ssa_seal(F.s, b1);
+    f = limba_ssa_func(F.s);
+    limba_id id = limba_inst_add(f, b1, LIMBA_OP_ICONST, LIMBA_T_I32, 0, 1000,
+                                 0, NULL, 0);
+    limba_id pos =
+        limba_inst_add(f, b1, LIMBA_OP_ICONST, LIMBA_T_I32, 0, 0, 0, NULL, 0);
+    limba_ssa_raise(F.s, b1, id, pos, limba_ssa_use(F.s, m, b1, 1));
+    limba_ssa_seal(F.s, h);
+    f = limba_ssa_func(F.s);
+    const uint32_t *hp = f->blocks[h].insts;
+    limba_ssa_raise(F.s, h, hp[0], hp[1], hp[2]);
+    finish(&F);
+    const limba_inst *r = last(&F, b1);
+    CHECK(r && r->op == LIMBA_OP_RAISE && r->nops == 3 &&
+              is_iconst(operand(&F, r, 0), 1000) &&
+              operand(&F, r, 2)->op == LIMBA_OP_NULLV,
+          "the protected block does not raise 1000 with the message");
+    r = last(&F, h);
+    f = &F.m->funcs[0];
+    bool again = r && r->op == LIMBA_OP_RAISE && r->nops == 3;
+    for (uint32_t k = 0; again && k < 3; k++)
+        again = f->operands[r->first + k] == f->blocks[h].insts[k];
+    CHECK(again, "the handler does not raise its three parameters");
+    CHECK(ntold == 0, "raise, %u tags reported", ntold);
+    limba_module_free(F.m);
+}
+
 /* the mistakes of the front end, each in a child that must abort */
 
 /* the handler sealed before the block it protects */
@@ -312,10 +362,11 @@ int main(void)
     test_entry_values();
     test_loop_in_try();
     test_nested();
+    test_raise();
     expect_abort(early_handler, "handler sealed first");
     expect_abort(late_protection, "handler given after sealing");
     expect_abort(handler_parameter, "handler with a parameter");
-    printf("test_ssa: 3 functions with handlers, 3 mistakes of the front "
+    printf("test_ssa: 4 functions with handlers, 3 mistakes of the front "
            "end, %d failures\n",
            failures);
     return failures ? 1 : 0;

@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { T_NONE, T_BR, T_CBR, T_SWITCH, T_RET, T_UNREACHABLE };
+enum { T_NONE, T_BR, T_CBR, T_SWITCH, T_RET, T_UNREACHABLE, T_RAISE };
 
 typedef struct {
     limba_id from, to;
@@ -23,8 +23,10 @@ typedef struct {
 
 typedef struct {
     uint8_t sealed, term;
-    limba_id value;  /* cbr: condition; switch: value; ret: value */
-    uint32_t e0, e1; /* br: e0; cbr: e0 then, e1 else; switch: e0 */
+    limba_id value;      /* cbr: condition; switch: value; ret: value;
+                            raise: identity */
+    limba_id rpos, rmsg; /* raise: position and message */
+    uint32_t e0, e1;     /* br: e0; cbr: e0 then, e1 else; switch: e0 */
     uint32_t case_first, ncases;
     uint32_t *preds; /* edges */
     uint32_t npreds, cappreds;
@@ -380,6 +382,16 @@ void limba_ssa_ret(limba_ssa *s, limba_id from, limba_id value)
     s->b[from].value = value;
 }
 
+void limba_ssa_raise(limba_ssa *s, limba_id from, limba_id id, limba_id pos,
+                     limba_id msg)
+{
+    bstate *b = &s->b[from];
+    b->term = T_RAISE;
+    b->value = id;
+    b->rpos = pos;
+    b->rmsg = msg;
+}
+
 void limba_ssa_unreachable(limba_ssa *s, limba_id from)
 {
     s->b[from].term = T_UNREACHABLE;
@@ -656,6 +668,12 @@ void limba_ssa_finish_edit(limba_ssa *s,
             limba_inst_add(f, b, LIMBA_OP_RET, LIMBA_T_VOID, 0, 0, 0, ops,
                            nops);
             break;
+        case T_RAISE: {
+            uint32_t v[3] = {resolve(&F, bs->value), resolve(&F, bs->rpos),
+                             resolve(&F, bs->rmsg)};
+            limba_inst_add(f, b, LIMBA_OP_RAISE, LIMBA_T_VOID, 0, 0, 0, v, 3);
+            break;
+        }
         default:
             limba_inst_add(f, b, LIMBA_OP_UNREACHABLE, LIMBA_T_VOID, 0, 0, 0,
                            NULL, 0);

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The SSA builder closes a block with `raise` (`limba_ssa_raise`), its
+  three operands resolved as those of `ret`. Two cases of the oracle: the
+  message a handler receives is a value the engine drops, never released
+  by the program; releasing it breaks the rules of memory.
+
 - The SSA builder of the front ends: a handler has for predecessors
   those of the blocks it protects, as for dominance. It reads the value a
   variable has where they begin, and the check of definite assignment

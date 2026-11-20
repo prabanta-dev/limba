@@ -66,6 +66,10 @@ void limba_ssa_switch(limba_ssa *s, limba_id from, limba_id value,
                       limba_id dflt, const int64_t *values,
                       const limba_id *targets, uint32_t n);
 void limba_ssa_ret(limba_ssa *s, limba_id from, limba_id value);
+/* raise id, pos, msg (progetto_ir.md § 11i): no successor, what it
+   raises goes to the handler of from, if any; it gives msg away */
+void limba_ssa_raise(limba_ssa *s, limba_id from, limba_id id, limba_id pos,
+                     limba_id msg);
 void limba_ssa_unreachable(limba_ssa *s, limba_id from);
 bool limba_ssa_terminated(const limba_ssa *s, limba_id b);
 
