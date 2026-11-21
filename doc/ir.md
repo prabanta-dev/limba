@@ -791,6 +791,10 @@ numbers in every engine, optimised or not.
   (§ 12.1).
 - References are counted, not strings or numbers: an engine may share a
   `ref` (§ 12.1), so the objects may be fewer; the references cannot.
+- The `ref` 0 is not an object and counts nothing: a `store`, `retain`
+  or `release` of it changes no number. Every operation whose result is
+  the `BigInt` 0 gives the handle 0 (§ 15.7), as do `null ref` and zeroed
+  memory (§ 2.1): a `ref` worth 0 is never live, however it was made.
 - **Live blocks**: the blocks of `mem_alloc` never freed.
 - The numbers compare only when the entry returned, exceptions caught on
   the way included. After `halt`, after a trap or an exception that stops
@@ -1179,6 +1183,16 @@ the bits may change only for the better, and the change is declared.
 ### 15.7 `BigInt`
 
 A `BigInt` is a `ref` (§ 12): counted, immutable, 0 for the handle 0.
+**The number 0 is always the handle 0.** Every function of this table
+whose result is the `BigInt` 0 gives the handle 0, never an object: the
+conversions (`big_from_i64(0)`, `big_from_u64(0)`, `big_from_f64` of
+`0.0` or `-0.0`, `big_lit` of `"0"` or `"-0"`, `str_to_big` of a text
+worth 0, which stores the handle 0), the arithmetic (`big_sub(a, a)`, a
+product by 0, a quotient, remainder or modulus of 0, `big_gcd(0, 0)`,
+`big_lcm` with an operand 0, `big_powmod` modulo 1...), every engine
+alike. No other handle holds the number 0, so the `BigInt` 0 is never a
+live object (§ 12.5).
+
 The checks are in the IR, before the call: a divisor is never 0 (trap 11),
 an exponent never negative (101), a real finite and integral (103, after
 `fround.away`), a conversion to an integer checked with

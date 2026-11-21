@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `doc/ir.md` § 15.7 and § 12.5: every operation whose result is the
+  `BigInt` 0 gives the handle 0, never an object; the `ref` 0 counts
+  nothing, so a `ref` worth 0 is never live. The reference interpreter
+  already did so.
+
 - What memory holds at the end of a run (`doc/ir.md` § 12.5): the
   references to `str` and to `ref` that memory still counts, leaks
   included, and the blocks never freed; never values. `lir_run
