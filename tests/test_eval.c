@@ -16,7 +16,9 @@
  *     <bytes>" for a
  *     budget other than 64 MiB, and "; message: <text>" for the words of
  *     a trap or of an exception no one caught, "; report: <line>" for the
- *     line limba_report_uncaught writes of it (doc/ir.md § 13.7); run twice,
+ *     line limba_report_uncaught writes of it (doc/ir.md § 13.7), "; live:
+ *     S str, R ref, B blocks" for what memory holds at the end (doc/ir.md
+ *     § 12.5, checked where the strings are counted); run twice,
  * the second time with a collection before each value made and, unless memory
  * is to be broken, without check_mem, whose counts would keep alive what memory
  * holds before the collection looks. An oracle is checked before it judges.
@@ -121,6 +123,9 @@ static void golden(const char *path)
     uint64_t memory = 0;
     char msg[256], report[512];
     bool has_msg = false, has_report = false;
+    /* "; live: S str, R ref, B blocks": what memory holds at the end */
+    unsigned long long live[3];
+    bool has_live = false;
     for (const char *p = text; *p == ';'; p = strchr(p, '\n') + 1) {
         const char *eol = strchr(p, '\n');
         size_t n = (size_t)(eol - p);
@@ -151,6 +156,10 @@ static void golden(const char *path)
             report[n - 10] = '\n';
             report[n - 9] = 0;
             has_report = true;
+        } else if (!strncmp(p, "; live: ", 8)) {
+            has_live = sscanf(p + 8, "%llu str, %llu ref, %llu blocks",
+                              &live[0], &live[1], &live[2]) == 3;
+            CHECK(has_live, "%s: a header \"; live:\" not understood", path);
         } else if (!strncmp(p, "; max memory: ", 14)) {
             memory = strtoull(p + 14, NULL, 10);
         }
@@ -191,6 +200,13 @@ static void golden(const char *path)
                   report);
             free(line);
         }
+        CHECK(!has_live || !lim.check_mem ||
+                  (r.live_strs == live[0] && r.live_refs == live[1] &&
+                   r.live == live[2]),
+              "%s%s: live %" PRIu64 " str, %" PRIu64 " ref, %zu blocks, "
+              "expected %llu, %llu, %llu",
+              path, how, r.live_strs, r.live_refs, r.live, live[0], live[1],
+              live[2]);
         CHECK(r.outlen == wlen && !memcmp(r.out, want, wlen),
               "%s%s: printed\n%s---\nexpected\n%s", path, how, r.out, want);
         limba_eval_result_free(&r);
@@ -262,6 +278,15 @@ static void optdiff(const char *path)
               ", output\n%s---\nwithout\n%s",
               path, label, r.status, base.status, r.code, base.code,
               (int64_t)r.ret, (int64_t)base.ret, r.out, base.out);
+        /* what memory holds at the end is the program's: the same, when
+           the counts compare (doc/ir.md § 12.5) */
+        CHECK(base.status != LIMBA_EVAL_OK ||
+                  (r.live_strs == base.live_strs &&
+                   r.live_refs == base.live_refs && r.live == base.live),
+              "%s: with %s what memory holds at the end changes: %" PRIu64
+              "/%" PRIu64 " str, %" PRIu64 "/%" PRIu64 " ref, %zu/%zu blocks",
+              path, label, r.live_strs, base.live_strs, r.live_refs,
+              base.live_refs, r.live, base.live);
         compared++;
         limba_eval_result_free(&r);
     }

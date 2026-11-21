@@ -128,6 +128,11 @@ int main(int argc, char **argv)
     if (r.live)
         fprintf(stderr, ", %zu blocks never freed", r.live);
     fputc('\n', stderr);
+    /* what memory still holds at the end (doc/ir.md § 12.5) */
+    if (check_mem)
+        fprintf(stderr,
+                "lir_run: live: %" PRIu64 " str, %" PRIu64 " ref, %zu blocks\n",
+                r.live_strs, r.live_refs, r.live);
     int status = r.status == LIMBA_EVAL_OK     ? 0
                  : r.status == LIMBA_EVAL_HALT ? (int)r.code
                                                : 1;

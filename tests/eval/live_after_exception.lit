@@ -1,0 +1,44 @@
+; output: caught 1000
+; result: 0
+; live: 2 str, 1 ref, 1 blocks
+; what memory holds at the end (doc/ir.md § 12.5), after an exception
+; caught: a block never freed holds two references to one str (references
+; count, not strings) and one to a BigInt, stored before the raise; a str
+; stored and released in the handler, the message dropped and the values
+; of the run never count
+exception 1000 "ParseError"
+
+func @main : fn() -> i64 {
+b0:
+  v0 = iconst i64 24
+  v1 = call.rt ptr mem_alloc(v0)
+  br b1
+b1 handler b2:
+  v2 = sconst str "ab"
+  v3 = call.rt str str_concat(v2, v2)
+  store v3, v1
+  v4 = iconst i64 7
+  v5 = call.rt ref big_from_i64(v4)
+  v6 = iconst i64 0
+  v7 = addr ptr v1, v6, 0, 8
+  store v5, v7
+  v19 = addr ptr v1, v6, 0, 16
+  store v3, v19
+  v8 = iconst i32 1000
+  v9 = iconst i32 0
+  v10 = call.rt str str_concat(v3, v3)
+  raise v8, v9, v10
+b2(v11: i32, v12: i32, v13: str):
+  v14 = sconst str "caught "
+  call.rt void print_str(v14)
+  v15 = sext i64 v11
+  call.rt void print_i64(v15)
+  call.rt void print_nl()
+  v16 = call.rt ptr mem_alloc(v0)
+  store v13, v16
+  v17 = iconst i64 1
+  release str v16, v17
+  call.rt void mem_free(v16)
+  v18 = iconst i64 0
+  ret v18
+}

@@ -773,6 +773,33 @@ and every address derived from it are valid while `s` holds a reference:
 an engine that counts keeps `s` alive where they are used. `str_ptr` is
 pure: it may move out of a loop.
 
+### 12.5 What memory holds at the end
+
+When a run ends, an engine may report what memory still holds: the same
+numbers in every engine, optimised or not.
+
+- **Live references**, for `str` and for `ref` apart: the references
+  memory holds. Each `store` of a handle, each `retain` of one, each
+  `read_line` and `str_to_big` adds one; each `release`, and each `store`
+  over a handle (for the old one), takes one away; the end of a call takes
+  away those of its typed slots (§ 12.2).
+- A reference memory loses without a count (`mem_free`, `memset`,
+  `memcpy` over it, the end of an untyped slot) stays: it is a leak, and
+  it counts.
+- Values never count: results of instructions, parameters, the message a
+  handler receives, the value the entry returns. Nor do immortal handles
+  (§ 12.1).
+- References are counted, not strings or numbers: an engine may share a
+  `ref` (§ 12.1), so the objects may be fewer; the references cannot.
+- **Live blocks**: the blocks of `mem_alloc` never freed.
+- The numbers compare only when the entry returned, exceptions caught on
+  the way included. After `halt`, after a trap or an exception that stops
+  the program, calls may be alive and the numbers are not compared
+  (§ 13.5).
+
+`lir_run --check-mem` writes them as `lir_run: live: S str, R ref, B
+blocks`.
+
 ## 13. Exceptions
 
 ### 13.1 Identities and the table

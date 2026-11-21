@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- What memory holds at the end of a run (`doc/ir.md` § 12.5): the
+  references to `str` and to `ref` that memory still counts, leaks
+  included, and the blocks never freed; never values. `lir_run
+  --check-mem` writes them as `lir_run: live: S str, R ref, B blocks`;
+  the oracle checks a header `; live:` and the optimised runs must leave
+  the same numbers.
+
 - The SSA builder closes a block with `raise` (`limba_ssa_raise`), its
   three operands resolved as those of `ret`. Two cases of the oracle: the
   message a handler receives is a value the engine drops, never released

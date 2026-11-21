@@ -90,6 +90,9 @@ typedef struct {
        its message, malloc'd (code is its identity, pos its position) */
     char *msg;
     size_t msglen;
+    /* with check_mem: the references to str and to ref (BigInt) that
+       memory still holds at the end, doc/ir.md § 12.5; 0 without */
+    uint64_t live_strs, live_refs;
 } limba_eval_result;
 
 /* run function entry of a verified module; the result owns r->out */

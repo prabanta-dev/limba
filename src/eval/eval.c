@@ -2612,6 +2612,19 @@ void limba_eval(const limba_module *m, const char *entry,
     r->ret = e.status == LIMBA_EVAL_OK ? ret : 0;
     r->steps = e.steps;
     r->live = e.heap.live;
+    /* what memory still holds (doc/ir.md § 12.5): the references of
+       store and retain not released, values never */
+    r->live_strs = r->live_refs = 0;
+    if (e.lim.check_mem)
+        for (size_t i = 0; i < e.nvals; i++) {
+            const estr *x = e.vals[i];
+            if (x->immortal || x->mrefs <= 0)
+                continue;
+            if (x->big)
+                r->live_refs += (uint64_t)x->mrefs;
+            else
+                r->live_strs += (uint64_t)x->mrefs;
+        }
     limba_w_byte(&e.out, 0);
     r->out = (char *)e.out.buf;
     r->outlen = e.out.len - 1;
