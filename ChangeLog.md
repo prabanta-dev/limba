@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `raise` keeps the message it is given, the handle 0 too: an empty
+  string made at run time reaches the handler as `""`, and an exception
+  no one catches is reported as `<prefix>: <Name> at <position>`, even
+  for a code of `traps.def`. Only a trap gets the words of the module or
+  of `traps.def` (`doc/ir.md` § 13.2, § 13.6). New cases
+  `raise_empty_caught`, `raise_empty_uncaught`.
+
 - An empty string made at run time is the handle 0, never an object, as
   the `BigInt` 0 (`doc/ir.md` § 15.2, § 12.5): `str_concat`, `str_mid`,
   `pos_str`, `arg`, the C strings and the lines read; so it is never

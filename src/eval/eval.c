@@ -91,10 +91,10 @@ typedef struct {
     uint32_t pos; /* where the run stopped, innermost call first */
     /* the exception on its way (progetto_ir.md § 11i): status TRAP, its
        identity in code, its position in pos (given by raise: pos_given),
-       its message, a str, 0 until made (a trap words it when caught or
-       at the end) */
+       its message, a str (msg_given: by raise, maybe the handle 0, the
+       empty string; else a trap words it when caught or at the end) */
     uint64_t exc_msg;
-    bool pos_given;
+    bool pos_given, msg_given;
     /* the message of each trap, made once when first caught: immortal,
        outside the budget and the values counted (progetto_ir.md § 11i:
        no memory taken by an exception), freed with the arena */
@@ -1023,6 +1023,7 @@ static bool trap_said(E *e, int64_t code, const char *what, const char *name,
     if (n)
         memcpy(x->data + w, name, n);
     e->exc_msg = sv(x);
+    e->msg_given = true;
     return trap(e, code);
 }
 
@@ -2070,6 +2071,7 @@ static bool par_for(E *e, const uint64_t *a)
             e->code = 0;
             e->pos = 0;
             e->pos_given = false;
+            e->msg_given = false;
             e->exc_msg = 0;
         }
         if (i == hi)
@@ -2083,6 +2085,7 @@ static bool par_for(E *e, const uint64_t *a)
     e->code = code;
     e->pos = pos;
     e->pos_given = true;
+    e->msg_given = true;
     e->exc_msg = msg;
     return false;
 }
@@ -2163,6 +2166,8 @@ static const limba_block *jump(const limba_func *f, uint32_t k, uint64_t *v)
    as the module or traps.def says it */
 static uint64_t exc_message(E *e)
 {
+    if (e->msg_given)
+        return e->exc_msg;
     if (!e->exc_msg) {
         for (size_t i = 0; i < e->ntrapmsgs && !e->exc_msg; i++)
             if (e->trapmsgs[i].code == e->code)
@@ -2183,6 +2188,7 @@ static uint64_t exc_message(E *e)
         e->trapmsgs[e->ntrapmsgs++] = (struct trapmsg){e->code, x};
         e->exc_msg = sv(x);
     }
+    e->msg_given = true;
     return e->exc_msg;
 }
 
@@ -2205,6 +2211,7 @@ static bool caught(E *e, const limba_func *f, const limba_block *bl,
     e->code = 0;
     e->pos = 0;
     e->pos_given = false;
+    e->msg_given = false;
     e->exc_msg = 0;
     return true;
 }
@@ -2379,6 +2386,7 @@ static bool call(E *e, const limba_func *f, const uint64_t *args, uint64_t *ret)
                 e->code = (int32_t)v[o[0]];
                 e->pos = (uint32_t)v[o[1]];
                 e->pos_given = true;
+                e->msg_given = true; /* the handle 0 too: "" */
                 e->exc_msg = v[o[2]];
                 if (e->lim.check_mem && !limba_exception_catchable(e->code))
                     end_check(e);
@@ -2609,6 +2617,7 @@ void limba_eval(const limba_module *m, const char *entry,
         e.status = LIMBA_EVAL_TRAP;
         e.code = LIMBA_TRAP_IO;
         e.pos = 0;
+        e.msg_given = false;
         e.exc_msg = 0;
     }
     if (e.status == LIMBA_EVAL_OK && e.lim.check_mem)
@@ -2619,7 +2628,7 @@ void limba_eval(const limba_module *m, const char *entry,
         e.lim.check_mem)
         end_check(&e);
     if (e.status == LIMBA_EVAL_TRAP) {
-        const estr *x = (const estr *)(uintptr_t)exc_message(&e);
+        const estr *x = str_of(exc_message(&e));
         r->msg = limba_xmalloc(x->len + 1);
         memcpy(r->msg, x->data, x->len + 1);
         r->msglen = x->len;

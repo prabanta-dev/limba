@@ -1,0 +1,57 @@
+; output: [] 0
+; output: [] 0
+; output: [value out of range] 18
+; result: 0
+; raise keeps the message it is given, the handle 0 too (an empty
+; string made at run time, doc/ir.md § 15.2): the handler receives "",
+; never the words of the trap 101, which only a trap has (§ 13.2, § 13.6):
+; a check 101 after them has its words again
+language "luxia"
+exception 101 "RangeError"
+pos 1 "prog.luxia" 3 7
+
+func @show : fn(str) -> void {
+b0(v0: str):
+  v1 = sconst str "["
+  v2 = sconst str "] "
+  call.rt void print_str(v1)
+  call.rt void print_str(v0)
+  call.rt void print_str(v2)
+  v3 = call.rt i64 str_len(v0)
+  call.rt void print_i64(v3)
+  call.rt void print_nl()
+  ret
+}
+
+func @main : fn() -> i64 {
+b0:
+  br b1
+b1 handler b2:
+  v0 = iconst i32 101
+  v1 = iconst i32 1
+  v2 = sconst str "abc"
+  v3 = iconst i64 1
+  v4 = iconst i64 0
+  v5 = call.rt str str_mid(v2, v3, v4)
+  raise v0, v1, v5
+b2(v6: i32, v7: i32, v8: str):
+  call void @show(v8)
+  br b3
+b3 handler b4:
+  v9 = iconst i32 101
+  v10 = iconst i32 0
+  v11 = null str
+  raise v9, v10, v11
+b4(v12: i32, v13: i32, v14: str):
+  call void @show(v14)
+  br b5
+b5 handler b6:
+  v15 = iconst i1 0
+  check v15, 101
+  v20 = iconst i64 1
+  ret v20
+b6(v16: i32, v17: i32, v18: str):
+  call void @show(v18)
+  v19 = iconst i64 0
+  ret v19
+}

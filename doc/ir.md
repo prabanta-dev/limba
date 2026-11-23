@@ -834,7 +834,10 @@ position (`i32`, an index of the positions, 0 for none) and its message
 (`str`).
 
 `raise id, pos, msg` (a terminator) raises one; it gives the reference of
-`msg` away. A position past the table counts as none. Raising again in a
+`msg` away. Its message is the `msg` given, the handle 0 included (the
+empty string, § 15.2): the handler receives it, and the line of § 13.7
+has it, even when `id` is a code of `traps.def`. Only a trap gets the
+words of § 13.6. A position past the table counts as none. Raising again in a
 handler is `raise` with the handler's three parameters.
 
 ### 13.3 What goes to the handler
@@ -880,7 +883,8 @@ defines, and receives everything through its three parameters.
 ### 13.6 The message of a trap
 
 When a trap goes to a handler, its message is the text the module gives
-its code, or else the text of `traps.def`. That `str` is **immortal**: it
+its code, or else the text of `traps.def`; never so for `raise`, whose
+message is the one it gives, empty included (§ 13.2). That `str` is **immortal**: it
 takes no memory, counts neither in the memory limit nor among the live
 strings, and the counts never touch it. Raising an exception never takes
 memory.
