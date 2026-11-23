@@ -780,7 +780,9 @@ numbers in every engine, optimised or not.
 
 - **Live references**, for `str` and for `ref` apart: the references
   memory holds. Each `store` of a handle, each `retain` of one, each
-  `read_line` and `str_to_big` adds one; each `release`, and each `store`
+  `read_line` and `str_to_big` adds one, unless it stores the handle 0
+  (an empty line, the end of the input, the `BigInt` 0); each `release`,
+  and each `store`
   over a handle (for the old one), takes one away; the end of a call takes
   away those of its typed slots (§ 12.2).
 - A reference memory loses without a count (`mem_free`, `memset`,
@@ -791,10 +793,11 @@ numbers in every engine, optimised or not.
   (§ 12.1).
 - References are counted, not strings or numbers: an engine may share a
   `ref` (§ 12.1), so the objects may be fewer; the references cannot.
-- The `ref` 0 is not an object and counts nothing: a `store`, `retain`
-  or `release` of it changes no number. Every operation whose result is
-  the `BigInt` 0 gives the handle 0 (§ 15.7), as do `null ref` and zeroed
-  memory (§ 2.1): a `ref` worth 0 is never live, however it was made.
+- The handle 0, `str` or `ref`, is not an object and counts nothing: a
+  `store`, `retain` or `release` of it changes no number. Every operation
+  whose result is the empty string or the `BigInt` 0 gives the handle 0
+  (§ 15.2, § 15.7), as do `null` and zeroed memory (§ 2.1): an empty
+  `str` or a `ref` worth 0 is never live, however it was made.
 - **Live blocks**: the blocks of `mem_alloc` never freed.
 - The numbers compare only when the entry returned, exceptions caught on
   the way included. After `halt`, after a trap or an exception that stops
@@ -1092,6 +1095,18 @@ output only on runs without such errors.
 
 ### 15.2 Output and strings
 
+**The empty string is always the handle 0.** Every function of the
+library whose result is a `str` of 0 bytes gives the handle 0, never an
+object: `str_concat` of two empty strings, `str_mid` of 0 bytes,
+`pos_str` for 0 or past the table, `arg` outside `1 .. arg_count`,
+`cstr_value` of an empty C string, `cstr_value_n` of 0 bytes, `read_line`
+and `file_read_line` of an empty line or at the end, which store the
+handle 0, every engine alike. So an empty string is never a live object
+(§ 12.5). Its `str_ptr` is the address of a NUL that a `load` may read
+(§ 9.1). An empty `sconst`, `STR` global or `str` relocation is immortal
+(§ 12.1) and counts nothing either way: the engine chooses whether it is
+the handle 0 or an object.
+
 | Function | Signature | Attributes | Meaning |
 |---|---|---|---|
 | `print_i64` | `(i64) -> void` | IO, MAY_TRAP | the decimal text of the number with a sign |
@@ -1116,7 +1131,7 @@ output only on runs without such errors.
 | `str_from_f64_fixed` | `(f64, i32) -> str` | ALLOC | the real in fixed notation with that many decimals, `limba_fmt_f64_fixed` (a `Float32` is widened exactly first) |
 | `str_from_char` | `(i32) -> str` | ALLOC | the UTF-8 of the code point |
 | `str_from_bool` | `(i1) -> str` | ALLOC | `true` or `false` |
-| `pos_str` | `(i32) -> str` | ALLOC | position k of the table as `limba_pos_print` writes it, `file:line:column`; `""` for 0 or past the table (k read without a sign). A new string, as `str_from_i64` |
+| `pos_str` | `(i32) -> str` | ALLOC | position k of the table as `limba_pos_print` writes it, `file:line:column`; `""` for 0 or past the table (k read without a sign), the handle 0 (above); otherwise a new string, as `str_from_i64` |
 
 ### 15.3 Input and the command line
 

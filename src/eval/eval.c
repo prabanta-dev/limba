@@ -400,7 +400,18 @@ static estr *str_make(E *e, const char *s, size_t n)
     return x;
 }
 
+/* a str made by the run time: an empty one is the handle 0, never an
+   object (doc/ir.md § 15.2) */
+static uint64_t str_val(E *e, const char *s, size_t n)
+{
+    return n ? (uint64_t)(uintptr_t)str_make(e, s, n) : 0;
+}
+
+/* the str 0: "", its NUL in the padding past len (an object of one
+   byte, which str_ptr gives) */
 static const estr empty = {0};
+_Static_assert(sizeof(estr) > offsetof(estr, data),
+               "room for the NUL of the empty string");
 
 static const estr *str_of(uint64_t v)
 {
@@ -893,14 +904,14 @@ static bool runtime_c(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         const char *p = (const char *)(uintptr_t)a[0];
         if (wild(e, (uintptr_t)p, 1))
             return bad_module(e); /* the nil check comes before */
-        *r = sv(str_make(e, p, strlen(p)));
+        *r = str_val(e, p, strlen(p));
         return true;
     }
     case LIMBA_RT_CSTR_VALUE_N: {
         const char *p = (const char *)(uintptr_t)a[0];
         if ((int64_t)a[1] < 0 || wild(e, (uintptr_t)p, a[1]))
             return bad_module(e);
-        *r = sv(str_make(e, p, (size_t)a[1]));
+        *r = str_val(e, p, (size_t)a[1]);
         return true;
     }
     case LIMBA_RT_CSTR_FREE:
@@ -1049,9 +1060,12 @@ static bool runtime_files(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_POS_STR: {
         uint32_t k = (uint32_t)a[0];
         size_t n = limba_pos_print(e->m, k, NULL, 0);
+        if (!n) { /* "": the handle 0 */
+            *r = 0;
+            return true;
+        }
         estr *x = str_alloc(e, n);
-        if (n)
-            limba_pos_print(e->m, k, x->data, n + 1);
+        limba_pos_print(e->m, k, x->data, n + 1);
         *r = sv(x);
         return true;
     }
@@ -1089,7 +1103,7 @@ static bool runtime_files(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         int res = files_read_line(&e->files, (int64_t)a[0], &line, &len, &got);
         if (res != FILES_OK)
             return file_done(e, res, NULL, false);
-        uint64_t s = sv(str_make(e, got ? line : "", len));
+        uint64_t s = str_val(e, got ? line : "", len);
         free(line);
         *r = got;
         return mem_store(e, a[1], LIMBA_T_STR, s);
@@ -1147,16 +1161,15 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     }
     case LIMBA_RT_STR_FROM_U64:
         n = snprintf(buf, sizeof(buf), "%" PRIu64, a[0]);
-        *r = sv(str_make(e, buf, (size_t)n));
+        *r = str_val(e, buf, (size_t)n);
         return true;
     case LIMBA_RT_STR_FROM_F64_FIXED: {
         char f[LIMBA_FMT_FIXED_MAX];
-        *r =
-            sv(str_make(e, f, limba_fmt_f64_fixed(f, dv(a[0]), (int32_t)a[1])));
+        *r = str_val(e, f, limba_fmt_f64_fixed(f, dv(a[0]), (int32_t)a[1]));
         return true;
     }
     case LIMBA_RT_STR_FROM_CHAR:
-        *r = sv(str_make(e, buf, utf8((uint32_t)a[0], buf)));
+        *r = str_val(e, buf, utf8((uint32_t)a[0], buf));
         return true;
     case LIMBA_RT_STR_FROM_BOOL:
         *r = sv(str_make(e, a[0] & 1 ? "true" : "false", a[0] & 1 ? 4 : 5));
@@ -1177,7 +1190,7 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
             len--;
         if (len && line[len - 1] == '\r')
             len--;
-        uint64_t s = sv(str_make(e, ok ? line : "", len));
+        uint64_t s = str_val(e, ok ? line : "", len);
         free(line);
         *r = ok;
         return mem_store(e, a[0], LIMBA_T_STR, s);
@@ -1235,7 +1248,7 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_ARG: {
         int32_t i = (int32_t)a[0];
         const char *s = i >= 1 && i <= e->lim.argc ? e->lim.argv[i - 1] : "";
-        *r = sv(str_make(e, s, strlen(s)));
+        *r = str_val(e, s, strlen(s));
         return true;
     }
     case LIMBA_RT_HALT:
@@ -1297,6 +1310,10 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         return true;
     case LIMBA_RT_STR_CONCAT: {
         const estr *x = str_of(a[0]), *y = str_of(a[1]);
+        if (!x->len && !y->len) { /* "": the handle 0 */
+            *r = 0;
+            return true;
+        }
         estr *s = str_alloc(e, x->len + y->len);
         memcpy(s->data, x->data, x->len);
         memcpy(s->data + x->len, y->data, y->len);
@@ -1317,17 +1334,17 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     }
     case LIMBA_RT_STR_FROM_I64: {
         int n = snprintf(buf, sizeof(buf), "%" PRId64, (int64_t)a[0]);
-        *r = sv(str_make(e, buf, (size_t)n));
+        *r = str_val(e, buf, (size_t)n);
         return true;
     }
     case LIMBA_RT_STR_FROM_F64: {
         char f[LIMBA_FMT_F64_MAX];
-        *r = sv(str_make(e, f, limba_fmt_f64(f, dv(a[0]))));
+        *r = str_val(e, f, limba_fmt_f64(f, dv(a[0])));
         return true;
     }
     case LIMBA_RT_STR_FROM_F32: {
         char f[LIMBA_FMT_F64_MAX];
-        *r = sv(str_make(e, f, limba_fmt_f32(f, fv32(a[0]))));
+        *r = str_val(e, f, limba_fmt_f32(f, fv32(a[0])));
         return true;
     }
     case LIMBA_RT_PRINT_F32: {
@@ -1344,7 +1361,7 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
             start = (int64_t)s->len;
         if (len < 0 || (uint64_t)len > s->len - (uint64_t)start)
             len = (int64_t)(s->len - (uint64_t)start);
-        *r = sv(str_make(e, s->data + start, (size_t)len));
+        *r = str_val(e, s->data + start, (size_t)len);
         return true;
     }
     case LIMBA_RT_STR_PTR:
@@ -2543,6 +2560,7 @@ void limba_eval(const limba_module *m, const char *entry,
     e.budget =
         limits && limits->max_memory ? limits->max_memory : (uint64_t)1 << 30;
     e.sconst = limba_xcalloc((size_t)limba_str_count(m) + 1, sizeof(estr *));
+    objmap_add(&e.objs, (uintptr_t)empty.data, 1); /* str_ptr of "" */
     /* globals, with their initial values; too large: NOMEM, no run */
     e.globals = limba_xcalloc((size_t)m->nglobals + 1, sizeof(void *));
     for (uint32_t i = 0; i < m->nglobals && e.status == LIMBA_EVAL_OK; i++) {

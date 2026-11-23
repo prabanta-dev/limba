@@ -1,0 +1,88 @@
+; output: 0
+; output: 0
+; output: [][]
+; result: 0
+; live: 2 str, 1 ref, 1 blocks
+; an empty str made by the run time is the handle 0, as the BigInt 0
+; (doc/ir.md § 15.2, § 15.7): stored in a block never freed, none of
+; them is live; only the str "x", stored twice, and the BigInt 5 are.
+; The NUL of "" may be read through str_ptr, made or the handle 0
+func @main : fn() -> i64 {
+b0:
+  v0 = iconst i64 160
+  v1 = call.rt ptr mem_alloc(v0)
+  v2 = iconst i64 0
+  v3 = iconst i64 1
+  v4 = sconst str ""
+  v5 = sconst str "xy"
+  v6 = call.rt str str_concat(v4, v4)
+  store v6, v1
+  v7 = iconst i64 1
+  v8 = call.rt str str_mid(v5, v7, v2)
+  v9 = addr ptr v1, v3, 0, 8
+  store v8, v9
+  v10 = iconst i32 0
+  v11 = call.rt str pos_str(v10)
+  v12 = addr ptr v1, v3, 0, 16
+  store v11, v12
+  v13 = iconst i32 9
+  v14 = call.rt str arg(v13)
+  v15 = addr ptr v1, v3, 0, 24
+  store v14, v15
+  v16 = call.rt ptr str_ptr(v5)
+  v17 = call.rt str cstr_value_n(v16, v2)
+  v18 = addr ptr v1, v3, 0, 32
+  store v17, v18
+  v19 = addr ptr v1, v3, 0, 40
+  v20 = call.rt i1 read_line(v19)
+  v21 = sconst str "lib/eval_files/live_empty_str.txt"
+  v22 = iconst i32 1
+  v23 = call.rt i64 file_open(v21, v22)
+  v24 = sconst str "\n"
+  v25 = call.rt ptr str_ptr(v24)
+  call.rt void file_write(v23, v25, v3)
+  call.rt void file_close(v23)
+  v26 = iconst i32 0
+  v27 = call.rt i64 file_open(v21, v26)
+  v28 = addr ptr v1, v3, 0, 48
+  v29 = call.rt i1 file_read_line(v27, v28)
+  v30 = addr ptr v1, v3, 0, 56
+  v31 = call.rt i1 file_read_line(v27, v30)
+  call.rt void file_close(v27)
+  call.rt void file_delete(v21)
+  v32 = call.rt str str_mid(v5, v2, v7)
+  v33 = addr ptr v1, v3, 0, 64
+  store v32, v33
+  v34 = addr ptr v1, v3, 0, 72
+  store v32, v34
+  v35 = iconst i64 5
+  v36 = call.rt ref big_from_i64(v35)
+  v37 = addr ptr v1, v3, 0, 80
+  store v36, v37
+  v38 = call.rt ref big_sub(v36, v36)
+  v39 = addr ptr v1, v3, 0, 88
+  store v38, v39
+  v40 = call.rt ptr str_ptr(v6)
+  v41 = load i8 v40
+  v42 = zext i64 v41
+  call.rt void print_i64(v42)
+  call.rt void print_nl()
+  v43 = null str
+  v44 = call.rt ptr str_ptr(v43)
+  v45 = load i8 v44
+  v46 = zext i64 v45
+  call.rt void print_i64(v46)
+  call.rt void print_nl()
+  v47 = sconst str "["
+  v48 = sconst str "]"
+  v49 = load str v1
+  call.rt void print_str(v47)
+  call.rt void print_str(v49)
+  call.rt void print_str(v48)
+  v50 = load str v28
+  call.rt void print_str(v47)
+  call.rt void print_str(v50)
+  call.rt void print_str(v48)
+  call.rt void print_nl()
+  ret v2
+}

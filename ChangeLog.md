@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- An empty string made at run time is the handle 0, never an object, as
+  the `BigInt` 0 (`doc/ir.md` § 15.2, § 12.5): `str_concat`, `str_mid`,
+  `pos_str`, `arg`, the C strings and the lines read; so it is never
+  live. An empty constant stays the engine's choice. In the reference
+  interpreter the NUL of `""` is an object `str_ptr` may read, also for
+  the handle 0. New case `live_empty_str`.
+
 - `doc/ir.md` § 15.7 and § 12.5: every operation whose result is the
   `BigInt` 0 gives the handle 0, never an object; the `ref` 0 counts
   nothing, so a `ref` worth 0 is never live. The reference interpreter
