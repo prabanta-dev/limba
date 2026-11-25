@@ -1,0 +1,15 @@
+; module: wrong
+; a run-time function that writes memory never writes a const global
+; (doc/ir.md § 3.4): str_to_i64 storing its number into one
+global @value : i64 = 5 const
+
+func @main : fn() -> i64 {
+b0:
+  v0 = gaddr ptr @value
+  v1 = sconst str "12"
+  v2 = iconst i64 -100
+  v3 = iconst i64 100
+  v4 = call.rt i1 str_to_i64(v1, v0, v2, v3)
+  v5 = iconst i64 0
+  ret v5
+}

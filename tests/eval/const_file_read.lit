@@ -1,0 +1,20 @@
+; module: wrong
+; file_read writes the bytes it reads (doc/ir.md § 3.4): into a const
+; global it is a wrong module, also at the end of the file. The file is
+; deleted while open, as in file_wrong_way
+global @buffer : [8 x i8] const
+
+func @main : fn() -> i64 {
+b0:
+  v0 = sconst str "lib/eval_files/const_file_read.txt"
+  v1 = iconst i32 1
+  v2 = call.rt i64 file_open(v0, v1)
+  call.rt void file_close(v2)
+  v3 = iconst i32 0
+  v4 = call.rt i64 file_open(v0, v3)
+  call.rt void file_delete(v0)
+  v5 = gaddr ptr @buffer
+  v6 = iconst i64 4
+  v7 = call.rt i64 file_read(v4, v5, v6)
+  ret v7
+}

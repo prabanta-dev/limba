@@ -1,0 +1,13 @@
+; module: wrong
+; mem_reverse writes its elements in place (doc/ir.md § 3.4): of a const
+; global it is a wrong module
+global @table : [4 x i32] = data "\x01\x00\x00\x00\x02" const
+
+func @main : fn() -> i64 {
+b0:
+  v0 = gaddr ptr @table
+  v1 = iconst i64 4
+  call.rt void mem_reverse(v0, v1, v1)
+  v2 = iconst i64 0
+  ret v2
+}

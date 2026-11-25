@@ -1,0 +1,14 @@
+; module: wrong
+; memset writes: into a const global it is a wrong module when it runs
+; (doc/ir.md § 3.4), not refused by the verifier
+global @table : [4 x i32] const
+
+func @main : fn() -> i64 {
+b0:
+  v0 = gaddr ptr @table
+  v1 = iconst i8 0
+  v2 = iconst i64 16
+  memset v0, v1, v2
+  v3 = iconst i64 0
+  ret v3
+}

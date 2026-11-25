@@ -1,0 +1,52 @@
+; output: 2
+; output: 7
+; output: 7
+; output: 1
+; result: 0
+; a const global is read as any other (doc/ir.md § 3.4): by load, at a
+; computed index too, copied out by memcpy, its fill read; retain and
+; release write no bytes and may name it
+global @table : [4 x i32] = data "\x01\x00\x00\x00\x02" fill 8 2 "\x07\x00\x00\x00" const
+global @name : str = "x" const
+
+func @at : fn(i64) -> i64 {
+b0(v0: i64):
+  v1 = gaddr ptr @table
+  v2 = addr ptr v1, v0, 4, 0
+  v3 = load i32 v2
+  v4 = sext i64 v3
+  ret v4
+}
+
+func @main : fn() -> i64 {
+  slot 16 align 4
+b0:
+  v0 = iconst i64 1
+  v1 = call i64 @at(v0)
+  call.rt void print_i64(v1)
+  call.rt void print_nl()
+  v2 = gaddr ptr @table
+  v3 = iconst i64 3
+  v4 = addr ptr v2, v3, 4, 0
+  v5 = load i32 v4
+  v6 = sext i64 v5
+  call.rt void print_i64(v6)
+  call.rt void print_nl()
+  v7 = slot ptr $0
+  v8 = iconst i64 16
+  memcpy v7, v2, v8
+  v9 = addr ptr v7, v3, 4, 0
+  v10 = load i32 v9
+  v11 = sext i64 v10
+  call.rt void print_i64(v11)
+  call.rt void print_nl()
+  v12 = gaddr ptr @name
+  retain str v12, v0
+  release str v12, v0
+  v13 = load str v12
+  v14 = call.rt i64 str_len(v13)
+  call.rt void print_i64(v14)
+  call.rt void print_nl()
+  v15 = iconst i64 0
+  ret v15
+}

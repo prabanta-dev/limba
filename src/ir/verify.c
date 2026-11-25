@@ -124,6 +124,10 @@ static bool check_types(vctx *v)
             if (ty->elem >= t || ty->elem == LIMBA_T_VOID ||
                 m->types[ty->elem].kind == LIMBA_TK_FUNC)
                 FAIL("type %" PRIu32 ": array of an invalid type", t);
+            /* no type of 2^32 bytes or more (doc/ir.md § 2.2): its size
+               would not fit the table */
+            if ((uint64_t)m->types[ty->elem].size * ty->count > UINT32_MAX)
+                FAIL("type %" PRIu32 ": an array of 2^32 bytes or more", t);
             break;
         case LIMBA_TK_FUNC:
             /* a struct only for the C of an extern (§ 11e): a function
@@ -380,6 +384,9 @@ static bool check_globals(vctx *v, uint8_t *seen)
         const limba_global *g = &m->globals[i];
         if (g->name >= nstr)
             FAIL("global %" PRIu32 ": no name", i);
+        if (g->flags & ~(uint32_t)(LIMBA_SYM_EXPORT | LIMBA_SYM_CONST))
+            FAIL("global @%s: flags other than export and const",
+                 name_of(m, g->name));
         if (!type_ok(m, g->type) || g->type == LIMBA_T_VOID ||
             m->types[g->type].kind == LIMBA_TK_FUNC)
             FAIL("global @%s: invalid type", name_of(m, g->name));
@@ -535,6 +542,8 @@ static bool check_symbols(vctx *v)
         const limba_func *f = &m->funcs[i];
         if (f->name >= nstr)
             FAIL("function %" PRIu32 ": no name", i);
+        if (f->flags & ~(uint32_t)LIMBA_SYM_EXPORT)
+            FAIL("function @%s: flags other than export", name_of(m, f->name));
         if (!type_ok(m, f->type) || m->types[f->type].kind != LIMBA_TK_FUNC ||
             m->types[f->type].variadic || !scalar_sig(m, f->type))
             FAIL("function @%s: not a (non-variadic) function type of "

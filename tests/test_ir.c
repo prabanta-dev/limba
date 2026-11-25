@@ -301,6 +301,20 @@ static void test_data(void)
     m->globals[h].init = LIMBA_INIT_ZERO;
     m->globals[h].value = 0;
     CHECK(limba_verify(m, &d) == 0, "data: %s", d.msg);
+
+    /* the flags (doc/ir.md § 3.4): export and const on a global, export
+       alone on a function */
+    m->globals[h].flags = LIMBA_SYM_EXPORT | LIMBA_SYM_CONST;
+    m->funcs[0].flags = LIMBA_SYM_EXPORT;
+    CHECK(limba_verify(m, &d) == 0, "flags: %s", d.msg);
+    m->globals[h].flags = 4;
+    CHECK(limba_verify(m, &d) != 0 && strstr(d.msg, "flags other than"),
+          "flags: an unknown flag on a global accepted");
+    m->globals[h].flags = 0;
+    m->funcs[0].flags = LIMBA_SYM_CONST;
+    CHECK(limba_verify(m, &d) != 0 && strstr(d.msg, "flags other than"),
+          "flags: const on a function accepted");
+    m->funcs[0].flags = 0;
     limba_module_free(m);
 }
 

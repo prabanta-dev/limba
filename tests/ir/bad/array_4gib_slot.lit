@@ -1,0 +1,9 @@
+; expect: an array of 2^32 bytes or more
+; no type of 2^32 bytes or more (doc/ir.md § 2.2): the type of a typed
+; slot of 2^32 bytes
+func @main : fn() -> i64 {
+  slot 4294967295 align 8 type [536870912 x str]
+b0:
+  v0 = iconst i64 0
+  ret v0
+}

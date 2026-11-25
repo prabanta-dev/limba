@@ -1,0 +1,16 @@
+; module: wrong
+; mem_translate writes its bytes in place (doc/ir.md § 3.4): a const
+; global as the bytes is a wrong module; as the table it is only read
+global @table : [256 x i8] const
+
+func @main : fn() -> i64 {
+  slot 256 align 8
+b0:
+  v0 = slot ptr $0
+  v1 = gaddr ptr @table
+  v2 = iconst i64 4
+  call.rt void mem_translate(v0, v2, v1)
+  call.rt void mem_translate(v1, v2, v0)
+  v3 = iconst i64 0
+  ret v3
+}

@@ -30,9 +30,11 @@ Words used with a fixed meaning:
   (§ 16). A trap is an exception (§ 13).
 - **wrong module**: a module that breaks a rule the verifier cannot see,
   because it depends on run-time values (an access outside every object,
-  a run-time call without the check the IR owes it). Its behaviour is not
-  defined. `lir_run` stops with the status "wrong module"; Meri stops with
-  an error of its own and a message, never a crash. A wrong module is an
+  a run-time call without the check the IR owes it, a write into a
+  `const` global). Its behaviour is not defined. `lir_run` stops with the
+  status "wrong module"; Meri stops with an error of its own and a
+  message, never a crash, except where this text leaves the detection to
+  the engine (a write into a `const` global, § 3.4). A wrong module is an
   error of the front end, not of the program.
 - **may**, **must**, **never**: as in any standard.
 
@@ -112,6 +114,13 @@ Aggregates exist in memory only: no value has an aggregate type.
   not a function type. Its size is N times the size of T, its alignment
   that of T. N may be 0 (an array whose length is computed at run time is
   written `[0 x T]`), except where § 12.3 forbids it.
+- **No type of 2^32 bytes or more.** The size of an array, N times the
+  size of T, is at most 2^32 − 1 bytes, and so is the size of a struct
+  (a field of 32 bits). The verifier refuses an array past it, and with
+  it every struct, global and slot that would hold one; a slot is at most
+  2^32 − 1 bytes too (§ 4.3). The limit is of the types: a block of
+  `mem_alloc` may be larger (§ 15.4), and how many globals and slots fit
+  together is a limit of the engine (`NOMEM`, § 5.4).
 - Arrays and function types are **interned**: two equal ones have the
   same id. A struct is identified by its name.
 
@@ -189,8 +198,40 @@ relocation writes has zero bytes. Two globals never share the same data.
 A relocation may name any global, also one that comes later: an engine
 first places every global, then writes the initial values.
 
-Flags: `export` and `const` are carried by both forms; version 9 gives
-them no meaning an engine or the optimiser relies on (§ 18).
+Flags: a global may carry `export` and `const`, a function `export`
+only (§ 3.6); the verifier refuses any other bit.
+
+- **`const`**: the global never changes. Its value is the initial one,
+  relocations included, for the whole run: no write of n > 0 bytes lands
+  inside it, neither a `store`, nor `memcpy` or `memset` as the
+  destination, nor a run-time function that writes through a pointer
+  (`io_read`, `file_read`, `read_line`, `mem_translate`, `mem_reverse`,
+  `str_to_i64` and the others that store a result, § 15), nor a
+  `call.ext` (§ 9.5, rule 6). Reading it, copying out of it, and
+  `retain` and `release` of the handles it holds (they change counts,
+  not its bytes) are allowed.
+
+  A write into a `const` global is a **wrong module**, not a trap: no
+  handler catches it and no code of `traps.def` names it. The verifier
+  does not refuse it statically, as it does not refuse a `store` to
+  `null` after a `check` that always fails (§ 9.4): a valid module may
+  hold such a write on a branch never taken, and an optimisation may make
+  one appear there (inlining a function that writes through its
+  parameter, § 17). Only `lir_run` must detect it (§ 5.5). For the other
+  engines the behaviour is not defined: a compiler ahead of time may put
+  the global in read-only memory (`.rodata`, `.data.rel.ro` when it has
+  relocations) and stop on the fault; the virtual machine of Meri may
+  protect its pages after writing the initial values, or not; a target
+  such as WebAssembly detects nothing. The differential tests do not
+  compare it.
+
+  A front end marks `const` only a global whose whole value is in its
+  initial value: a table filled by stores at the start of the program is
+  not `const`, nor is one the C writes.
+- **`export`**: the global is known outside the module by its name (the
+  host, a linker): its name and its address are kept. A global that is
+  not `export` and that no instruction and no relocation names may be
+  removed.
 
 Globals live for the whole run and are never released (§ 12).
 
@@ -216,11 +257,17 @@ the process; none means resolved from the process).
 ### 3.6 Functions
 
 A function has a name, a function type of scalars (§ 2.3), flags
-(`export`, informative), slots, and blocks. The rules of the body are in
-§ 4.
+(`export` only), slots, and blocks. The rules of the body are in § 4.
+
+**`export`**: the function may be called from outside the module (the
+host, C, a linker): its name and its function type are kept. A function
+that is not `export` and that no `call`, `faddr` or relocation reaches
+may be removed.
 
 The program starts at the function named **`main`**, which takes no
-parameters. Its result, if any, is not the exit status (§ 5.3).
+parameters, whether it carries `export` or not. Its result, if any, is
+not the exit status (§ 5.3). `lir_run --entry=` runs another function
+without parameters, as a tool of tests.
 
 ### 3.7 Positions
 
@@ -258,8 +305,9 @@ program.
 
 ### 4.3 Slots
 
-A slot is memory of one call of the function: a size, an alignment (a
-power of two), and an optional type.
+A slot is memory of one call of the function: a size (at most
+2^32 − 1 bytes, § 2.2), an alignment (a power of two), and an optional
+type.
 
 - `slot $k` gives its address. Each call has its own slots; they live
   until the call ends, by `ret` or by an exception that leaves it.
@@ -345,7 +393,10 @@ counts that do not match memory at the end).
   only with expected outputs, which Meri runs. It does not run a module
   of `memory fb` or of 32 bits (unsupported).
 - It reports a wrong module for an access outside every live object
-  (§ 9.1) and for the run-time calls that skip their checks (§ 15.1).
+  (§ 9.1), for a write of n > 0 bytes into a `const` global (§ 3.4), by
+  any operation or run-time function, and for the run-time calls that
+  skip their checks (§ 15.1). Of these, the other engines need not
+  detect the write into a `const` global.
 - **Common mode.** `lir_run`, the folding of Limba and the engines share
   `limba/math.h`, the exact numbers of `BigInt` (`src/common/bigint.c`),
   and the text of numbers (`limba/fmt.h`, `limba/val.h`). An error there
@@ -650,9 +701,9 @@ dangling (`ptr_live`, `check 105`); `load.inv i64 p` (the low bound),
 
 ### 9.5 Rules for producers and optimisations
 
-Decided on 2 Nov 2026 (N3). They say what an optimisation may assume;
-the optimiser of version 9 does not use them yet, and a front end already
-respects them.
+Decided on 2 Nov 2026 (N3); rule 6 on 25 Nov 2026. They say what an
+optimisation may assume; the optimiser of version 9 uses only rule 6
+(§ 17), and a front end already respects them.
 
 1. A slot whose address never reaches a `store` (as the value stored),
    a `ret`, a `ptrtoint`, a block argument or a call is **private** to
@@ -669,6 +720,9 @@ respects them.
    therefore never turns a slot that a handler reads into a value defined
    inside a protected block: the front end keeps there the variables a
    handler reads (Luxia, step 4).
+6. A `const` global (§ 3.4) never changes: a load from it gives its
+   initial bytes, wherever and whenever it runs. A `call.ext` never writes
+   it, even when it receives its address (this narrows rule 4).
 
 ### 9.6 The `fb` model
 
@@ -1165,6 +1219,10 @@ input is final**: once `read_line` gave false or `io_read` fewer than n,
 | `mem_free` | `(ptr) -> void` | WRITES_MEM, MAY_TRAP | frees the block `mem_alloc` returned; `null` does nothing; anything else that is not a live block of `mem_alloc` (freed already, interior, another object) is the trap `INVALID_FREE` (106) |
 | `ptr_live` | `(ptr) -> i1` | READS_HEAP | is `p` the start of a live block of `mem_alloc`? False for `null`, a freed block, a slot, a global |
 
+The limit of 2^32 − 1 bytes of § 2.2 is of the types: a block of
+`mem_alloc` may be larger, up to 2^63 − 1 bytes (§ 9.4), within the
+memory of the engine (§ 5.4).
+
 A freed block is never confused with a new one: a dangling pointer stays
 different from every pointer to a new object (`lir_run` never reuses the
 addresses of freed blocks; Meri compares a generation).
@@ -1387,6 +1445,13 @@ wrong module, with these guarantees, which engines may rely on:
   protected block; blocks with different handlers are not merged;
   inlined blocks take the handler of the block of the call;
 - `call.ind` and `call.ext` are never inlined;
+- a `load` of an integer or a real from a `const` global (§ 3.4), at an
+  offset the optimiser knows and inside the global, may become the
+  constant of its initial bytes (never the bytes of a relocation or of a
+  `str`). A pass may make a direct `store` into a `const` global appear
+  on a branch never taken (inlining a function that writes through its
+  parameter): the module stays valid, which is why the verifier does not
+  refuse one;
 - after the optimiser a check the front end wrote may be gone (folded,
   merged, proven): the canonical forms of § 9.4 hold for the front end's
   IR, and an engine never needs them to be there.
@@ -1398,12 +1463,13 @@ decided and written here first.
 
 Version 9, revision of 4 Nov 2026: a stricter verifier (the codes of
 `trap` and `check`, § 11) and a new fingerprint of the run-time table
-(`print_big` may trap). The others were decided the same day and come
+(`print_big` may trap). Revision of 25 Nov 2026: `const` and `export`
+defined (§ 3.4, § 3.6), no flag bits but those two, no type of 2^32
+bytes or more (§ 2.2). The others were decided on 4 Nov 2026 and come
 with version 10, before the memory model (N3): `i1` without signed
 operations, cases of `switch` compared in their type, unused immediates
 0, `big_lit` checked, no order on `ptr`, a check of provenance in
-`lir_run`; with the standard library: `const` and `export`, arrays past
-4 GiB refused.
+`lir_run`.
 
 1. **Signed operations on `i1`.** `sext` reads an `i1` 1 as −1, while
    `icmp.s*`, `sdiv`, `srem`, `sitofp` and the signed `.ov` operations of
@@ -1416,8 +1482,8 @@ operations, cases of `switch` compared in their type, unused immediates
 3. **Unused immediates.** The verifier does not yet check that `imm` and
    `imm2` are 0 where the format does not use them; flags of `load` and
    `store` (N3) will use `imm`.
-4. **Flags `export` and `const`.** Carried, without a meaning; `lir_run`
-   lets a program write a `const` global.
+4. ~~Flags `export` and `const`~~: decided (25 Nov 2026), § 3.4 and
+   § 3.6; types of 2^32 bytes or more refused, § 2.2.
 5. **Alignment** of loads and stores other than the handles: not
    required, not checked.
 6. **The memory model** (§ 9.5) is a rule for producers; the checks of

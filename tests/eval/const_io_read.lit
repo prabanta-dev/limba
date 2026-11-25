@@ -1,0 +1,12 @@
+; module: wrong
+; io_read writes the bytes it reads (doc/ir.md § 3.4): into a const
+; global it is a wrong module, also without an input to read
+global @buffer : [8 x i8] const
+
+func @main : fn() -> i64 {
+b0:
+  v0 = gaddr ptr @buffer
+  v1 = iconst i64 4
+  v2 = call.rt i64 io_read(v0, v1)
+  ret v2
+}

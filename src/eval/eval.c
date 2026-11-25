@@ -78,6 +78,12 @@ typedef struct {
     void **arena; /* everything allocated, freed at the end */
     size_t narena, caparena;
     void **globals;
+    /* the const globals (doc/ir.md § 3.4), [lo, hi) by address: a write
+       inside one is a wrong module */
+    struct crange {
+        uintptr_t lo, hi;
+    } *consts;
+    size_t nconsts;
     amap heap;      /* the blocks of mem_alloc not yet freed, with their size */
     objmap objs;    /* every object alive, by address: what an access may
                        touch (progetto_ir.md § 4) */
@@ -536,6 +542,32 @@ static bool wild(E *e, uintptr_t p, uint64_t n)
     return n && (p < LOW_MEMORY || n > UINTPTR_MAX - p ||
                  !objmap_holds(&e->objs, p, n));
 }
+/* a write of n bytes at p: wild, or into a const global (doc/ir.md
+   § 3.4) */
+static bool wild_write(E *e, uintptr_t p, uint64_t n)
+{
+    if (wild(e, p, n))
+        return true;
+    if (!n)
+        return false;
+    /* the last range starting at or below p; ranges never overlap, and
+       the n bytes lie in one object */
+    size_t lo = 0, hi = e->nconsts;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (e->consts[mid].lo <= p)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo && p < e->consts[lo - 1].hi;
+}
+static int crange_cmp(const void *a, const void *b)
+{
+    uintptr_t x = ((const struct crange *)a)->lo,
+              y = ((const struct crange *)b)->lo;
+    return x < y ? -1 : x > y;
+}
 static bool forget(E *e, uintptr_t p, size_t n);
 static bool no_str(E *e, uintptr_t p, size_t n);
 static bool badmem(E *e);
@@ -936,7 +968,7 @@ static bool runtime_arrays(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     switch (rt) {
     case LIMBA_RT_MEM_TRANSLATE: {
         const uint8_t *t = (const uint8_t *)(uintptr_t)a[2];
-        if (n < 0 || (n && (wild(e, (uintptr_t)p, (uint64_t)n) ||
+        if (n < 0 || (n && (wild_write(e, (uintptr_t)p, (uint64_t)n) ||
                             wild(e, (uintptr_t)t, 256))))
             return bad_module(e);
         if (!n)
@@ -953,7 +985,7 @@ static bool runtime_arrays(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_MEM_REVERSE: {
         size_t size = (size_t)a[2], len;
         if (n < 0 || !size || __builtin_mul_overflow((size_t)n, size, &len) ||
-            wild(e, (uintptr_t)p, len))
+            wild_write(e, (uintptr_t)p, len))
             return bad_module(e);
         if (n < 2)
             return true;
@@ -1113,7 +1145,9 @@ static bool runtime_files(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
     case LIMBA_RT_FILE_WRITE: {
         uint8_t *p = (uint8_t *)(uintptr_t)a[1];
         int64_t n = (int64_t)a[2];
-        if (n < 0 || wild(e, (uintptr_t)p, (uint64_t)n))
+        if (n < 0 ||
+            (rt == LIMBA_RT_FILE_READ ? wild_write(e, (uintptr_t)p, (uint64_t)n)
+                                      : wild(e, (uintptr_t)p, (uint64_t)n)))
             return bad_module(e);
         if (n && e->lim.check_mem && !no_str(e, (uintptr_t)p, (size_t)n))
             return false;
@@ -1202,7 +1236,9 @@ static bool runtime_luxia(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
            of read_line, the output that of print_* */
         uint8_t *p = (uint8_t *)(uintptr_t)a[0];
         int64_t n = (int64_t)a[1];
-        if (n < 0 || wild(e, (uintptr_t)p, (uint64_t)n))
+        if (n < 0 ||
+            (rt == LIMBA_RT_IO_READ ? wild_write(e, (uintptr_t)p, (uint64_t)n)
+                                    : wild(e, (uintptr_t)p, (uint64_t)n)))
             return bad_module(e);
         if (n && e->lim.check_mem && !no_str(e, (uintptr_t)p, (size_t)n))
             return false;
@@ -1590,7 +1626,7 @@ static bool mem_load(E *e, uintptr_t p, limba_id t, uint64_t *r)
 /* store str takes a reference on the new value, then releases the old */
 static bool mem_store(E *e, uintptr_t p, limba_id t, uint64_t v)
 {
-    if (wild(e, p, e->m->types[t].size))
+    if (wild_write(e, p, e->m->types[t].size))
         return bad_module(e);
     if (e->lim.check_mem) {
         if (t == LIMBA_T_STR || t == LIMBA_T_REF) {
@@ -1613,7 +1649,7 @@ static bool mem_store(E *e, uintptr_t p, limba_id t, uint64_t v)
 /* memcpy moves the str of the source with it, uncounted */
 static bool mem_copy(E *e, uintptr_t dst, uintptr_t src, size_t len)
 {
-    if (wild(e, dst, len) || wild(e, src, len))
+    if (wild_write(e, dst, len) || wild(e, src, len))
         return bad_module(e);
     if (!e->lim.check_mem || !e->words.live) {
         memmove((void *)dst, (void *)src, len);
@@ -1639,7 +1675,7 @@ static bool mem_copy(E *e, uintptr_t dst, uintptr_t src, size_t len)
 
 static bool mem_fill(E *e, uintptr_t dst, int byte, size_t len)
 {
-    if (wild(e, dst, len))
+    if (wild_write(e, dst, len))
         return bad_module(e);
     if (e->lim.check_mem && !forget(e, dst, len))
         return false;
@@ -2571,6 +2607,7 @@ void limba_eval(const limba_module *m, const char *entry,
     objmap_add(&e.objs, (uintptr_t)empty.data, 1); /* str_ptr of "" */
     /* globals, with their initial values; too large: NOMEM, no run */
     e.globals = limba_xcalloc((size_t)m->nglobals + 1, sizeof(void *));
+    size_t capconsts = 0;
     for (uint32_t i = 0; i < m->nglobals && e.status == LIMBA_EVAL_OK; i++) {
         const limba_global *g = &m->globals[i];
         const limba_type *ty = &m->types[g->type];
@@ -2581,7 +2618,14 @@ void limba_eval(const limba_module *m, const char *entry,
         }
         e.globals[i] = keep(&e, p);
         objmap_add(&e.objs, (uintptr_t)p, ty->size);
+        if ((g->flags & LIMBA_SYM_CONST) && ty->size) {
+            LIMBA_GROW(e.consts, e.nconsts, capconsts);
+            e.consts[e.nconsts++] =
+                (struct crange){(uintptr_t)p, (uintptr_t)p + ty->size};
+        }
     }
+    if (e.nconsts)
+        qsort(e.consts, e.nconsts, sizeof(*e.consts), crange_cmp);
     /* then their values: a relocation may name any global */
     for (uint32_t i = 0; i < m->nglobals && e.status == LIMBA_EVAL_OK; i++) {
         const limba_global *g = &m->globals[i];
@@ -2675,6 +2719,7 @@ void limba_eval(const limba_module *m, const char *entry,
     amap_free(&e.words);
     free(e.counted);
     free(e.globals);
+    free(e.consts);
 }
 
 void limba_eval_result_free(limba_eval_result *r)

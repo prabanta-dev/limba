@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- `const` and `export` have a meaning (`doc/ir.md` § 3.4, § 3.6, § 9.5
+  rule 6, § 17). A `const` global never changes: a write of n > 0 bytes
+  into it, by any operation or run-time function, is a wrong module that
+  the reference interpreter reports; the verifier does not refuse it,
+  since inlining may expose one on a branch never taken, and other
+  engines need not detect it. The optimiser folds a load from a `const`
+  global at a known offset into its initial bytes (`limba_fold_inst`
+  takes the module). An `export` symbol keeps its name and signature; one
+  that is not and that nothing reaches may be removed. The verifier
+  refuses flag bits other than these and any type of 2^32 bytes or more
+  (§ 2.2); blocks of `mem_alloc` are not limited by it.
+
 - `raise` keeps the message it is given, the handle 0 too: an empty
   string made at run time reaches the handler as `""`, and an exception
   no one catches is reported as `<prefix>: <Name> at <position>`, even

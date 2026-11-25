@@ -31,6 +31,7 @@ typedef struct {
 } entry;
 
 typedef struct {
+    const limba_module *m;
     limba_func *f;
     bool fold;
     limba_edit *e;   /* the one of the pipeline */
@@ -129,7 +130,8 @@ static uint32_t visit(gctx *c, uint32_t b)
         uint32_t id = bl->insts[k];
         if (c->e->dead[id])
             continue; /* gone, or another value */
-        if (c->fold && k >= bl->nparams && limba_fold_inst(c->f, c->e, id)) {
+        if (c->fold && k >= bl->nparams &&
+            limba_fold_inst(c->m, c->f, c->e, id)) {
             changes++;
             if (c->e->map[id] != id)
                 continue; /* it is another value now */
@@ -147,7 +149,7 @@ static uint32_t visit(gctx *c, uint32_t b)
 
 uint32_t limba_pass_gvn(limba_pass_ctx *x, limba_func *f)
 {
-    gctx c = {.f = f, .fold = x->fold, .e = &x->e};
+    gctx c = {.m = x->m, .f = f, .fold = x->fold, .e = &x->e};
     const limba_cfg *cfg = limba_pass_cfg_of(x, f); /* no branch changes */
 
     uint32_t size = 64;

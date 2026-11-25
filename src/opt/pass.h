@@ -64,8 +64,9 @@ uint32_t limba_pass_dce(limba_pass_ctx *x, limba_func *f);
 int limba_optimizer_func_edit(limba_optimizer *z, limba_module *m, limba_id fid,
                               limba_edit *e, limba_diag *d);
 
-/* fold instruction id of f, recording in e: true if it changed; gvn
-   calls it on each instruction (fold.c) */
-bool limba_fold_inst(limba_func *f, limba_edit *e, uint32_t id);
+/* fold instruction id of f, a function of m, recording in e: true if it
+   changed; gvn calls it on each instruction (fold.c) */
+bool limba_fold_inst(const limba_module *m, limba_func *f, limba_edit *e,
+                     uint32_t id);
 
 #endif

@@ -26,6 +26,7 @@
 #include <string.h>
 
 typedef struct {
+    const limba_module *m;
     limba_func *f;
     limba_edit *e;
 } fctx;
@@ -518,6 +519,97 @@ static bool identity(fctx *c, limba_inst *in, uint32_t id, uint32_t x,
     return false;
 }
 
+/* the n bytes from off of the initial value of global g, into out:
+   false where a relocation or a str gives them (not a number known
+   here) */
+static bool init_bytes(const limba_module *m, const limba_global *g,
+                       uint64_t off, uint32_t n, uint8_t *out)
+{
+    uint32_t size = m->types[g->type].size;
+    memset(out, 0, n);
+    switch (g->init) {
+    case LIMBA_INIT_ZERO:
+        return true;
+    case LIMBA_INIT_INT:
+    case LIMBA_INIT_FLOAT: {
+        /* the integer in the width of the type, the bits of the float:
+           little endian */
+        uint64_t v = (uint64_t)g->value;
+        for (uint32_t k = 0; k < n; k++)
+            out[k] = off + k < 8 && off + k < size
+                         ? (uint8_t)(v >> (8 * (off + k)))
+                         : 0;
+        return true;
+    }
+    case LIMBA_INIT_DATA: {
+        const limba_initdata *d = &m->inits[g->value];
+        uint32_t w = m->types[LIMBA_T_PTR].size;
+        for (uint32_t k = 0; k < d->nrelocs; k++)
+            if (d->relocs[k].offset < off + n &&
+                off < (uint64_t)d->relocs[k].offset + w)
+                return false;
+        for (uint32_t k = 0; k < n; k++) {
+            uint64_t at = off + k;
+            if (at < d->len)
+                out[k] = d->bytes[at];
+            for (uint32_t j = 0; j < d->nfills; j++) {
+                const limba_fill *fl = &d->fills[j];
+                if (at >= fl->offset &&
+                    at < fl->offset + (uint64_t)fl->len * fl->count)
+                    out[k] = fl->bytes[(at - fl->offset) % fl->len];
+            }
+        }
+        return true;
+    }
+    default: /* STR: a handle */
+        return false;
+    }
+}
+
+/* a load of a number from a const global (doc/ir.md § 3.4) at an
+   offset known here, inside it: the number of its initial bytes */
+static bool fold_load(fctx *c, limba_inst *in, uint32_t x)
+{
+    limba_id t = in->type;
+    if (!limba_type_is_int(t) && !limba_type_is_float(t))
+        return false;
+    int64_t off = 0, i;
+    const limba_inst *d = def(c, x);
+    for (uint32_t steps = 0; d->op == LIMBA_OP_ADDR; steps++) {
+        const uint32_t *o = c->f->operands + d->first;
+        __int128 k = (__int128)off;
+        /* the index read with a sign; not an i1 (doc/ir.md § 18) */
+        if (steps > c->f->ninsts || def(c, o[1])->type == LIMBA_T_I1 ||
+            !ival(c, o[1], &i))
+            return false;
+        k += (__int128)i * d->imm + d->imm2;
+        if (k < 0 || k > UINT32_MAX)
+            return false;
+        off = (int64_t)k;
+        d = def(c, o[0]);
+    }
+    if (d->op != LIMBA_OP_GADDR || (uint64_t)d->imm >= c->m->nglobals)
+        return false;
+    const limba_global *g = &c->m->globals[d->imm];
+    uint32_t n = c->m->types[t].size;
+    if (!(g->flags & LIMBA_SYM_CONST) ||
+        (uint64_t)off + n > c->m->types[g->type].size)
+        return false;
+    uint8_t b[8];
+    if (!init_bytes(c->m, g, (uint64_t)off, n, b))
+        return false;
+    uint64_t v = 0;
+    for (uint32_t k = n; k-- > 0;)
+        v = v << 8 | b[k];
+    if (t == LIMBA_T_I1)
+        v &= 1; /* the lowest bit of its byte (doc/ir.md § 2.1) */
+    if (limba_type_is_float(t))
+        limba_inst_set_fconst(in, (int64_t)v);
+    else
+        limba_inst_set_iconst(in, (int64_t)v);
+    return true;
+}
+
 static bool fold_inst(fctx *c, uint32_t id)
 {
     limba_inst *in = &c->f->insts[id];
@@ -527,6 +619,8 @@ static bool fold_inst(fctx *c, uint32_t id)
     double v[3] = {0, 0, 0};
 
     switch (op->format) {
+    case LIMBA_F_LOAD:
+        return fold_load(c, in, o[0]);
     case LIMBA_F_CHECK:
         /* a check of true never stops the program: it goes; one of false
            always does, and stays */
@@ -637,8 +731,9 @@ static bool fold_inst(fctx *c, uint32_t id)
 }
 
 /* fold instruction id, recording in e: true if it changed */
-bool limba_fold_inst(limba_func *f, limba_edit *e, uint32_t id)
+bool limba_fold_inst(const limba_module *m, limba_func *f, limba_edit *e,
+                     uint32_t id)
 {
-    fctx c = {f, e};
+    fctx c = {m, f, e};
     return fold_inst(&c, id);
 }

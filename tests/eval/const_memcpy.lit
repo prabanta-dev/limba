@@ -1,0 +1,17 @@
+; module: wrong
+; memcpy into a const global is a wrong module (doc/ir.md § 3.4); out of
+; one it is a read, which is fine: the last byte of the source only
+global @table : [4 x i32] = data "\x01\x00\x00\x00\x02" const
+
+func @main : fn() -> i64 {
+  slot 16 align 4
+b0:
+  v0 = gaddr ptr @table
+  v1 = slot ptr $0
+  v2 = iconst i64 16
+  memcpy v1, v0, v2
+  v3 = iconst i64 1
+  memcpy v0, v1, v3
+  v4 = iconst i64 0
+  ret v4
+}
