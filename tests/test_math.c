@@ -1,17 +1,20 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * test_math.c - the mathematics of the run time (limba/math.h), two
- * checks and the special cases:
+ * test_math.c - the mathematics of the run time (limba/math.h), correctly
+ * rounded (doc/ir.md § 15.5), for f64 and f32:
  * - the same bits on every engine and machine, with no reference: a hash
- *   of the results on fixed arguments, written here once (x86-64, 22 Oct
+ *   of the results on fixed arguments, written here once (x86-64, 25 Nov
  *   2026); a machine or compiler that computes one bit differently fails;
- * - the precision against mpmath, within the error the library declares
- *   (below 1 ulp, 2 for sinh, cosh and tanh): tests/math/reference.txt,
- *   written by tools/math_reference.py, gives for each argument the two
- *   doubles around the exact result, and the result must be one of them
- *   (within 2 steps of the nearest for the functions of 2 ulp);
- * - the special cases of IEEE 754 § 9.2.1, value and sign.
+ * - the correct rounding against mpmath: tests/math/reference.txt,
+ *   written by tools/math_reference.py, gives for each argument the
+ *   double nearest the exact result (and the one on the other side), and
+ *   the result must be the nearest;
+ * - the correct rounding against MPFR on worst cases: tests/math/mpfr.txt,
+ *   written by tools/mpfr/math_mpfr.c (ref) from the worst cases of
+ *   CORE-MATH, for f64 and f32;
+ * - the special cases of IEEE 754 § 9.2.1, value and sign; a NaN as any
+ *   NaN.
  * Run from the root of the repository (build.sh test does).
  */
 #include "limba/ir.h"
@@ -31,7 +34,7 @@ static unsigned checked;
     do {                                                                       \
         checked++;                                                             \
         if (!(cond)) {                                                         \
-            if (failures < 20) {                                               \
+            if (failures < 40) {                                               \
                 fprintf(stderr, "test_math: ");                                \
                 fprintf(stderr, __VA_ARGS__);                                  \
                 fputc('\n', stderr);                                           \
@@ -102,8 +105,6 @@ enum {
 static const char *const names[NFUNC] = {
     "sin",  "cos",  "tan",   "atan", "exp",   "ln",   "pow",  "atan2",
     "asin", "acos", "hypot", "log2", "log10", "sinh", "cosh", "tanh"};
-/* the error the library declares, in ulp (math.h) */
-static const int ulps[NFUNC] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2};
 
 /* two arguments */
 static bool binary(int f)
@@ -215,27 +216,77 @@ static double ours(int f, double x, double y)
     }
 }
 
+static float ours32(int f, float x, float y)
+{
+    switch (f) {
+    case SIN:
+        return limba_math_sin_f32(x);
+    case COS:
+        return limba_math_cos_f32(x);
+    case TAN:
+        return limba_math_tan_f32(x);
+    case ATAN:
+        return limba_math_atan_f32(x);
+    case EXP:
+        return limba_math_exp_f32(x);
+    case LN:
+        return limba_math_ln_f32(x);
+    case POW:
+        return limba_math_pow_f32(x, y);
+    case ATAN2:
+        return limba_math_atan2_f32(x, y);
+    case ASIN:
+        return limba_math_asin_f32(x);
+    case ACOS:
+        return limba_math_acos_f32(x);
+    case HYPOT:
+        return limba_math_hypot_f32(x, y);
+    case LOG2:
+        return limba_math_log2_f32(x);
+    case LOG10:
+        return limba_math_log10_f32(x);
+    case SINH:
+        return limba_math_sinh_f32(x);
+    case COSH:
+        return limba_math_cosh_f32(x);
+    default:
+        return limba_math_tanh_f32(x);
+    }
+}
+
+static uint32_t bits32(float x)
+{
+    uint32_t u;
+    memcpy(&u, &x, sizeof(u));
+    return u;
+}
+
+static float from_bits32(uint32_t u)
+{
+    float x;
+    memcpy(&x, &u, sizeof(x));
+    return x;
+}
+
 /* the hash of the bits of every result, 20000 arguments a function: the
-   bits of x86-64 (gcc 14, glibc 2.41, 22 Oct 2026). A machine that
-   computes another bit fails here */
+   bits of x86-64 (gcc 14, glibc 2.41, CORE-MATH f6c0c37, 25 Nov 2026),
+   which correct rounding makes those of every machine; then the same of
+   the functions of an f32, on the arguments rounded to f32 */
 static const uint64_t golden[NFUNC] = {
-    0xb75bc577edfe06d8ull,
-    0x752c64e2dd07432eull,
-    0x76a0931ee7e1c5c6ull,
-    0x8dda83b3c5bb27adull,
-    0x16d6ea14f075aebbull,
-    0x3d4c66095b65f981ull,
-    0x57220fba1d2e905bull,
-    /* the nine of 4 Nov 2026 (gcc 14, glibc 2.41) */
-    0xa926a47a89bf8fdeull,
-    0x4de3884e61fedb79ull,
-    0x0f4cc30c92fd7b09ull,
-    0x7704ba754a63242eull,
-    0xbd5505b8490a32adull,
-    0xd361437f85d6e5c2ull,
-    0x3a16d10afbe1f116ull,
-    0xc8109454b58a2f43ull,
-    0x1b27fb8dd8b66a79ull,
+    0x868b4e6eebb517e7ull, 0x53efd92f7e5d0346ull, 0xc588f94411155f04ull,
+    0x5105ca9129e57883ull, 0xf011a8b57c6f4ee0ull, 0xa0f99b73c885fc52ull,
+    0x3ae9ffc6d25827c6ull, 0xeae3dd0a5aca5c3eull, 0x28dd5a0df58e2e30ull,
+    0x02003a37823d058bull, 0x45df4dea4528ebedull, 0x83f1a5ad597dfe8dull,
+    0xe3bec72640b18f76ull, 0x1810f1a0a00ef8bbull, 0xeafcdde5c29d8d73ull,
+    0x02a84b6533abd2bcull,
+};
+static const uint64_t golden32[NFUNC] = {
+    0x06c54b0bffe104f5ull, 0xdf9e1cc4d3e4e935ull, 0x1ed8b16d61a42a10ull,
+    0x2b57c070ae9016c8ull, 0x1a68f98b6c60ca32ull, 0x3d1c283110d005feull,
+    0xb949fb6a2bd034abull, 0xb838699dbe30a7a3ull, 0xb6d07d716316f400ull,
+    0x5b6e48281eb345f3ull, 0xd274e2aa392fa41bull, 0xb1158709a8049c7aull,
+    0xac138383245dfc41ull, 0x8ab108945e012785ull, 0xcdadeef64edb3c28ull,
+    0x6d5741321c9240f1ull,
 };
 
 static void test_bits(void)
@@ -253,11 +304,23 @@ static void test_bits(void)
         CHECK(h == golden[f], "%s: hash %#llx, expected %#llx", names[f],
               (unsigned long long)h, (unsigned long long)golden[f]);
     }
+    for (int f = 0; f < NFUNC; f++) {
+        seed = 2000 + (uint64_t)f;
+        uint64_t h = 0xcbf29ce484222325ull;
+        for (unsigned i = 0; i < 20000; i++) {
+            double x = 0, y = 0;
+            args(f, &x, &y);
+            uint32_t u = bits32(ours32(f, (float)x, (float)y));
+            for (int b = 0; b < 4; b++)
+                h = (h ^ ((u >> (8 * b)) & 0xff)) * 0x100000001b3ull;
+        }
+        CHECK(h == golden32[f], "%s_f32: hash %#llx, expected %#llx", names[f],
+              (unsigned long long)h, (unsigned long long)golden32[f]);
+    }
 }
 
-/* the precision: each result one of the two doubles around the exact one
-   (mpmath), so below 1 ulp (2 where ulps says so); how many are the nearest, on
-   request */
+/* the correct rounding: each result the double nearest the exact one
+   (mpmath) */
 static void test_reference(void)
 {
     FILE *in = fopen("tests/math/reference.txt", "r");
@@ -265,7 +328,7 @@ static void test_reference(void)
     if (!in)
         return;
     char name[16];
-    unsigned lines = 0, nearest[NFUNC] = {0}, count[NFUNC] = {0};
+    unsigned lines = 0;
     while (fscanf(in, "%15s", name) == 1) {
         int f = 0;
         while (f < NFUNC && strcmp(names[f], name))
@@ -280,25 +343,60 @@ static void test_reference(void)
         lines++;
         double x = from_bits(xb), y = from_bits(yb);
         uint64_t r = bits(ours(f, x, y));
-        /* 1 ulp: one of the two; 2 ulp: at most two steps from the
-           nearest */
-        uint64_t d = r > nb ? r - nb : nb - r;
-        bool within =
-            r == nb || r == ob ||
-            (ulps[f] > 1 && (r >> 63) == (nb >> 63) && d <= (uint64_t)ulps[f]);
-        CHECK(within,
-              "%s(%a, %a) = %a, outside %d ulp: exact between %a and %a",
-              names[f], x, y, from_bits(r), ulps[f], from_bits(nb),
-              from_bits(ob));
-        nearest[f] += r == nb;
-        count[f]++;
+        CHECK(r == nb, "%s(%a, %a) = %a, not correctly rounded: %a", names[f],
+              x, y, from_bits(r), from_bits(nb));
+        (void)ob;
     }
     fclose(in);
     CHECK(lines >= 16000, "tests/math/reference.txt: %u lines", lines);
-    if (getenv("LIMBA_MATH_VERBOSE"))
-        for (int f = 0; f < NFUNC; f++)
-            fprintf(stderr, "%s: %u of %u rounded to nearest\n", names[f],
-                    nearest[f], count[f]);
+}
+
+/* the worst cases, against MPFR: "name x [y] r", name with _f32 for an
+   f32; a comment line starts with # */
+static void test_mpfr(void)
+{
+    FILE *in = fopen("tests/math/mpfr.txt", "r");
+    CHECK(in, "tests/math/mpfr.txt: cannot read");
+    if (!in)
+        return;
+    char line[256], name[24];
+    unsigned lines = 0, of32 = 0;
+    while (fgets(line, sizeof(line), in)) {
+        if (line[0] == '#')
+            continue;
+        unsigned long long a, b, c;
+        int n = sscanf(line, "%23s %llx %llx %llx", name, &a, &b, &c);
+        size_t k = strlen(name);
+        bool f32 = k > 4 && !strcmp(name + k - 4, "_f32");
+        if (f32)
+            name[k - 4] = 0;
+        int f = 0;
+        while (f < NFUNC && strcmp(names[f], name))
+            f++;
+        bool ok = f < NFUNC && n == (binary(f) ? 4 : 3);
+        CHECK(ok, "tests/math/mpfr.txt: line %u malformed", lines + 1);
+        if (!ok)
+            break;
+        lines++;
+        if (!binary(f))
+            c = b, b = 0;
+        if (f32) {
+            of32++;
+            float x = from_bits32((uint32_t)a), y = from_bits32((uint32_t)b);
+            uint32_t r = bits32(ours32(f, x, y));
+            CHECK(r == (uint32_t)c, "%s_f32(%a, %a) = %a, MPFR %a", names[f],
+                  (double)x, (double)y, (double)from_bits32(r),
+                  (double)from_bits32((uint32_t)c));
+        } else {
+            double x = from_bits(a), y = from_bits(b);
+            uint64_t r = bits(ours(f, x, y));
+            CHECK(r == c, "%s(%a, %a) = %a, MPFR %a", names[f], x, y,
+                  from_bits(r), from_bits(c));
+        }
+    }
+    fclose(in);
+    CHECK(lines >= 15000 && of32 >= 7000, "tests/math/mpfr.txt: %u lines",
+          lines);
 }
 
 /* value and sign; a NaN as any NaN */
@@ -309,8 +407,17 @@ static void special(int f, double x, double y, double want)
     CHECK(ok, "%s(%a, %a) = %a, expected %a", names[f], x, y, r, want);
 }
 
+static void special32(int f, float x, float y, float want)
+{
+    float r = ours32(f, x, y);
+    bool ok = isnan(want) ? isnan(r) : bits32(r) == bits32(want);
+    CHECK(ok, "%s_f32(%a, %a) = %a, expected %a", names[f], (double)x,
+          (double)y, (double)r, (double)want);
+}
+
 static void test_special(void)
 {
+    float inff = INFINITY, nanf_ = NAN;
     double inf = INFINITY, nan = NAN;
     special(SIN, 0.0, 0, 0.0);
     special(SIN, -0.0, 0, -0.0);
@@ -394,6 +501,26 @@ static void test_special(void)
     special(TANH, inf, 0, 1.0);
     special(TANH, -inf, 0, -1.0);
     special(TANH, nan, 0, nan);
+    /* the f32 ones: value and sign */
+    float pif = 0x1.921fb6p+1f;
+    special32(SIN, -0.0f, 0, -0.0f);
+    special32(COS, inff, 0, nanf_);
+    special32(EXP, -inff, 0, 0.0f);
+    special32(EXP, 89.0f, 0, inff);
+    special32(LN, -0.0f, 0, -inff);
+    special32(LN, -1.0f, 0, nanf_);
+    special32(POW, nanf_, -0.0f, 1.0f);
+    special32(POW, -0.0f, -1.0f, -inff);
+    special32(POW, -2.0f, 3.0f, -8.0f);
+    special32(ATAN2, 0.0f, -0.0f, pif);
+    special32(ATAN2, -0.0f, -0.0f, -pif);
+    special32(HYPOT, inff, nanf_, inff);
+    special32(HYPOT, -3.0f, 4.0f, 5.0f);
+    special32(LOG2, 1024.0f, 0, 10.0f);
+    special32(LOG10, 1e10f, 0, 10.0f);
+    special32(SINH, -inff, 0, -inff);
+    special32(COSH, -0.0f, 0, 1.0f);
+    special32(TANH, -inff, 0, -1.0f);
 }
 
 int main(void)
@@ -402,8 +529,10 @@ int main(void)
     test_special();
     test_bits();
     test_reference();
-    printf("test_math: %u checks: special cases, the same bits on fixed "
-           "arguments, within the declared ulp of mpmath; %d failures\n",
+    test_mpfr();
+    printf("test_math: %u checks of f64 and f32: special cases, the same "
+           "bits on fixed arguments, correctly rounded against mpmath and "
+           "against MPFR on worst cases; %d failures\n",
            checked, failures);
     return failures ? 1 : 0;
 }

@@ -1,0 +1,107 @@
+; output: -0.34761325
+; output: 2.2484071
+; output: -0.8011436
+; output: 0.100334674
+; output: 1.19029
+; output: 1.105171
+; output: 3.952847
+; output: 2.7610862
+; output: 0.10016742
+; output: 1.4706289
+; output: 2.5019991
+; output: 1.3219281
+; output: 0.39794
+; output: 6.0502043
+; output: 6.1322894
+; output: 0.099667996
+; output: -0.34761328
+; output: 2.2484074
+; result: 0
+; the functions of an f32 (doc/ir.md § 15.5): correctly rounded straight
+; to f32, never the f64 function rounded again. The first two are
+; arguments where the two differ; the last two lines are the f64
+; function rounded to f32, for those two arguments
+func @main : fn() -> i64 {
+b0:
+  v0 = fconst f32 0x1.33333p+13
+  v1 = call.rt f32 math_sin_f32(v0)
+  call.rt void print_f32(v1)
+  call.rt void print_nl()
+  v2 = fconst f32 0x1.2f1fd6p+3
+  v3 = call.rt f32 math_ln_f32(v2)
+  call.rt void print_f32(v3)
+  call.rt void print_nl()
+  v4 = fconst f32 0x1.4p+1
+  v5 = call.rt f32 math_cos_f32(v4)
+  call.rt void print_f32(v5)
+  call.rt void print_nl()
+  v6 = fconst f32 0x1.99999ap-4
+  v7 = call.rt f32 math_tan_f32(v6)
+  call.rt void print_f32(v7)
+  call.rt void print_nl()
+  v8 = fconst f32 0x1.4p+1
+  v9 = call.rt f32 math_atan_f32(v8)
+  call.rt void print_f32(v9)
+  call.rt void print_nl()
+  v10 = fconst f32 0x1.99999ap-4
+  v11 = call.rt f32 math_exp_f32(v10)
+  call.rt void print_f32(v11)
+  call.rt void print_nl()
+  v12 = fconst f32 0x1.4p+1
+  v13 = fconst f32 0x1.8p+0
+  v14 = call.rt f32 math_pow_f32(v12, v13)
+  call.rt void print_f32(v14)
+  call.rt void print_nl()
+  v15 = fconst f32 0x1p+0
+  v16 = fconst f32 -0x1.4p+1
+  v17 = call.rt f32 math_atan2_f32(v15, v16)
+  call.rt void print_f32(v17)
+  call.rt void print_nl()
+  v18 = fconst f32 0x1.99999ap-4
+  v19 = call.rt f32 math_asin_f32(v18)
+  call.rt void print_f32(v19)
+  call.rt void print_nl()
+  v20 = fconst f32 0x1.99999ap-4
+  v21 = call.rt f32 math_acos_f32(v20)
+  call.rt void print_f32(v21)
+  call.rt void print_nl()
+  v22 = fconst f32 0x1.4p+1
+  v23 = fconst f32 0x1.99999ap-4
+  v24 = call.rt f32 math_hypot_f32(v22, v23)
+  call.rt void print_f32(v24)
+  call.rt void print_nl()
+  v25 = fconst f32 0x1.4p+1
+  v26 = call.rt f32 math_log2_f32(v25)
+  call.rt void print_f32(v26)
+  call.rt void print_nl()
+  v27 = fconst f32 0x1.4p+1
+  v28 = call.rt f32 math_log10_f32(v27)
+  call.rt void print_f32(v28)
+  call.rt void print_nl()
+  v29 = fconst f32 0x1.4p+1
+  v30 = call.rt f32 math_sinh_f32(v29)
+  call.rt void print_f32(v30)
+  call.rt void print_nl()
+  v31 = fconst f32 0x1.4p+1
+  v32 = call.rt f32 math_cosh_f32(v31)
+  call.rt void print_f32(v32)
+  call.rt void print_nl()
+  v33 = fconst f32 0x1.99999ap-4
+  v34 = call.rt f32 math_tanh_f32(v33)
+  call.rt void print_f32(v34)
+  call.rt void print_nl()
+  v35 = fconst f32 0x1.33333p+13
+  v36 = fpext f64 v35
+  v37 = call.rt f64 math_sin(v36)
+  v38 = fptrunc f32 v37
+  call.rt void print_f32(v38)
+  call.rt void print_nl()
+  v39 = fconst f32 0x1.2f1fd6p+3
+  v40 = fpext f64 v39
+  v41 = call.rt f64 math_ln(v40)
+  v42 = fptrunc f32 v41
+  call.rt void print_f32(v42)
+  call.rt void print_nl()
+  v43 = iconst i64 0
+  ret v43
+}

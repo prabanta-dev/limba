@@ -182,11 +182,11 @@ while IFS= read -r src; do
     objs+=("$obj")
     compile "$src" "$obj" "${CFLAGS[@]}"
 done < <(find src -name '*.c' ! -name main.c ! -path 'src/third_party/*' | sort)
-# The mathematics of musl (progetto_ir.md § 11b): its files unchanged,
+# The mathematics of CORE-MATH (doc/ir.md § 15.5): its files unchanged,
 # the flags of the variant without Limba's warnings (the code is not
-# Limba's), no contraction of a * b + c, no builtin in place of its calls,
-# and the same path of computation on every machine (no __FP_FAST_FMA);
-# src/common/musl.h gives each file its names
+# Limba's), no contraction of a * b + c (in CFLAGS), no fast mathematics;
+# src/common/core_math.h gives each file its names. No
+# CORE_MATH_SUPPORT_ERRNO: no errno
 tpflags=()
 for f in "${CFLAGS[@]}"; do
     case "$f" in
@@ -194,13 +194,12 @@ for f in "${CFLAGS[@]}"; do
     *) tpflags+=("$f") ;;
     esac
 done
-tpflags+=(-w -fno-builtin -fno-fast-math -U__FP_FAST_FMA
-    -idirafter src/common/musl_compat -include src/common/musl.h)
+tpflags+=(-w -fno-fast-math -include src/common/core_math.h)
 while IFS= read -r src; do
     obj=$(objname "$src")
     objs+=("$obj")
     compile "$src" "$obj" "${tpflags[@]}"
-done < <(find src/third_party/musl -name '*.c' | sort)
+done < <(find src/third_party/core-math -name '*.c' | sort)
 rm -f "$OBJ/liblimba.a"
 "$AR" rcs "$OBJ/liblimba.a" "${objs[@]}"
 

@@ -1464,6 +1464,32 @@ static bool runtime(E *e, uint32_t rt, const uint64_t *a, uint64_t *r)
         *r = fbits(out, LIMBA_T_F64);
         return true;
     }
+    case LIMBA_RT_MATH_SIN_F32:
+    case LIMBA_RT_MATH_COS_F32:
+    case LIMBA_RT_MATH_TAN_F32:
+    case LIMBA_RT_MATH_ATAN_F32:
+    case LIMBA_RT_MATH_EXP_F32:
+    case LIMBA_RT_MATH_LN_F32:
+    case LIMBA_RT_MATH_POW_F32:
+    case LIMBA_RT_MATH_ATAN2_F32:
+    case LIMBA_RT_MATH_ASIN_F32:
+    case LIMBA_RT_MATH_ACOS_F32:
+    case LIMBA_RT_MATH_HYPOT_F32:
+    case LIMBA_RT_MATH_LOG2_F32:
+    case LIMBA_RT_MATH_LOG10_F32:
+    case LIMBA_RT_MATH_SINH_F32:
+    case LIMBA_RT_MATH_COSH_F32:
+    case LIMBA_RT_MATH_TANH_F32: {
+        /* correctly rounded straight to f32 (doc/ir.md § 15.5); the f32
+           held exactly in a double on the way */
+        bool two = rt == LIMBA_RT_MATH_POW_F32 ||
+                   rt == LIMBA_RT_MATH_ATAN2_F32 ||
+                   rt == LIMBA_RT_MATH_HYPOT_F32;
+        double in[2] = {fv32(a[0]), two ? fv32(a[1]) : 0}, out;
+        limba_math_call(rt, in, &out);
+        *r = fbits(out, LIMBA_T_F32);
+        return true;
+    }
     default:
         return runtime_luxia(e, rt, a, r);
     }

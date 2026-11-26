@@ -1,15 +1,15 @@
-; output: -0.9516020738895161
-; output: -0.4575358937753214
-; output: -0.47553692799599256
-; output: -1.3738230567687948
-; output: 1.3473197256542635
+; output: -0.951602073889516
+; output: -0.45753589377532133
+; output: -0.4755369279959925
+; output: -1.3738230567687946
+; output: 1.3473197256542637
 ; output: 2.718281828459045
 ; output: 0.6931471805599453
 ; output: 1.4142135623730951
 ; result: 0
-; the mathematics of the run time, limba/math.h (musl): arguments where
-; the C library of x86-64 gives the next double, as a check that lir_run
-; calls it
+; the mathematics of the run time, limba/math.h, correctly rounded
+; (doc/ir.md § 15.5): arguments where musl 1.2.5, the library before
+; CORE-MATH, gave the double next to the right one
 func @main : fn() -> i64 {
 b0:
   v0 = fconst f64 0x1.199999999999ap+2

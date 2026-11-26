@@ -12,7 +12,7 @@ functions of huge arguments). A line is
 
 in hexadecimal bits: nearest is the exact result rounded to nearest even,
 other the double on the other side of it (the same when the result is
-exact). The library is within 1 ulp when it returns one of the two.
+exact). The library, correctly rounded, returns the nearest.
 
 Run it on the machine of development only, with mpmath (Debian:
 python3-mpmath); never by the build: the file it writes is in the

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The mathematics of the run time is correctly rounded (`doc/ir.md`
+  § 15.5): CORE-MATH (MIT, commit `f6c0c37`) in place of musl 1.2.5, for
+  the sixteen functions of `f64` and, new, sixteen functions of `f32`
+  (`math_sin_f32` ... `math_tanh_f32`, `limba/math.h`), rounded straight
+  to `f32`; a new fingerprint of the run-time table. Its `atan2`, which
+  stops the process on some arguments with a tiny `y / x`, is guarded in
+  `src/common/math_atan2.c`. `test_math` asks for the nearest double
+  everywhere, against mpmath and against MPFR on CORE-MATH's worst cases
+  (`tests/math/mpfr.txt`, written by `tools/mpfr/math_mpfr.c`, a tool of
+  development that MPFR builds apart).
+
 - `const` and `export` have a meaning (`doc/ir.md` § 3.4, § 3.6, § 9.5
   rule 6, § 17). A `const` global never changes: a write of n > 0 bytes
   into it, by any operation or run-time function, is a wrong module that

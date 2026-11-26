@@ -1235,17 +1235,30 @@ addresses of freed blocks; Meri compares a generation).
 | `math_pow` | `(f64, f64) -> f64` | PURE |
 | `math_asin`, `math_acos`, `math_log2`, `math_log10`, `math_sinh`, `math_cosh`, `math_tanh` | `(f64) -> f64` | PURE |
 | `math_atan2` (`y`, `x`), `math_hypot` | `(f64, f64) -> f64` | PURE |
+| `math_sin_f32`, `math_cos_f32`, `math_tan_f32`, `math_atan_f32`, `math_exp_f32`, `math_ln_f32`, `math_asin_f32`, `math_acos_f32`, `math_log2_f32`, `math_log10_f32`, `math_sinh_f32`, `math_cosh_f32`, `math_tanh_f32` | `(f32) -> f32` | PURE |
+| `math_pow_f32`, `math_atan2_f32` (`y`, `x`), `math_hypot_f32` | `(f32, f32) -> f32` | PURE |
 
-They give **the same bits on every engine and every machine**, and in the
-folding of Limba: one library computes them, `limba/math.h` (musl 1.2.5,
-error below 1 ulp, 2 for `math_sinh`, `math_cosh` and `math_tanh`, not
-always correctly rounded; `sqrt`, which `asin`, `acos` and `hypot` use, is
-exact), compiled into every
-engine; no engine calls the C library of the system for them. Special
-cases as IEEE 754 § 9.2.1 and C99 Annex F (`atan2(±0, −0)` is ±π,
-`hypot(±inf, nan)` is +inf, `log2(±0)` is −inf); no `errno`, no observable flag. A function on
-`f32` is the function on `f64` followed by `fptrunc`. Between versions
-the bits may change only for the better, and the change is declared.
+Every one is **correctly rounded** (IEEE 754-2019 § 9.2): the result is
+the exact value of the function rounded once to nearest even, in the
+type of the result, subnormals and overflow included. So they give **the
+same bits on every engine and every machine**, and in the folding of
+Limba. One library computes them, `limba/math.h` (CORE-MATH, compiled
+into every engine from its portable C); no engine calls the C library of
+the system for them. A `NaN` result is a NaN, its sign and payload not
+specified (§ 7.3).
+
+- The functions `_f32` are correctly rounded **straight to `f32`**: never
+  the function on `f64` followed by `fptrunc`, which rounds twice and may
+  give the `f32` next to the right one. `math_sqrt`, `math_trunc`,
+  `math_floor` and `math_ceil` have no `_f32`: on an `f32` widened to
+  `f64` they are exact, or rounded once by `fptrunc`.
+- Only rounding to nearest even exists: no other mode of rounding, no
+  `errno`, no observable flag of IEEE 754 (as WebAssembly and Java).
+- Special cases as IEEE 754 § 9.2.1 and C99 Annex F (`atan2(±0, −0)` is
+  ±π, `hypot(±inf, nan)` is +inf, `log2(±0)` is −inf).
+- Between versions the bits of a result can no longer change, except a
+  NaN's; a version that changed them would be an error, declared and
+  corrected.
 
 ### 15.6 Powers
 
@@ -1465,7 +1478,9 @@ Version 9, revision of 4 Nov 2026: a stricter verifier (the codes of
 `trap` and `check`, § 11) and a new fingerprint of the run-time table
 (`print_big` may trap). Revision of 25 Nov 2026: `const` and `export`
 defined (§ 3.4, § 3.6), no flag bits but those two, no type of 2^32
-bytes or more (§ 2.2). The others were decided on 4 Nov 2026 and come
+bytes or more (§ 2.2); the same day, the mathematics correctly rounded
+(§ 15.5, CORE-MATH in place of musl), 16 functions of `f32` and a new
+fingerprint of the run-time table. The others were decided on 4 Nov 2026 and come
 with version 10, before the memory model (N3): `i1` without signed
 operations, cases of `switch` compared in their type, unused immediates
 0, `big_lit` checked, no order on `ptr`, a check of provenance in
@@ -1669,3 +1684,14 @@ Added on 4 Nov 2026:
 | 90 | `file_flush` | 96 | `math_atan2` | 102 | `math_sinh` |
 | 91 | `file_read_line` | 97 | `math_asin` | 103 | `math_cosh` |
 | 92 | `file_read` | 98 | `math_acos` | 104 | `math_tanh` |
+
+Added on 25 Nov 2026:
+
+| # | Function | # | Function | # | Function |
+|---:|---|---:|---|---:|---|
+| 105 | `math_sin_f32` | 111 | `math_pow_f32` | 117 | `math_log10_f32` |
+| 106 | `math_cos_f32` | 112 | `math_atan2_f32` | 118 | `math_sinh_f32` |
+| 107 | `math_tan_f32` | 113 | `math_asin_f32` | 119 | `math_cosh_f32` |
+| 108 | `math_atan_f32` | 114 | `math_acos_f32` | 120 | `math_tanh_f32` |
+| 109 | `math_exp_f32` | 115 | `math_hypot_f32` | | |
+| 110 | `math_ln_f32` | 116 | `math_log2_f32` | | |

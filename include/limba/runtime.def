@@ -50,7 +50,8 @@ LIMBA_RT(MEM_ALLOC, "mem_alloc", "(i64) -> ptr", LIMBA_RTA_ALLOC)
 LIMBA_RT(MEM_FREE, "mem_free", "(ptr) -> void",
          LIMBA_RTA_WRITES_MEM | LIMBA_RTA_MAY_TRAP)
 
-/* mathematics */
+/* mathematics: correctly rounded to nearest even (limba/math.h,
+   doc/ir.md § 15.5), the same bits on every engine */
 LIMBA_RT(MATH_SQRT, "math_sqrt", "(f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_SIN, "math_sin", "(f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_COS, "math_cos", "(f64) -> f64", LIMBA_RTA_PURE)
@@ -264,7 +265,7 @@ LIMBA_RT(FILE_EXISTS, "file_exists", "(str) -> i1",
 LIMBA_RT(FILE_DELETE, "file_delete", "(str) -> void",
          LIMBA_RTA_IO | LIMBA_RTA_MAY_TRAP)
 /* mathematics, as the functions above (limba/math.h): atan2(y, x),
-   hypot(x, y); sinh, cosh and tanh within 2 ulp, the others within 1 */
+   hypot(x, y); correctly rounded, as all of them */
 LIMBA_RT(MATH_ATAN2, "math_atan2", "(f64, f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_ASIN, "math_asin", "(f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_ACOS, "math_acos", "(f64) -> f64", LIMBA_RTA_PURE)
@@ -274,3 +275,24 @@ LIMBA_RT(MATH_LOG10, "math_log10", "(f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_SINH, "math_sinh", "(f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_COSH, "math_cosh", "(f64) -> f64", LIMBA_RTA_PURE)
 LIMBA_RT(MATH_TANH, "math_tanh", "(f64) -> f64", LIMBA_RTA_PURE)
+/* the same functions of an f32, correctly rounded straight to f32 (never
+   the f64 function rounded again); sqrt, trunc, floor and ceil of an f32
+   stay those of the f64, exact or rounded once */
+LIMBA_RT(MATH_SIN_F32, "math_sin_f32", "(f32) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_COS_F32, "math_cos_f32", "(f32) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_TAN_F32, "math_tan_f32", "(f32) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_ATAN_F32, "math_atan_f32", "(f32) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_EXP_F32, "math_exp_f32", "(f32) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_LN_F32, "math_ln_f32", "(f32) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_POW_F32, "math_pow_f32", "(f32, f32) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_ATAN2_F32, "math_atan2_f32", "(f32, f32) -> f32",
+         LIMBA_RTA_PURE)
+LIMBA_RT(MATH_ASIN_F32, "math_asin_f32", "(f32) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_ACOS_F32, "math_acos_f32", "(f32) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_HYPOT_F32, "math_hypot_f32", "(f32, f32) -> f32",
+         LIMBA_RTA_PURE)
+LIMBA_RT(MATH_LOG2_F32, "math_log2_f32", "(f32) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_LOG10_F32, "math_log10_f32", "(f32) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_SINH_F32, "math_sinh_f32", "(f32) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_COSH_F32, "math_cosh_f32", "(f32) -> f32", LIMBA_RTA_PURE)
+LIMBA_RT(MATH_TANH_F32, "math_tanh_f32", "(f32) -> f32", LIMBA_RTA_PURE)

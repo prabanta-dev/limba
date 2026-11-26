@@ -1,0 +1,29 @@
+The mathematics of CORE-MATH, compiled into Limba (doc/ir.md § 15.5): the
+functions sin, cos, tan, atan, exp, log, pow, atan2, asin, acos, hypot,
+log2, log10, sinh, cosh and tanh of binary64 and of binary32, correctly
+rounded, which every engine runs, so that they give the same bits on every
+machine.
+
+Version: CORE-MATH, https://gitlab.inria.fr/core-math/core-math, commit
+f6c0c3704b636e511e896beb638288218a8d2425 (25 Nov 2026), branch master.
+Licence: MIT, in LICENSE (CORE-MATH's own file, unchanged).
+
+The files are CORE-MATH's, unchanged, from these places of the commit:
+  src/binary64/<f>/<f>.c and src/binary32/<f>/<f>f.c for the sixteen f;
+  src/binary64/log/dint.h, src/binary64/log10/dint.h (two different
+  files), src/binary64/pow/pow.h, dint.h, qint.h,
+  src/binary64/atan2/tint.h;
+  LICENSE.
+They keep the directories of the commit (binary64/<f>/, binary32/<f>/).
+build.sh compiles them with -ffp-contract=off -fno-fast-math, without
+CORE_MATH_SUPPORT_ERRNO (no errno), and with -include
+src/common/core_math.h, Limba's own header that gives every cr_ symbol a
+limba_cr_ name; Limba calls them through include/limba/math.h. They need
+from the C library fma, fmaf, sqrt, sqrtf, roundeven, round, roundf, fmin,
+fmax, fminf, fmaxf, nanf and the functions of fenv.h, all exact in IEEE
+754 (fma and fmaf must be the correctly rounded ones), and printf and exit
+on a path of pow that its authors hold unreachable.
+
+atan2 is not called directly: src/common/math_atan2.c keeps from it the
+arguments with x > 0 and a tiny y / x, on some of which this commit
+stops the process (exit), and computes them itself.
